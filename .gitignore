@@ -1,0 +1,9 @@
+.cursor/
+*.log
+.DS_Store
+Thumbs.db
+.env
+.env.*
+!.env.example
+**/service_role*
+**/*service-role*

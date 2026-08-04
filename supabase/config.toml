@@ -1,0 +1,5 @@
+# Configuration minimale pour le déploiement CLI des Edge Functions.
+# La Service Role Key ne doit jamais être écrite dans ce fichier.
+
+[functions.admin-create-user]
+verify_jwt = true

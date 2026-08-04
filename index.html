@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ROS6 Command Center</title>
+  <link rel="stylesheet" href="css/styles.css?v=20260804-4" />
+</head>
+<body>
+  <div id="authGate" class="auth-gate">
+    <form id="authLoginForm" class="auth-card" autocomplete="on">
+      <div class="brand auth-brand">
+        <span class="brand-mark">ROS6</span>
+        <div class="brand-text">
+          <h1>Command Center</h1>
+          <p>Connexion requise — comptes créés par le R5</p>
+        </div>
+      </div>
+      <label class="field">
+        <span>Adresse e-mail</span>
+        <input type="email" id="authEmail" class="input" required autocomplete="username" />
+      </label>
+      <label class="field">
+        <span>Mot de passe</span>
+        <input type="password" id="authPassword" class="input" required autocomplete="current-password" />
+      </label>
+      <p id="authError" class="auth-error hidden" role="alert"></p>
+      <button type="submit" id="authLoginBtn" class="btn btn-primary" style="width:100%">Se connecter</button>
+    </form>
+  </div>
+
+  <div class="app hidden">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">ROS6</span>
+        <div class="brand-text">
+          <h1>Command Center</h1>
+          <p>Poste de commande alliance · build 20260803-7-supabase</p>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        <span id="syncStatus" class="sync-status" aria-live="polite">—</span>
+        <span id="authUserLabel" class="auth-user-label hidden"></span>
+        <button type="button" id="btnLogout" class="btn btn-ghost btn-sm">Se déconnecter</button>
+        <button type="button" id="btnNotifications" class="notif-btn" aria-label="Notifications">
+          <span class="notif-icon" aria-hidden="true"></span>
+          <span id="notifBadge" class="notif-badge hidden">0</span>
+        </button>
+      </div>
+    </header>
+
+    <nav class="tabs" role="tablist" aria-label="Navigation principale">
+      <button type="button" class="tab is-active" data-tab="command" role="tab" aria-selected="true">Poste de Commandement</button>
+      <button type="button" class="tab" data-tab="players" role="tab" aria-selected="false">Gestion des membres</button>
+      <button type="button" class="tab" data-tab="vs" role="tab" aria-selected="false">VS</button>
+      <button type="button" class="tab" data-tab="train" role="tab" aria-selected="false">Train</button>
+      <button type="button" class="tab" data-tab="ruche" role="tab" aria-selected="false">Ruche</button>
+      <button type="button" class="tab" data-tab="tempete" role="tab" aria-selected="false">Tempête du Désert</button>
+      <button type="button" class="tab" data-tab="archives" role="tab" aria-selected="false">Archives</button>
+      <button type="button" class="tab hidden" data-tab="settings" role="tab" aria-selected="false" hidden aria-hidden="true">Paramètres</button>
+    </nav>
+
+    <main class="content">
+      <!-- POSTE DE COMMANDEMENT (consultation seule) -->
+      <section id="panel-command" class="panel is-active" role="tabpanel">
+        <div class="panel-header">
+          <div>
+            <h2>Poste de Commandement</h2>
+            <p class="panel-subtitle" id="commandWeekLabel">Consultation automatique — aucune modification ici</p>
+          </div>
+        </div>
+
+        <div class="kpi-grid" id="commandKpis"></div>
+
+        <section class="block" style="margin-bottom:1rem">
+          <header class="block-header">
+            <h3>Checklist hebdomadaire</h3>
+            <p>Action du lundi — partagée entre tous les R4 / R5</p>
+          </header>
+          <div id="commandWeeklyChecklist" class="stack-list"></div>
+          <div id="commandWeeklyHistory" class="command-weekly-history" style="margin-top:0.75rem"></div>
+        </section>
+
+        <div class="command-layout">
+          <section class="block">
+            <header class="block-header">
+              <h3>Joueurs à contacter</h3>
+              <p>Rouges puis orange — clic pour ouvrir la fiche</p>
+            </header>
+            <div id="commandContactList" class="stack-list"></div>
+            <p id="commandContactEmpty" class="empty-state hidden">Aucun joueur orange ou rouge cette semaine.</p>
+          </section>
+
+          <section class="block">
+            <header class="block-header">
+              <h3>Centre de décision</h3>
+              <p>Actions du jour — cochées jusqu’à demain</p>
+            </header>
+            <div id="commandDecisions" class="stack-list"></div>
+            <p id="commandDecisionsEmpty" class="empty-state hidden">Aucune action en attente pour aujourd’hui.</p>
+          </section>
+
+          <section class="block">
+            <header class="block-header">
+              <h3>Alertes</h3>
+              <p>Triées par importance</p>
+            </header>
+            <div id="commandAlerts" class="stack-list"></div>
+            <p id="commandAlertsEmpty" class="empty-state hidden">Aucune alerte pour le moment.</p>
+          </section>
+        </div>
+
+        <section class="block" style="margin-top:1rem">
+          <header class="block-header">
+            <h3>Coaching prioritaire</h3>
+            <p id="commandCoachingCount">Coaching à contacter : 0</p>
+          </header>
+          <div id="commandCoachingList" class="stack-list"></div>
+          <p id="commandCoachingEmpty" class="empty-state hidden">Aucun joueur en Priorité 1 ou 2 pour le moment.</p>
+        </section>
+
+        <section class="block block-absents" style="margin-top:1rem">
+          <header class="block-header">
+            <h3>Absents</h3>
+            <p>Ignorés du VS · exclus des futurs tirages Train</p>
+          </header>
+          <div id="commandAbsentsList" class="absent-chips"></div>
+          <p id="commandAbsentsEmpty" class="empty-state hidden">Aucun joueur absent.</p>
+        </section>
+      </section>
+
+      <!-- GESTION DES MEMBRES (administration) -->
+      <section id="panel-players" class="panel" role="tabpanel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Gestion des membres</h2>
+            <p class="panel-subtitle">Administration des fiches — sans statistiques VS</p>
+          </div>
+          <button type="button" id="btnAddPlayer" class="btn btn-primary">Ajouter un joueur</button>
+        </div>
+
+        <div class="toolbar toolbar-members">
+          <input type="search" id="playerSearch" class="input" placeholder="Rechercher par pseudo…" autocomplete="off" />
+          <select id="filterStatus" class="input">
+            <option value="Actif">Actifs uniquement</option>
+            <option value="Parti">Partis uniquement</option>
+            <option value="Absent">Absents</option>
+            <option value="">Tous les statuts</option>
+          </select>
+          <select id="filterRoleAdmin" class="input">
+            <option value="">Tous les rôles</option>
+            <option value="R5">R5</option>
+            <option value="R4">R4</option>
+            <option value="Membre">Membre</option>
+          </select>
+          <select id="filterPowerAdmin" class="input" aria-label="Filtrer par puissance héros">
+            <option value="">Toutes les puissances</option>
+            <option value="missing">Puissance non renseignée</option>
+          </select>
+        </div>
+
+        <p id="playersPowerCounter" class="members-power-counter" aria-live="polite">
+          Puissances renseignées : 0 / 0 joueurs actifs
+        </p>
+
+        <div id="playersList" class="member-list"></div>
+        <p id="playersEmpty" class="empty-state hidden">Aucun joueur ne correspond aux filtres.</p>
+      </section>
+
+      <!-- VS -->
+      <section id="panel-vs" class="panel" role="tabpanel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>VS hebdomadaire</h2>
+            <p class="panel-subtitle">Lundi → Vendredi · barème points · dons d’alliance</p>
+          </div>
+          <div class="panel-header-actions">
+            <button type="button" id="btnNewWeek" class="btn btn-primary">+ Nouvelle semaine</button>
+          </div>
+        </div>
+
+        <div class="vs-week-bar">
+          <div class="vs-week-active">
+            <span class="vs-week-label">Semaine active</span>
+            <strong id="vsActiveWeekTitle">Semaine 1</strong>
+            <span id="vsActiveWeekDates" class="vs-week-dates"></span>
+          </div>
+          <label class="vs-week-select-wrap">
+            <span>Consulter une semaine</span>
+            <select id="weekSelector" class="input" aria-label="Semaine sélectionnée"></select>
+          </label>
+        </div>
+        <p id="vsArchiveNotice" class="vs-archive-notice hidden">
+          Semaine archivée — consultation seule. Les archives ne sont jamais modifiées.
+        </p>
+
+        <div class="legend">
+          <span class="legend-item"><span class="swatch score-0"></span> Plus de 7,2 M · 0 pt</span>
+          <span class="legend-item"><span class="swatch score-5"></span> 3,7 à 7,2 M · 5 pts</span>
+          <span class="legend-item"><span class="swatch score-10"></span> 0 à 3,6 M · 10 pts</span>
+          <span class="legend-item"><span class="swatch score-don"></span> Dons non réalisés · 5 pts</span>
+          <span class="legend-item"><span class="dot color-green"></span> 0–20</span>
+          <span class="legend-item"><span class="dot color-orange"></span> 25–30</span>
+          <span class="legend-item"><span class="dot color-red"></span> ≥ 35</span>
+        </div>
+
+        <div class="table-wrap">
+          <table class="vs-table" id="vsTable">
+            <thead>
+              <tr>
+                <th>Joueur</th>
+                <th>Rôle</th>
+                <th>Lun</th>
+                <th>Mar</th>
+                <th>Mer</th>
+                <th>Jeu</th>
+                <th>Ven</th>
+                <th>Dons non réalisés</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody id="vsTableBody"></tbody>
+          </table>
+        </div>
+        <p id="vsEmpty" class="empty-state hidden">Aucun joueur actif. Ajoutez des joueurs pour saisir le VS.</p>
+      </section>
+
+      <!-- TRAIN -->
+      <section id="panel-train" class="panel" role="tabpanel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Train</h2>
+            <p class="panel-subtitle">Planning hebdomadaire Conducteurs &amp; VIP — module indépendant</p>
+          </div>
+        </div>
+
+        <div class="train-layout">
+          <section class="block">
+            <header class="block-header">
+              <h3>Catégories</h3>
+              <p>Désignent les conducteurs — liste livrée avec ROS6, entièrement modifiable</p>
+            </header>
+            <div class="settings-actions" style="margin-bottom:0.85rem">
+              <button type="button" id="trainAddCategory" class="btn btn-primary">+ Ajouter une catégorie</button>
+            </div>
+            <div id="trainCategoriesList" class="train-cat-grid"></div>
+          </section>
+
+          <section class="block">
+            <header class="block-header">
+              <h3>Conducteurs</h3>
+              <p>🥇 Premier · 🥈 Deuxième — joueurs actifs uniquement</p>
+            </header>
+            <div id="trainConductorsList" class="train-conductors"></div>
+            <div class="settings-actions" style="margin-top:0.85rem">
+              <button type="button" id="trainAnalyze" class="btn btn-primary" disabled>Analyser les conducteurs</button>
+            </div>
+            <div id="trainAnalyzeResult" style="margin-top:0.85rem"></div>
+
+            <!-- Écran hebdomadaire (sous Conducteurs) -->
+            <div class="train-weekly-screen" id="trainWeeklyScreen">
+              <header class="block-header" style="margin-top:1.25rem">
+                <h3>Planning de la semaine</h3>
+                <p id="trainWeeklySubtitle">Conducteurs &amp; VIP — Lundi → Dimanche</p>
+              </header>
+              <div class="train-weekly-main">
+                <div id="trainWeekPlan" class="train-week-plan"></div>
+                <section class="block" style="margin-top:0.85rem">
+                  <header class="block-header">
+                    <h3>VIP — Tirage au sort</h3>
+                    <p>Un joueur éligible proposé · choix manuel toujours possible dans le planning</p>
+                  </header>
+                  <label class="field">
+                    <span>Jour cible</span>
+                    <select id="trainVipDrawDay" class="input" aria-label="Jour pour le tirage VIP"></select>
+                  </label>
+                  <div class="settings-actions" style="margin-top:0.65rem">
+                    <button type="button" id="trainVipDraw" class="btn btn-ghost">🎲 Tirage au sort</button>
+                  </div>
+                  <div id="trainVipDrawPanel" style="margin-top:0.75rem"></div>
+                </section>
+                <section class="block" style="margin-top:0.85rem">
+                  <header class="block-header">
+                    <h3>Candidats conducteurs</h3>
+                    <p>Joueurs classés Premiers — jour via liste (Lun–Sam, pas Dimanche)</p>
+                  </header>
+                  <div id="trainWeekCandidates" class="train-week-candidates"></div>
+                </section>
+              </div>
+            </div>
+          </section>
+
+          <section class="block">
+            <header class="block-header">
+              <h3>Validation &amp; clôture</h3>
+              <p>Notification provisoire sans dimanche · clôture finale avec compteurs</p>
+            </header>
+            <div class="settings-actions">
+              <button type="button" id="trainValidateCheck" class="btn btn-ghost">Vérifier le planning</button>
+              <button type="button" id="trainGenProvisional" class="btn btn-ghost">Générer la notification provisoire</button>
+              <button type="button" id="trainGenFinal" class="btn btn-primary" disabled>Générer la notification finale</button>
+              <button type="button" id="trainCloseWeek" class="btn btn-primary" disabled>Clôturer la semaine Train</button>
+              <button type="button" id="trainUnlockWeek" class="btn btn-ghost hidden">Déverrouiller (R5)</button>
+              <button type="button" id="trainNewWeek" class="btn btn-primary">Nouvelle semaine</button>
+            </div>
+            <div id="trainValidationResult" style="margin-top:0.85rem"></div>
+            <div id="trainLockBanner" class="train-lock-banner hidden">Semaine clôturée — modifications verrouillées (déverrouillage R5 uniquement)</div>
+            <div id="trainNotificationBlock" class="train-notification-block hidden">
+              <header class="block-header">
+                <h3>Notification à copier</h3>
+                <p id="trainNotificationSubtitle">Texte généré à partir du planning</p>
+              </header>
+              <pre id="trainNotificationText" class="train-notification-text"></pre>
+              <div class="train-notification-meta">
+                <span id="trainNotificationCount">0 / 500</span>
+                <span id="trainNotificationAlert" class="train-notification-alert hidden">Dépassement de 500 caractères</span>
+              </div>
+              <button type="button" id="trainCopyNotification" class="btn btn-primary">Copier la notification</button>
+              <p id="trainCopyFeedback" class="train-ok hidden" style="margin-top:0.65rem">Notification copiée</p>
+            </div>
+          </section>
+
+          <section class="block train-history-block">
+            <header class="block-header">
+              <h3>Historique</h3>
+              <p>Semaine · Jour · Conducteur · VIP · Catégorie · Mode</p>
+            </header>
+            <div class="table-wrap">
+              <table class="archive-table">
+                <thead>
+                  <tr>
+                    <th>Semaine</th>
+                    <th>Jour</th>
+                    <th>Conducteur</th>
+                    <th>VIP</th>
+                    <th>Catégorie</th>
+                    <th>Mode</th>
+                  </tr>
+                </thead>
+                <tbody id="trainHistoryBody"></tbody>
+              </table>
+            </div>
+            <p id="trainHistoryEmpty" class="empty-state hidden">Aucun historique Train pour le moment.</p>
+          </section>
+        </div>
+      </section>
+
+      <!-- RUCHE -->
+      <section id="panel-ruche" class="panel" role="tabpanel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Ruche</h2>
+            <p class="panel-subtitle">Plan de ruche ROS6 — 101 cases (10 × 10 + bas) · Maréchal au centre</p>
+          </div>
+        </div>
+
+        <div class="ruche-layout">
+          <section class="block">
+            <header class="block-header">
+              <h3>Plan courant</h3>
+              <p>100 cases attribuables joueurs · Maréchal au centre · case du bas attribuable</p>
+            </header>
+            <div class="ruche-toolbar settings-actions">
+              <button type="button" id="rucheVerify" class="btn btn-ghost">Vérifier la ruche</button>
+              <button type="button" id="rucheValidate" class="btn btn-primary" disabled>Valider la ruche</button>
+              <button type="button" id="rucheExportPng" class="btn btn-ghost">Exporter en PNG</button>
+              <button type="button" id="rucheClear" class="btn btn-ghost">Vider la grille</button>
+            </div>
+            <div id="rucheVerifyResult" class="ruche-verify-result" style="margin-top:0.85rem"></div>
+            <div class="ruche-board" id="rucheBoard">
+              <div
+                id="rucheGrid"
+                class="ruche-grid"
+                role="grid"
+                aria-label="Grille de ruche 10 par 10"
+                data-ruche-dnd-ready="true"
+              ></div>
+            </div>
+          </section>
+
+          <section class="block ruche-archives-block">
+            <header class="block-header">
+              <h3>Archives ruche</h3>
+              <p>Plans validés — consultation seule</p>
+            </header>
+            <div id="rucheArchivesList" class="stack-list"></div>
+            <p id="rucheArchivesEmpty" class="empty-state hidden">Aucun plan validé pour le moment.</p>
+            <div id="rucheArchivePreview" class="ruche-archive-preview hidden" style="margin-top:0.85rem"></div>
+          </section>
+        </div>
+      </section>
+
+      <!-- TEMPÊTE DU DÉSERT -->
+      <section id="panel-tempete" class="panel" role="tabpanel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Tempête du Désert</h2>
+            <p class="panel-subtitle">Préparation des équipes, stratégie et mail ROS6</p>
+          </div>
+          <div class="settings-actions">
+            <button type="button" id="tempeteResetStorm" class="btn btn-ghost">🔄 Réinitialiser</button>
+          </div>
+        </div>
+
+        <div class="tempete-layout">
+          <section class="block">
+            <header class="block-header">
+              <h3>Équipes &amp; horaires</h3>
+              <p>Deux équipes — horaires modifiables</p>
+            </header>
+            <div class="tempete-teams">
+              <label class="field">
+                <span>Équipe active</span>
+                <select id="tempeteActiveTeam" class="input">
+                  <option value="A">Équipe A</option>
+                  <option value="B">Équipe B</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Horaire Équipe A</span>
+                <input type="text" id="tempeteHourA" class="input" value="13h" maxlength="20" />
+              </label>
+              <label class="field">
+                <span>Horaire Équipe B</span>
+                <input type="text" id="tempeteHourB" class="input" value="22h" maxlength="20" />
+              </label>
+            </div>
+          </section>
+
+          <section class="block">
+            <header class="block-header">
+              <h3>Joueurs actifs</h3>
+              <p>Disponibilité · sélection · max 20 participants / 10 remplaçants</p>
+            </header>
+            <div class="settings-actions" style="margin-bottom:0.75rem">
+              <button type="button" id="tempeteResetAvailability" class="btn btn-ghost">
+                Réinitialiser les disponibilités
+              </button>
+              <button type="button" id="tempeteSuggestRemplacants" class="btn btn-ghost">
+                💡 Suggérer des remplaçants
+              </button>
+            </div>
+            <div class="table-wrap">
+              <table class="archive-table" id="tempetePlayersTable">
+                <thead>
+                  <tr>
+                    <th>Pseudo</th>
+                    <th>Puissance héros</th>
+                    <th>Disponibilité</th>
+                    <th>Sélection</th>
+                    <th>Affectation Tempête</th>
+                  </tr>
+                </thead>
+                <tbody id="tempetePlayersBody"></tbody>
+              </table>
+            </div>
+            <p id="tempetePlayersEmpty" class="empty-state hidden">Aucun joueur actif.</p>
+            <p id="tempeteSelectionSummary" class="panel-subtitle" style="margin-top:0.75rem"></p>
+            <div id="tempeteSuggestions" class="tempete-suggestions hidden" style="margin-top:0.85rem"></div>
+          </section>
+
+          <section class="block">
+            <header class="block-header">
+              <h3>Stratégie</h3>
+              <p>Génération automatique puis ajustements manuels</p>
+            </header>
+            <div class="settings-actions">
+              <button type="button" id="tempeteGenerate" class="btn btn-primary">Générer la stratégie</button>
+              <button type="button" id="tempeteGenerateMail" class="btn btn-ghost">Générer le mail</button>
+              <button type="button" id="tempeteCopyMail" class="btn btn-ghost" disabled>Copier le mail</button>
+              <button type="button" id="tempeteClose" class="btn btn-primary">Clôturer la Tempête</button>
+            </div>
+            <div id="tempeteAnalysis" style="margin-top:0.85rem"></div>
+            <div id="tempeteAssignments" style="margin-top:0.85rem"></div>
+            <div id="tempeteMailBlock" class="tempete-mail-block hidden" style="margin-top:0.85rem">
+              <header class="block-header">
+                <h3>Mail à publier</h3>
+                <p>Sans puissances — prêt à copier</p>
+              </header>
+              <pre id="tempeteMailText" class="tempete-mail-text"></pre>
+              <p id="tempeteMailFeedback" class="train-ok hidden" style="margin-top:0.65rem">Mail copié.</p>
+            </div>
+            <div id="tempeteAttendanceBlock" class="hidden" style="margin-top:0.85rem">
+              <header class="block-header">
+                <h3>Présence — clôture</h3>
+                <p>Statut obligatoire pour chaque inscrit (participant ou remplaçant)</p>
+              </header>
+              <div id="tempeteAttendanceList" class="stack-list"></div>
+            </div>
+          </section>
+
+          <section class="block">
+            <header class="block-header">
+              <h3>Archives Tempête</h3>
+              <p>Historique des Tempêtes clôturées</p>
+            </header>
+            <div id="tempeteArchivesList" class="stack-list"></div>
+            <p id="tempeteArchivesEmpty" class="empty-state hidden">Aucune Tempête archivée.</p>
+          </section>
+        </div>
+      </section>
+
+      <!-- ARCHIVES -->
+      <section id="panel-archives" class="panel" role="tabpanel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Archives</h2>
+            <p class="panel-subtitle">Tous les joueurs · couleur par semaine · clic pour le détail</p>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <input type="search" id="archiveSearch" class="input" placeholder="Rechercher dans les archives…" autocomplete="off" />
+          <select id="archiveStatusFilter" class="input">
+            <option value="">Tous les statuts</option>
+            <option value="Actif">Actifs</option>
+            <option value="Parti">Partis</option>
+          </select>
+        </div>
+
+        <div class="table-wrap">
+          <table class="archive-table" id="archiveTable">
+            <thead id="archiveTableHead"></thead>
+            <tbody id="archiveTableBody"></tbody>
+          </table>
+        </div>
+        <p id="archivesEmpty" class="empty-state hidden">Aucune donnée d’archive pour le moment.</p>
+      </section>
+
+      <!-- PARAMÈTRES -->
+      <section id="panel-settings" class="panel" role="tabpanel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Paramètres</h2>
+            <p class="panel-subtitle">Identité, accès (R5), sauvegarde et maintenance</p>
+          </div>
+        </div>
+
+        <div class="settings-subtabs" role="tablist" aria-label="Sections paramètres">
+          <button type="button" class="chip-filter is-active" data-settings-tab="general" aria-selected="true">
+            Général
+          </button>
+          <button
+            type="button"
+            class="chip-filter hidden"
+            id="settingsTabAccess"
+            data-settings-tab="access"
+            aria-selected="false"
+          >
+            Gestion des accès
+          </button>
+        </div>
+
+        <div id="settingsPaneAccess" class="hidden">
+          <section id="accessManagementBlock" class="block settings-block-wide hidden">
+            <header class="block-header" style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;flex-wrap:wrap">
+              <div>
+                <h3>Gestion des accès</h3>
+                <p>Réservé R5 — création des comptes, joueur associé, rôle et statut</p>
+              </div>
+              <button type="button" id="btnAccessAddUser" class="btn btn-primary">+ Ajouter un utilisateur</button>
+            </header>
+            <div id="accessProfilesList" class="access-profiles-list"></div>
+            <p id="accessProfilesEmpty" class="empty-state hidden">
+              Aucun profil pour le moment. Ajoutez un utilisateur ou attendez une première connexion.
+            </p>
+          </section>
+        </div>
+
+        <div id="settingsPaneGeneral" class="settings-grid">
+          <section class="block">
+            <header class="block-header">
+              <h3>Votre accès</h3>
+              <p>Identité = pseudo du joueur associé par le R5</p>
+            </header>
+            <p id="ownAccessSummary" class="access-own-summary">—</p>
+            <label class="field hidden">
+              <span>Rôle applicatif</span>
+              <select id="roleSelector" class="input" aria-label="Rôle applicatif" disabled>
+                <option value="R5">R5 — Accès complet</option>
+                <option value="R4">R4 — Gestion sans suppression</option>
+              </select>
+            </label>
+          </section>
+
+          <section class="block">
+            <header class="block-header">
+              <h3>Sauvegarde</h3>
+              <p>Export / import JSON — localStorage conservé</p>
+            </header>
+            <div class="settings-actions">
+              <button type="button" id="btnExport" class="btn btn-ghost">Exporter JSON</button>
+              <button type="button" id="btnImport" class="btn btn-ghost">Importer JSON</button>
+              <input type="file" id="importFile" accept="application/json,.json" hidden />
+            </div>
+          </section>
+
+          <section class="block settings-block-wide">
+            <header class="block-header">
+              <h3>Sauvegardes</h3>
+              <p>Automatiques (1/jour) · 10 plus récentes · restauration avec copie de sécurité</p>
+            </header>
+            <div class="settings-actions" style="margin-bottom:0.75rem">
+              <button type="button" id="btnCreateBackupNow" class="btn btn-primary">
+                Créer une sauvegarde maintenant
+              </button>
+            </div>
+            <div id="backupsList" class="stack-list"></div>
+            <p id="backupsEmpty" class="empty-state hidden">Aucune sauvegarde pour le moment.</p>
+          </section>
+
+          <section class="block">
+            <header class="block-header">
+              <h3>Zone sensible</h3>
+              <p>Réinitialisation protégée (R5 uniquement, double confirmation)</p>
+            </header>
+            <button type="button" id="btnReset" class="btn btn-danger">Réinitialiser l’application</button>
+          </section>
+
+          <section class="block">
+            <header class="block-header">
+              <h3>Couleurs Ruche</h3>
+              <p>Couleurs du plan de ruche — module Ruche uniquement</p>
+            </header>
+            <div class="ruche-color-settings">
+              <label class="field ruche-color-field">
+                <span>Maréchal</span>
+                <input type="color" id="rucheColorMarshal" class="input ruche-color-input" value="#7b3fa0" />
+              </label>
+              <label class="field ruche-color-field">
+                <span>R5 / R4</span>
+                <input type="color" id="rucheColorR4" class="input ruche-color-input" value="#5B9BD5" />
+              </label>
+              <label class="field ruche-color-field">
+                <span>FREE</span>
+                <input type="color" id="rucheColorFree" class="input ruche-color-input" value="#000000" />
+              </label>
+            </div>
+          </section>
+
+          <section class="block settings-block-wide">
+            <header class="block-header">
+              <h3>Gestion des tranches de puissance</h3>
+              <p>Liste centrale réutilisée par les fiches joueurs et la Tempête du Désert</p>
+            </header>
+            <div class="settings-actions" style="margin-bottom:0.75rem">
+              <button type="button" id="btnAddPowerTier" class="btn btn-primary">Ajouter une tranche</button>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table" id="powerTiersTable">
+                <thead>
+                  <tr>
+                    <th>Ordre</th>
+                    <th>Libellé</th>
+                    <th>Minimum</th>
+                    <th>Maximum</th>
+                    <th>Utilisation</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="powerTiersBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modal joueur -->
+  <dialog id="playerModal" class="modal">
+    <form method="dialog" id="playerForm" class="modal-card">
+      <header class="modal-header">
+        <h3 id="playerModalTitle">Ajouter un joueur</h3>
+        <button type="button" class="icon-btn" data-close-modal aria-label="Fermer">×</button>
+      </header>
+      <div class="modal-body">
+        <input type="hidden" id="playerId" />
+        <label class="field">
+          <span>Pseudo</span>
+          <input type="text" id="playerPseudo" class="input" required maxlength="40" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Rôle</span>
+          <select id="playerRole" class="input" required>
+            <option value="Membre">Membre</option>
+            <option value="R4">R4</option>
+            <option value="R5">R5</option>
+          </select>
+        </label>
+        <label class="field" id="playerStatusField" hidden>
+          <span>Statut</span>
+          <select id="playerStatus" class="input">
+            <option value="Actif">Actif</option>
+            <option value="Parti">Parti</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Puissance héros</span>
+          <select id="playerHeroPower" class="input" aria-label="Puissance héros">
+            <option value="">Non renseignée</option>
+          </select>
+        </label>
+        <label class="field checkbox-field" id="playerPreferredVolantField">
+          <span class="checkbox-line">
+            <input type="checkbox" id="playerPreferredVolant" />
+            <span>Volant préféré</span>
+          </span>
+        </label>
+        <label class="field checkbox-field" id="playerAbsentField">
+          <span class="checkbox-line">
+            <input type="checkbox" id="playerAbsent" />
+            <span>Absent</span>
+          </span>
+          <small class="field-hint">Ignoré du VS et des tirages Train — n’efface pas l’historique</small>
+        </label>
+      </div>
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-ghost" data-close-modal>Annuler</button>
+        <button type="submit" class="btn btn-primary">Enregistrer</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Modal détail semaine (archives) -->
+  <dialog id="weekDetailModal" class="modal">
+    <div class="modal-card modal-wide">
+      <header class="modal-header">
+        <h3 id="weekDetailTitle">Détail de la semaine</h3>
+        <button type="button" class="icon-btn" data-close-modal aria-label="Fermer">×</button>
+      </header>
+      <div class="modal-body" id="weekDetailBody"></div>
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-ghost" data-close-modal>Fermer</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- Modal tranche de puissance -->
+  <dialog id="powerTierModal" class="modal">
+    <form method="dialog" id="powerTierForm" class="modal-card">
+      <header class="modal-header">
+        <h3 id="powerTierModalTitle">Ajouter une tranche</h3>
+        <button type="button" class="icon-btn" data-close-modal aria-label="Fermer">×</button>
+      </header>
+      <div class="modal-body">
+        <input type="hidden" id="powerTierId" />
+        <label class="field">
+          <span>Libellé affiché</span>
+          <input type="text" id="powerTierLabel" class="input" required maxlength="40" placeholder="Ex. 80 à 85 M" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Valeur minimale</span>
+          <input type="number" id="powerTierMin" class="input" required step="1" />
+        </label>
+        <label class="field">
+          <span>Valeur maximale</span>
+          <input type="number" id="powerTierMax" class="input" required step="1" />
+        </label>
+        <label class="field">
+          <span>Ordre d’affichage</span>
+          <input type="number" id="powerTierOrder" class="input" required min="1" step="1" />
+        </label>
+      </div>
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-ghost" data-close-modal>Annuler</button>
+        <button type="submit" class="btn btn-primary">Enregistrer</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="accessCreateModal" class="modal">
+    <form id="accessCreateForm" class="modal-card">
+      <header class="modal-header">
+        <h3>Ajouter un utilisateur</h3>
+        <button type="button" class="icon-btn" data-close-access-modal aria-label="Fermer">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="panel-subtitle" style="margin-top:0">
+          Crée le compte Supabase, le profil et le lien avec le joueur. Le R4 ne choisit jamais son pseudo.
+        </p>
+        <label class="field">
+          <span>Adresse e-mail</span>
+          <input type="email" id="accessCreateEmail" class="input" required autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Mot de passe temporaire</span>
+          <input
+            type="text"
+            id="accessCreatePassword"
+            class="input"
+            required
+            minlength="6"
+            autocomplete="new-password"
+          />
+        </label>
+        <label class="field">
+          <span>Joueur associé</span>
+          <select id="accessCreatePlayer" class="input" required></select>
+        </label>
+        <label class="field">
+          <span>Rôle</span>
+          <select id="accessCreateRole" class="input" required>
+            <option value="R4">R4</option>
+            <option value="R5">R5</option>
+          </select>
+        </label>
+        <p id="accessCreateError" class="empty-state hidden" style="color:var(--red-bright)"></p>
+      </div>
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-ghost" data-close-access-modal>Annuler</button>
+        <button type="submit" id="accessCreateSubmit" class="btn btn-primary">Créer</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="accessResetModal" class="modal">
+    <form id="accessResetForm" class="modal-card">
+      <header class="modal-header">
+        <h3>Réinitialiser le mot de passe</h3>
+        <button type="button" class="icon-btn" data-close-access-modal aria-label="Fermer">×</button>
+      </header>
+      <div class="modal-body">
+        <input type="hidden" id="accessResetUserId" />
+        <label class="field">
+          <span>E-mail</span>
+          <input type="email" id="accessResetEmail" class="input" readonly />
+        </label>
+        <label class="field">
+          <span>Nouveau mot de passe temporaire</span>
+          <input
+            type="text"
+            id="accessResetPassword"
+            class="input"
+            required
+            minlength="6"
+            autocomplete="new-password"
+          />
+        </label>
+        <p class="panel-subtitle">
+          Si la définition directe n’est pas disponible, un e-mail de réinitialisation Supabase sera envoyé.
+        </p>
+        <p id="accessResetError" class="empty-state hidden" style="color:var(--red-bright)"></p>
+      </div>
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-ghost" data-close-access-modal>Annuler</button>
+        <button type="submit" id="accessResetSubmit" class="btn btn-primary">Réinitialiser</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Modal confirmation -->
+  <dialog id="confirmModal" class="modal">
+    <div class="modal-card">
+      <header class="modal-header">
+        <h3 id="confirmTitle">Confirmation</h3>
+        <button type="button" class="icon-btn" data-close-modal aria-label="Fermer">×</button>
+      </header>
+      <div class="modal-body">
+        <p id="confirmMessage"></p>
+      </div>
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="confirmCancel">Annuler</button>
+        <button type="button" class="btn btn-danger" id="confirmOk">Confirmer</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <!-- Fiche joueur -->
+  <div id="playerDetailOverlay" class="drawer-overlay" hidden></div>
+  <aside id="playerDetailDrawer" class="drawer drawer-wide" aria-hidden="true" aria-labelledby="playerDetailTitle">
+    <header class="drawer-header">
+      <div>
+        <h3 id="playerDetailTitle">Fiche joueur</h3>
+        <p id="playerDetailSubtitle" class="panel-subtitle"></p>
+      </div>
+      <button type="button" class="icon-btn" id="playerDetailClose" aria-label="Fermer">×</button>
+    </header>
+    <div class="drawer-body" id="playerDetailBody"></div>
+    <footer class="drawer-footer">
+      <button type="button" class="btn btn-ghost" id="playerDetailEdit">Modifier</button>
+      <button type="button" class="btn btn-ghost" id="playerDetailCloseBtn">Fermer</button>
+    </footer>
+  </aside>
+
+  <!-- Notifications -->
+  <div id="notifOverlay" class="drawer-overlay" hidden></div>
+  <aside id="notifDrawer" class="drawer" aria-hidden="true" aria-labelledby="notifTitle">
+    <header class="drawer-header">
+      <div>
+        <h3 id="notifTitle">Notifications</h3>
+        <p class="panel-subtitle">Générées automatiquement</p>
+      </div>
+      <button type="button" class="icon-btn" id="notifClose" aria-label="Fermer">×</button>
+    </header>
+    <div class="notif-tabs">
+      <button type="button" class="chip-filter is-active" data-notif-filter="priority">Priorité</button>
+      <button type="button" class="chip-filter" data-notif-filter="info">Informations</button>
+      <button type="button" class="chip-filter" data-notif-filter="all">Toutes</button>
+    </div>
+    <div class="drawer-body" id="notifBody"></div>
+  </aside>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/supabase-client.js?v=20260804-4"></script>
+  <script src="js/profiles.js?v=20260804-6"></script>
+  <script src="js/supabase-sync.js?v=20260804-4"></script>
+  <script src="js/models.js?v=20260804-3"></script>
+  <script src="js/seed-players.js?v=20260802-4"></script>
+  <script src="js/player-identity.js?v=20260802-4"></script>
+  <script src="js/storage.js?v=20260803-7"></script>
+  <script src="js/ui-helpers.js?v=20260802-4"></script>
+  <script src="js/insights.js?v=20260802-4"></script>
+  <script src="js/player-stats.js?v=20260802-4"></script>
+  <script src="js/players.js?v=20260802-4"></script>
+  <script src="js/command.js?v=20260804-3"></script>
+  <script src="js/notifications.js?v=20260802-4"></script>
+  <script src="js/vs.js?v=20260804-3"></script>
+  <script src="js/archives.js?v=20260802-4"></script>
+  <script src="js/train.js?v=20260804-3"></script>
+  <script src="js/ruche.js?v=20260803-7"></script>
+  <script src="js/tempete.js?v=20260804-3"></script>
+  <script src="js/backups.js?v=20260803-7"></script>
+  <script src="js/app.js?v=20260804-7"></script>
+</body>
+</html>
