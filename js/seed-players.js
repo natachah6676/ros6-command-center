@@ -1,0 +1,127 @@
+/**
+ * Liste initiale des joueurs ROS6 — chargée uniquement à l'état initial
+ * (premier lancement sans localStorage, ou réinitialisation R5).
+ * Entièrement modifiable ensuite ; l'historique VS n'est jamais purgé ici.
+ */
+(function (global) {
+  const SEED_PLAYERS = [
+    // R5
+    { pseudo: 'Willow', role: 'R5' },
+
+    // R4
+    { pseudo: 'Danigua', role: 'R4' },
+    { pseudo: 'Diidine89', role: 'R4' },
+    { pseudo: 'Enizana', role: 'R4' },
+    { pseudo: 'Le Corsee', role: 'R4' },
+    { pseudo: 'Mathy2209', role: 'R4' },
+    { pseudo: 'nolis cemoz', role: 'R4' },
+    { pseudo: 'SoulDada', role: 'R4' },
+    { pseudo: 'SuperSonic Sparrow', role: 'R4' },
+
+    // Membres
+    { pseudo: '72Dave72', role: 'Membre' },
+    { pseudo: 'Agent0003', role: 'Membre' },
+    { pseudo: 'Alessandro 71', role: 'Membre' },
+    { pseudo: 'Alpha20261', role: 'Membre' },
+    { pseudo: 'Amorasco', role: 'Membre' },
+    { pseudo: 'Ani Bulgaria', role: 'Membre' },
+    { pseudo: 'AnisDZZ', role: 'Membre' },
+    { pseudo: 'aria0502', role: 'Membre' },
+    { pseudo: 'Blow9393', role: 'Membre' },
+    { pseudo: 'crystorus', role: 'Membre' },
+    { pseudo: 'Daenerys90', role: 'Membre' },
+    { pseudo: 'Denaobi', role: 'Membre' },
+    { pseudo: 'Destructeur2soldat', role: 'Membre' },
+    { pseudo: 'Emma Wild', role: 'Membre' },
+    { pseudo: 'Etcheberri', role: 'Membre' },
+    { pseudo: 'Fab34000', role: 'Membre' },
+    { pseudo: 'Fabrice88', role: 'Membre' },
+    { pseudo: 'FafaneLeBarbu', role: 'Membre' },
+    { pseudo: 'FINMASON', role: 'Membre' },
+    { pseudo: 'francky89', role: 'Membre' },
+    { pseudo: 'françois62', role: 'Membre' },
+    { pseudo: 'frenchkill66', role: 'Membre' },
+    { pseudo: 'Gardien117', role: 'Membre' },
+    { pseudo: 'Grimvalk', role: 'Membre' },
+    { pseudo: 'Guillermo Ochoa', role: 'Membre' },
+    { pseudo: 'HGS123', role: 'Membre' },
+    { pseudo: 'Jean 76', role: 'Membre' },
+    { pseudo: 'Johnny La Coulette', role: 'Membre' },
+    { pseudo: 'KaaZMi', role: 'Membre' },
+    { pseudo: 'Kanarastaboy', role: 'Membre' },
+    { pseudo: 'Kindo96', role: 'Membre' },
+    { pseudo: 'Kusipasi', role: 'Membre' },
+    { pseudo: 'Lexfp', role: 'Membre' },
+    { pseudo: 'Lilokko', role: 'Membre' },
+    { pseudo: 'lock and laod', role: 'Membre' },
+    { pseudo: 'Loukas27', role: 'Membre' },
+    { pseudo: 'Madien City', role: 'Membre' },
+    { pseudo: 'majestitätische Löwe', role: 'Membre' },
+    { pseudo: 'Mamat0406', role: 'Membre' },
+    { pseudo: 'manonlgg', role: 'Membre' },
+    { pseudo: 'Matze129', role: 'Membre' },
+    { pseudo: 'Merk', role: 'Membre' },
+    { pseudo: 'Mertz 1', role: 'Membre' },
+    { pseudo: 'Micshi', role: 'Membre' },
+    { pseudo: 'misspropre', role: 'Membre' },
+    { pseudo: 'moos06', role: 'Membre' },
+    { pseudo: 'Napoleonus', role: 'Membre' },
+    { pseudo: 'Ofée Lee Rose', role: 'Membre' },
+    { pseudo: 'orely', role: 'Membre' },
+    { pseudo: 'overhaul6666', role: 'Membre' },
+    { pseudo: 'panais', role: 'Membre' },
+    { pseudo: 'Paperino', role: 'Membre' },
+    { pseudo: 'Parm007', role: 'Membre' },
+    { pseudo: 'Pierrot2804', role: 'Membre' },
+    { pseudo: 'Pilgrim0216', role: 'Membre' },
+    { pseudo: 'Pilou21', role: 'Membre' },
+    { pseudo: 'PipBoy13', role: 'Membre' },
+    { pseudo: 'Pipo 1516', role: 'Membre' },
+    { pseudo: 'Raiden 05', role: 'Membre' },
+    { pseudo: 'Raph93370', role: 'Membre' },
+    { pseudo: 'Remi boomboom', role: 'Membre' },
+    { pseudo: 'ricain59127', role: 'Membre' },
+    { pseudo: 'Robwro', role: 'Membre' },
+    { pseudo: 'Sachoun', role: 'Membre' },
+    { pseudo: 'seigneur777', role: 'Membre' },
+    { pseudo: 'Selekta97419', role: 'Membre' },
+    { pseudo: 'Sfiber97', role: 'Membre' },
+    { pseudo: 'SM5530', role: 'Membre' },
+    { pseudo: 'Smulan23', role: 'Membre' },
+    { pseudo: 'Sojiro Seta', role: 'Membre' },
+    { pseudo: 'stanislav LT', role: 'Membre' },
+    { pseudo: 'STEDEC', role: 'Membre' },
+    { pseudo: 'Stefko000', role: 'Membre' },
+    { pseudo: 'Stitchyy', role: 'Membre' },
+    { pseudo: 'Terminamom', role: 'Membre' },
+    { pseudo: 'Terzou', role: 'Membre' },
+    { pseudo: 'The Hated Potato', role: 'Membre' },
+    { pseudo: 'Thomas 3333', role: 'Membre' },
+    { pseudo: 'Tnaeem', role: 'Membre' },
+    { pseudo: 'Vale2025', role: 'Membre' },
+    { pseudo: 'ValhallaOath', role: 'Membre' },
+    { pseudo: 'Vortese', role: 'Membre' },
+    { pseudo: 'VovkA', role: 'Membre' },
+    { pseudo: 'XalAtath', role: 'Membre' },
+    { pseudo: 'xenashot', role: 'Membre' },
+    { pseudo: 'Xtank57', role: 'Membre' },
+    { pseudo: 'Zao980', role: 'Membre' },
+    { pseudo: 'zazam44', role: 'Membre' },
+    { pseudo: 'zinono', role: 'Membre' },
+  ];
+
+  function buildSeedPlayers() {
+    return SEED_PLAYERS.map((entry) =>
+      ROSModels.createPlayer({
+        pseudo: entry.pseudo,
+        role: entry.role,
+        status: 'Actif',
+      })
+    );
+  }
+
+  global.ROSSeed = {
+    SEED_PLAYERS,
+    buildSeedPlayers,
+  };
+})(window);
