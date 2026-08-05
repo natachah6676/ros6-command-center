@@ -501,6 +501,92 @@ select.input,
   border-radius: var(--radius-sm);
 }
 
+.vs-mode-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.85rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.vs-mode-bar.vs-mode-afond {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.vs-mode-label {
+  font-size: 0.95rem;
+}
+
+.vs-donations-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.vs-donations-check input {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.vs-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.85rem;
+}
+
+.vs-settings-form .block {
+  margin-top: 0.85rem;
+}
+
+.vs-indicator-cell {
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.tempete-presence-pct {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0.15rem 0.35rem;
+  border-radius: 0.35rem;
+}
+
+button.tempete-presence-pct:hover {
+  text-decoration: underline;
+}
+
+.tempete-presence-pct.presence-green {
+  color: #7fd9a8;
+}
+
+.tempete-presence-pct.presence-orange {
+  color: #f0c075;
+}
+
+.tempete-presence-pct.presence-red {
+  color: #f0a0ab;
+}
+
+.tempete-presence-pct.presence-unknown {
+  color: var(--steel);
+  cursor: default;
+}
+
 .vs-week-active {
   display: flex;
   flex-direction: column;

@@ -10,6 +10,7 @@
     { key: 'vendredi', label: 'Vendredi', short: 'Ven' },
   ];
 
+  /** Options legacy (archives / compat affichage). Préférer getDayOptions(state). */
   const DAY_OPTIONS = [
     { value: 0, label: 'Plus de 7,2 M · 0 pt' },
     { value: 5, label: '3,7 à 7,2 M · 5 pts' },
@@ -21,6 +22,202 @@
   const APP_ROLES = ['R5', 'R4'];
   const DONATION_PENALTY = 5;
   const DATA_VERSION = 1;
+  const VS_BRACKETS = ['ok', 'mid', 'low'];
+  const VS_MODES = ['eco', 'afond'];
+
+  function createDefaultVsSettings() {
+    return {
+      mode: 'eco',
+      afond: {
+        dailyGoal: 7200000,
+        midMin: 3600000,
+        midPoints: 5,
+        lowPoints: 12,
+        donationPenalty: 5,
+        redFrom: 36,
+      },
+      eco: {
+        dailyGoal: 3600000,
+        underPoints: 10,
+        donationPenalty: 5,
+        redFrom: 30,
+      },
+    };
+  }
+
+  function toPositiveInt(value, fallback) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return fallback;
+    return Math.round(n);
+  }
+
+  function normalizeVsSettings(raw) {
+    const defaults = createDefaultVsSettings();
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const afondSrc = src.afond && typeof src.afond === 'object' ? src.afond : {};
+    const ecoSrc = src.eco && typeof src.eco === 'object' ? src.eco : {};
+    const mode = VS_MODES.includes(src.mode) ? src.mode : defaults.mode;
+
+    return {
+      mode,
+      afond: {
+        dailyGoal: toPositiveInt(afondSrc.dailyGoal, defaults.afond.dailyGoal),
+        midMin: toPositiveInt(afondSrc.midMin, defaults.afond.midMin),
+        midPoints: toPositiveInt(afondSrc.midPoints, defaults.afond.midPoints),
+        lowPoints: toPositiveInt(afondSrc.lowPoints, defaults.afond.lowPoints),
+        donationPenalty: toPositiveInt(afondSrc.donationPenalty, defaults.afond.donationPenalty),
+        redFrom: toPositiveInt(afondSrc.redFrom, defaults.afond.redFrom),
+      },
+      eco: {
+        dailyGoal: toPositiveInt(ecoSrc.dailyGoal, defaults.eco.dailyGoal),
+        underPoints: toPositiveInt(ecoSrc.underPoints, defaults.eco.underPoints),
+        donationPenalty: toPositiveInt(ecoSrc.donationPenalty, defaults.eco.donationPenalty),
+        redFrom: toPositiveInt(ecoSrc.redFrom, defaults.eco.redFrom),
+      },
+    };
+  }
+
+  function getVsSettings(stateOrSettings) {
+    if (stateOrSettings?.afond && stateOrSettings?.eco) {
+      return normalizeVsSettings(stateOrSettings);
+    }
+    if (stateOrSettings?.vsSettings) {
+      return normalizeVsSettings(stateOrSettings.vsSettings);
+    }
+    if (global.ROSStorage && typeof global.ROSStorage.getState === 'function') {
+      try {
+        return normalizeVsSettings(global.ROSStorage.getState()?.vsSettings);
+      } catch (_err) {
+        /* ignore */
+      }
+    }
+    return createDefaultVsSettings();
+  }
+
+  function getActiveVsConfig(stateOrSettings) {
+    const settings = getVsSettings(stateOrSettings);
+    return settings.mode === 'afond' ? settings.afond : settings.eco;
+  }
+
+  function formatVsMillions(value) {
+    const n = Number(value) || 0;
+    return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  }
+
+  function formatVsMillionsShort(value) {
+    const n = Number(value) || 0;
+    if (n >= 1000000) {
+      const millions = n / 1000000;
+      const text = Number.isInteger(millions)
+        ? String(millions)
+        : String(Math.round(millions * 10) / 10).replace('.', ',');
+      return `${text} M`;
+    }
+    return formatVsMillions(n);
+  }
+
+  function inferDayBracket(points) {
+    const p = Number(points) || 0;
+    if (p <= 0) return 'ok';
+    if (p === 5) return 'mid';
+    return 'low';
+  }
+
+  function pointsForBracket(bracket, stateOrSettings) {
+    const settings = getVsSettings(stateOrSettings);
+    const key = VS_BRACKETS.includes(bracket) ? bracket : 'ok';
+    if (settings.mode === 'afond') {
+      if (key === 'ok') return 0;
+      if (key === 'mid') return settings.afond.midPoints;
+      return settings.afond.lowPoints;
+    }
+    if (key === 'low') return settings.eco.underPoints;
+    return 0;
+  }
+
+  function getDayOptions(stateOrSettings) {
+    const settings = getVsSettings(stateOrSettings);
+    if (settings.mode === 'afond') {
+      const goal = formatVsMillionsShort(settings.afond.dailyGoal);
+      const mid = formatVsMillionsShort(settings.afond.midMin);
+      const midHigh = formatVsMillionsShort(Math.max(0, settings.afond.dailyGoal - 1));
+      return [
+        { value: 0, bracket: 'ok', label: `Plus de ${goal} · 0 pt` },
+        {
+          value: settings.afond.midPoints,
+          bracket: 'mid',
+          label: `Entre ${mid} et ${midHigh} · ${settings.afond.midPoints} pts`,
+        },
+        {
+          value: settings.afond.lowPoints,
+          bracket: 'low',
+          label: `Moins de ${mid} · ${settings.afond.lowPoints} pts`,
+        },
+      ];
+    }
+    const goal = formatVsMillionsShort(settings.eco.dailyGoal);
+    return [
+      { value: 0, bracket: 'ok', label: `Objectif atteint (≥ ${goal}) · 0 pt` },
+      {
+        value: settings.eco.underPoints,
+        bracket: 'low',
+        label: `Sous ${goal} · ${settings.eco.underPoints} pts`,
+      },
+    ];
+  }
+
+  function labelForDayPoints(points, stateOrSettings, bracket) {
+    const opts = getDayOptions(stateOrSettings);
+    if (bracket && VS_BRACKETS.includes(bracket)) {
+      const byBracket = opts.find((opt) => opt.bracket === bracket);
+      if (byBracket) return byBracket.label;
+    }
+    const p = Number(points) || 0;
+    const exact = opts.find((opt) => Number(opt.value) === p);
+    if (exact) return exact.label;
+    const legacy = DAY_OPTIONS.find((opt) => Number(opt.value) === p);
+    if (legacy) return legacy.label;
+    return `${p} pts`;
+  }
+
+  function ensureDayBrackets(score) {
+    if (!score.dayBrackets || typeof score.dayBrackets !== 'object') {
+      score.dayBrackets = {};
+    }
+    DAYS.forEach((day) => {
+      const existing = score.dayBrackets[day.key];
+      if (VS_BRACKETS.includes(existing)) return;
+      score.dayBrackets[day.key] = inferDayBracket(score.days?.[day.key]);
+    });
+    return score.dayBrackets;
+  }
+
+  function applyVsBaremeToScore(score, stateOrSettings) {
+    if (!score) return score;
+    const brackets = ensureDayBrackets(score);
+    DAYS.forEach((day) => {
+      const bracket = brackets[day.key] || 'ok';
+      score.days[day.key] = pointsForBracket(bracket, stateOrSettings);
+    });
+    return score;
+  }
+
+  function recalculateWeekWithBareme(week, stateOrSettings) {
+    if (!week || !week.scores) return week;
+    Object.keys(week.scores).forEach((playerId) => {
+      applyVsBaremeToScore(week.scores[playerId], stateOrSettings);
+    });
+    return week;
+  }
+
+  function countDaysUnderObjective(score) {
+    if (!score?.days) return 0;
+    return DAYS.reduce((sum, day) => sum + ((Number(score.days[day.key]) || 0) > 0 ? 1 : 0), 0);
+  }
+
+  function countObjectivesMet(score) {
+    return DAYS.length - countDaysUnderObjective(score);
+  }
 
   /** Tranches de puissance héros par défaut (liste centrale — ne pas dupliquer ailleurs). */
   const DEFAULT_POWER_TIER_DEFS = [
@@ -190,6 +387,13 @@
         jeudi: 0,
         vendredi: 0,
       },
+      dayBrackets: {
+        lundi: 'ok',
+        mardi: 'ok',
+        mercredi: 'ok',
+        jeudi: 'ok',
+        vendredi: 'ok',
+      },
       allianceDonMissed: false,
     };
   }
@@ -217,6 +421,7 @@
       endDate,
       createdAt: new Date().toISOString(),
       archived: Boolean(options.archived),
+      donationsVerified: false,
       scores: {},
     };
   }
@@ -261,26 +466,39 @@
   function ensurePlayerScore(week, playerId) {
     if (!week.scores[playerId]) {
       week.scores[playerId] = createEmptyScore();
+    } else {
+      ensureDayBrackets(week.scores[playerId]);
     }
     return week.scores[playerId];
   }
 
-  function computeTotal(score) {
+  function computeTotal(score, stateOrSettings) {
     if (!score) return 0;
     const dayTotal = DAYS.reduce((sum, day) => sum + (Number(score.days[day.key]) || 0), 0);
-    const donation = score.allianceDonMissed ? DONATION_PENALTY : 0;
-    return dayTotal + donation;
+    if (!score.allianceDonMissed) return dayTotal;
+    const cfg = getActiveVsConfig(stateOrSettings);
+    const donation = Number(cfg.donationPenalty);
+    return dayTotal + (Number.isFinite(donation) ? donation : DONATION_PENALTY);
   }
 
-  function getColorClass(total) {
-    if (total >= 35) return 'color-red';
-    if (total >= 25) return 'color-orange';
+  function getColorThresholds(stateOrSettings) {
+    const cfg = getActiveVsConfig(stateOrSettings);
+    const redFrom = Math.max(1, Number(cfg.redFrom) || 35);
+    const orangeFrom = Math.max(1, redFrom - 10);
+    return { redFrom, orangeFrom };
+  }
+
+  function getColorClass(total, stateOrSettings) {
+    const { redFrom, orangeFrom } = getColorThresholds(stateOrSettings);
+    if (total >= redFrom) return 'color-red';
+    if (total >= orangeFrom) return 'color-orange';
     return 'color-green';
   }
 
-  function getColorLabel(total) {
-    if (total >= 35) return 'Rouge';
-    if (total >= 25) return 'Orange';
+  function getColorLabel(total, stateOrSettings) {
+    const color = getColorClass(total, stateOrSettings);
+    if (color === 'color-red') return 'Rouge';
+    if (color === 'color-orange') return 'Orange';
     return 'Vert';
   }
 
@@ -288,7 +506,7 @@
     if (!score) return [];
     return DAYS.filter((day) => {
       const value = Number(score.days[day.key]) || 0;
-      return value === 5 || value === 10;
+      return value > 0;
     }).map((day) => ({
       ...day,
       points: Number(score.days[day.key]) || 0,
@@ -307,17 +525,19 @@
     return 2;
   }
 
-  function getWeekScoreSummary(week, playerId) {
+  function getWeekScoreSummary(week, playerId, stateOrSettings) {
     const score = (week && week.scores && week.scores[playerId]) || createEmptyScore();
-    const total = computeTotal(score);
-    const color = getColorClass(total);
+    const total = computeTotal(score, stateOrSettings);
+    const color = getColorClass(total, stateOrSettings);
     return {
       score,
       total,
       color,
-      colorLabel: getColorLabel(total),
+      colorLabel: getColorLabel(total, stateOrSettings),
       flaggedDays: getFlaggedDays(score),
       donationMissed: Boolean(score.allianceDonMissed),
+      daysUnderObjective: countDaysUnderObjective(score),
+      objectivesMet: countObjectivesMet(score),
       hasRecord: Boolean(week && week.scores && week.scores[playerId]),
     };
   }
@@ -395,6 +615,7 @@
       ui: createBlankUiState(),
       playerWeekNotes: {},
       powerTiers: createDefaultPowerTiers(),
+      vsSettings: createDefaultVsSettings(),
     };
   }
 
@@ -439,6 +660,12 @@
         })
       : [];
 
+    const vsSettings = normalizeVsSettings(raw.vsSettings);
+    const allowedDayPoints = new Set([0, 5, 10, 12]);
+    [vsSettings.afond.midPoints, vsSettings.afond.lowPoints, vsSettings.eco.underPoints].forEach((p) => {
+      allowedDayPoints.add(Number(p) || 0);
+    });
+
     let weeks = Array.isArray(raw.weeks) && raw.weeks.length
       ? raw.weeks.map((w) => {
           const scores = {};
@@ -446,16 +673,43 @@
           Object.keys(sourceScores).forEach((playerId) => {
             const s = sourceScores[playerId] || {};
             const days = s.days || {};
-            scores[playerId] = {
+            const sourceBrackets =
+              s.dayBrackets && typeof s.dayBrackets === 'object' ? s.dayBrackets : {};
+            const normalizeDayPoints = (value) => {
+              const n = Number(value);
+              if (!Number.isFinite(n) || n < 0) return 0;
+              if (allowedDayPoints.has(n)) return n;
+              // Conserve les anciennes valeurs non listées (pas de perte de données)
+              return Math.round(n);
+            };
+            const score = {
               days: {
-                lundi: [0, 5, 10].includes(Number(days.lundi)) ? Number(days.lundi) : 0,
-                mardi: [0, 5, 10].includes(Number(days.mardi)) ? Number(days.mardi) : 0,
-                mercredi: [0, 5, 10].includes(Number(days.mercredi)) ? Number(days.mercredi) : 0,
-                jeudi: [0, 5, 10].includes(Number(days.jeudi)) ? Number(days.jeudi) : 0,
-                vendredi: [0, 5, 10].includes(Number(days.vendredi)) ? Number(days.vendredi) : 0,
+                lundi: normalizeDayPoints(days.lundi),
+                mardi: normalizeDayPoints(days.mardi),
+                mercredi: normalizeDayPoints(days.mercredi),
+                jeudi: normalizeDayPoints(days.jeudi),
+                vendredi: normalizeDayPoints(days.vendredi),
+              },
+              dayBrackets: {
+                lundi: VS_BRACKETS.includes(sourceBrackets.lundi)
+                  ? sourceBrackets.lundi
+                  : inferDayBracket(days.lundi),
+                mardi: VS_BRACKETS.includes(sourceBrackets.mardi)
+                  ? sourceBrackets.mardi
+                  : inferDayBracket(days.mardi),
+                mercredi: VS_BRACKETS.includes(sourceBrackets.mercredi)
+                  ? sourceBrackets.mercredi
+                  : inferDayBracket(days.mercredi),
+                jeudi: VS_BRACKETS.includes(sourceBrackets.jeudi)
+                  ? sourceBrackets.jeudi
+                  : inferDayBracket(days.jeudi),
+                vendredi: VS_BRACKETS.includes(sourceBrackets.vendredi)
+                  ? sourceBrackets.vendredi
+                  : inferDayBracket(days.vendredi),
               },
               allianceDonMissed: Boolean(s.allianceDonMissed),
             };
+            scores[playerId] = score;
           });
 
           return {
@@ -470,6 +724,7 @@
             closedBy: w.closedBy || '',
             closedByUserId: w.closedByUserId || '',
             closedByPlayerId: w.closedByPlayerId || null,
+            donationsVerified: Boolean(w.donationsVerified),
             scores,
           };
         })
@@ -531,11 +786,21 @@
       },
       playerWeekNotes,
       powerTiers,
+      vsSettings,
     };
 
     // Compatibilité : anciennes clés « pseudo » → identifiant interne
     if (global.ROSPlayerIdentity && typeof global.ROSPlayerIdentity.migrateMainState === 'function') {
       global.ROSPlayerIdentity.migrateMainState(normalized);
+    }
+
+    // Première migration VS : mode ÉCO par défaut + recalcul de la semaine active uniquement
+    const hadVsSettings = Boolean(raw.vsSettings && typeof raw.vsSettings === 'object');
+    if (!hadVsSettings) {
+      const active = normalized.weeks.find((w) => w.id === normalized.currentWeekId);
+      if (active && !active.archived) {
+        recalculateWeekWithBareme(active, normalized);
+      }
     }
 
     return normalized;
@@ -557,6 +822,8 @@
     APP_ROLES,
     DONATION_PENALTY,
     DATA_VERSION,
+    VS_BRACKETS,
+    VS_MODES,
     uid,
     startOfWeekMonday,
     addDays,
@@ -580,6 +847,7 @@
     computeTotal,
     getColorClass,
     getColorLabel,
+    getColorThresholds,
     getFlaggedDays,
     colorRank,
     roleRank,
@@ -589,6 +857,21 @@
     getColorHistory,
     countConsecutiveRed,
     countConsecutiveMissedDonations,
+    createDefaultVsSettings,
+    normalizeVsSettings,
+    getVsSettings,
+    getActiveVsConfig,
+    formatVsMillions,
+    formatVsMillionsShort,
+    inferDayBracket,
+    pointsForBracket,
+    getDayOptions,
+    labelForDayPoints,
+    ensureDayBrackets,
+    applyVsBaremeToScore,
+    recalculateWeekWithBareme,
+    countDaysUnderObjective,
+    countObjectivesMet,
     createDefaultPowerTiers,
     normalizePowerTier,
     normalizePowerTiers,

@@ -1,9 +1,11 @@
 /**
  * Module VS hebdomadaire — gestion sécurisée des semaines
+ * Modes VS ÉCO / VS À FOND · paramètres · indicateurs · clôture sécurisée
  */
 (function (global) {
   const els = {};
   let rendering = false;
+  let settingsTab = 'afond';
 
   function cacheDom() {
     els.weekSelector = document.getElementById('weekSelector');
@@ -14,6 +16,19 @@
     els.activeTitle = document.getElementById('vsActiveWeekTitle');
     els.activeDates = document.getElementById('vsActiveWeekDates');
     els.archiveNotice = document.getElementById('vsArchiveNotice');
+    els.modeBar = document.getElementById('vsModeBar');
+    els.modeLabel = document.getElementById('vsModeLabel');
+    els.btnToggleMode = document.getElementById('vsToggleMode');
+    els.btnOpenSettings = document.getElementById('btnVsSettings');
+    els.btnBackFromSettings = document.getElementById('btnVsBackFromSettings');
+    els.mainView = document.getElementById('vsMainView');
+    els.settingsView = document.getElementById('vsSettingsView');
+    els.legend = document.getElementById('vsLegend');
+    els.donationsCheck = document.getElementById('vsDonationsVerified');
+    els.donationsWrap = document.getElementById('vsDonationsVerifiedWrap');
+    els.settingsPaneAfond = document.getElementById('vsSettingsPaneAfond');
+    els.settingsPaneEco = document.getElementById('vsSettingsPaneEco');
+    els.settingsForm = document.getElementById('vsSettingsForm');
   }
 
   function escapeHtml(value) {
@@ -38,6 +53,60 @@
   function isSelectedEditable() {
     const state = ROSStorage.getState();
     return ROSModels.isWeekEditable(getSelectedWeek(), state.currentWeekId);
+  }
+
+  function modeLabel(mode) {
+    return mode === 'afond' ? 'VS À FOND' : 'VS ÉCO';
+  }
+
+  function showSettingsView(show) {
+    if (els.mainView) els.mainView.classList.toggle('hidden', show);
+    if (els.settingsView) els.settingsView.classList.toggle('hidden', !show);
+  }
+
+  function renderModeBar(state) {
+    const settings = ROSModels.getVsSettings(state);
+    const isAfond = settings.mode === 'afond';
+    if (els.modeLabel) {
+      els.modeLabel.innerHTML = isAfond
+        ? '🔴 Mode actuel : <strong>VS À FOND</strong>'
+        : '🟢 Mode actuel : <strong>VS ÉCO</strong>';
+    }
+    if (els.btnToggleMode) {
+      els.btnToggleMode.textContent = isAfond ? 'Revenir en VS ÉCO' : 'Passer en VS À FOND';
+      els.btnToggleMode.dataset.targetMode = isAfond ? 'eco' : 'afond';
+    }
+    if (els.modeBar) {
+      els.modeBar.classList.toggle('vs-mode-afond', isAfond);
+      els.modeBar.classList.toggle('vs-mode-eco', !isAfond);
+    }
+  }
+
+  function renderLegend(state) {
+    if (!els.legend) return;
+    const settings = ROSModels.getVsSettings(state);
+    const options = ROSModels.getDayOptions(settings);
+    const cfg = ROSModels.getActiveVsConfig(settings);
+    const thresholds = ROSModels.getColorThresholds(settings);
+    const donation = cfg.donationPenalty;
+    const orangeMax = Math.max(thresholds.orangeFrom, thresholds.redFrom - 1);
+
+    const optionItems = options
+      .map(
+        (opt) =>
+          `<span class="legend-item"><span class="swatch score-${
+            opt.bracket === 'ok' ? '0' : opt.bracket === 'mid' ? '5' : '10'
+          }"></span> ${escapeHtml(opt.label)}</span>`
+      )
+      .join('');
+
+    els.legend.innerHTML = `
+      ${optionItems}
+      <span class="legend-item"><span class="swatch score-don"></span> Dons non réalisés · ${donation} pts</span>
+      <span class="legend-item"><span class="dot color-green"></span> 0–${thresholds.orangeFrom - 1}</span>
+      <span class="legend-item"><span class="dot color-orange"></span> ${thresholds.orangeFrom}–${orangeMax}</span>
+      <span class="legend-item"><span class="dot color-red"></span> ≥ ${thresholds.redFrom}</span>
+    `;
   }
 
   function renderWeekBar() {
@@ -78,19 +147,34 @@
           ? `Archive VS — clôturée par ${by} (consultation seule)`
           : 'Archive VS — consultation seule (non modifiable)';
     }
+
+    if (els.donationsWrap) {
+      els.donationsWrap.classList.toggle('hidden', !editable);
+    }
+    if (els.donationsCheck) {
+      els.donationsCheck.checked = Boolean(selected?.donationsVerified);
+      els.donationsCheck.disabled = !editable;
+    }
   }
 
-  function dayCellHtml(playerId, dayKey, value, editable) {
+  function dayCellHtml(playerId, dayKey, value, bracket, editable, state) {
+    const settings = ROSModels.getVsSettings(state);
+    const displayBracket =
+      settings.mode === 'eco' && bracket === 'mid' ? 'ok' : bracket || ROSModels.inferDayBracket(value);
+
     if (!editable) {
-      const label =
-        ROSModels.DAY_OPTIONS.find((opt) => opt.value === Number(value))?.label || `${value} pts`;
+      const label = ROSModels.labelForDayPoints(value, state, displayBracket);
       return `<td><span class="vs-readonly">${escapeHtml(label)}</span></td>`;
     }
 
-    const options = ROSModels.DAY_OPTIONS.map(
-      (opt) =>
-        `<option value="${opt.value}" ${Number(value) === opt.value ? 'selected' : ''}>${opt.label}</option>`
-    ).join('');
+    const options = ROSModels.getDayOptions(state)
+      .map((opt) => {
+        const selected = opt.bracket === displayBracket;
+        return `<option value="${opt.bracket}" ${selected ? 'selected' : ''}>${escapeHtml(
+          opt.label
+        )}</option>`;
+      })
+      .join('');
 
     return `
       <td>
@@ -105,7 +189,7 @@
     `;
   }
 
-  function donationCellHtml(playerId, missed, editable) {
+  function donationCellHtml(playerId, missed, editable, donationPts) {
     if (!editable) {
       return `<td><span class="vs-readonly">${missed ? 'Non réalisés' : 'OK'}</span></td>`;
     }
@@ -118,7 +202,7 @@
             data-player="${playerId}"
             ${missed ? 'checked' : ''}
           />
-          +5 pts
+          +${donationPts} pts
         </label>
       </td>
     `;
@@ -128,13 +212,11 @@
     const state = ROSStorage.getState();
 
     if (editable) {
-      // Semaine active : tous les Actifs (Absents inclus, Parti exclus)
       return state.players
         .filter((p) => p.status === 'Actif')
         .sort((a, b) => a.pseudo.localeCompare(b.pseudo, 'fr', { sensitivity: 'base' }));
     }
 
-    // Archive : joueurs présents dans le snapshot (historique figé)
     const ids = Object.keys(week.scores || {});
     return ids
       .map((id) => state.players.find((p) => p.id === id) || { id, pseudo: 'Joueur retiré', role: '—' })
@@ -166,16 +248,51 @@
     );
   }
 
+  function fillSettingsForm(state) {
+    const settings = ROSModels.getVsSettings(state);
+    const setVal = (id, value) => {
+      const el = document.getElementById(id);
+      if (el) el.value = value;
+    };
+    setVal('vsAfondDailyGoal', settings.afond.dailyGoal);
+    setVal('vsAfondMidMin', settings.afond.midMin);
+    setVal('vsAfondMidPoints', settings.afond.midPoints);
+    setVal('vsAfondLowPoints', settings.afond.lowPoints);
+    setVal('vsAfondDonation', settings.afond.donationPenalty);
+    setVal('vsAfondRedFrom', settings.afond.redFrom);
+    setVal('vsEcoDailyGoal', settings.eco.dailyGoal);
+    setVal('vsEcoUnderPoints', settings.eco.underPoints);
+    setVal('vsEcoDonation', settings.eco.donationPenalty);
+    setVal('vsEcoRedFrom', settings.eco.redFrom);
+  }
+
+  function switchSettingsTab(tab) {
+    settingsTab = tab === 'eco' ? 'eco' : 'afond';
+    document.querySelectorAll('[data-vs-settings-tab]').forEach((btn) => {
+      const active = btn.dataset.vsSettingsTab === settingsTab;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    els.settingsPaneAfond?.classList.toggle('hidden', settingsTab !== 'afond');
+    els.settingsPaneEco?.classList.toggle('hidden', settingsTab !== 'eco');
+  }
+
   function render() {
     if (rendering) return;
     rendering = true;
 
     try {
-      renderWeekBar();
       const state = ROSStorage.getState();
+      renderModeBar(state);
+      renderLegend(state);
+      renderWeekBar();
+      fillSettingsForm(state);
+      switchSettingsTab(settingsTab);
+
       const week = getSelectedWeek();
       const editable = ROSModels.isWeekEditable(week, state.currentWeekId);
       const players = playersForWeek(week, editable);
+      const cfg = ROSModels.getActiveVsConfig(state);
 
       if (!players.length) {
         els.tbody.innerHTML = '';
@@ -197,22 +314,28 @@
         );
       }
 
-      const freshWeek = ROSStorage.getState().weeks.find((w) => w.id === week.id) || week;
+      const freshState = ROSStorage.getState();
+      const freshWeek = freshState.weeks.find((w) => w.id === week.id) || week;
 
       els.tbody.innerHTML = players
         .map((player) => {
           const localScore = freshWeek.scores[player.id] || ROSModels.createEmptyScore();
+          ROSModels.ensureDayBrackets(localScore);
           const ignored = Boolean(player.absent) && editable;
-          const total = ignored ? 0 : ROSModels.computeTotal(localScore);
-          const color = ignored ? 'color-green' : ROSModels.getColorClass(total);
+          const total = ignored ? 0 : ROSModels.computeTotal(localScore, freshState);
+          const color = ignored ? 'color-green' : ROSModels.getColorClass(total, freshState);
           const rowEditable = editable && !player.absent;
+          const under = ignored ? 0 : ROSModels.countDaysUnderObjective(localScore);
+          const met = ignored ? 5 : ROSModels.countObjectivesMet(localScore);
 
           const dayCells = ROSModels.DAYS.map((day) =>
             dayCellHtml(
               player.id,
               day.key,
               ignored ? 0 : localScore.days[day.key],
-              rowEditable
+              ignored ? 'ok' : localScore.dayBrackets[day.key],
+              rowEditable,
+              freshState
             )
           ).join('');
 
@@ -225,7 +348,14 @@
               <td><strong>${escapeHtml(player.pseudo)}</strong>${absentBadge}</td>
               <td>${escapeHtml(player.role)}</td>
               ${dayCells}
-              ${donationCellHtml(player.id, ignored ? false : localScore.allianceDonMissed, rowEditable)}
+              ${donationCellHtml(
+                player.id,
+                ignored ? false : localScore.allianceDonMissed,
+                rowEditable,
+                cfg.donationPenalty
+              )}
+              <td class="vs-indicator-cell" data-under-for="${player.id}">${under} / 5</td>
+              <td class="vs-indicator-cell" data-met-for="${player.id}">${met} / 5</td>
               <td class="total-cell ${color}" data-total-for="${player.id}">${total}</td>
             </tr>
           `;
@@ -241,15 +371,24 @@
     const player = ROSStorage.getPlayerById(playerId);
     if (player?.absent) return;
 
+    const state = ROSStorage.getState();
     const week = getSelectedWeek();
     const score = week.scores[playerId] || ROSModels.createEmptyScore();
-    const total = ROSModels.computeTotal(score);
-    const color = ROSModels.getColorClass(total);
+    const total = ROSModels.computeTotal(score, state);
+    const color = ROSModels.getColorClass(total, state);
+    const under = ROSModels.countDaysUnderObjective(score);
+    const met = ROSModels.countObjectivesMet(score);
+
     const cell = els.tbody.querySelector(`[data-total-for="${playerId}"]`);
-    if (!cell) return;
-    cell.textContent = String(total);
-    cell.classList.remove('color-green', 'color-orange', 'color-red');
-    cell.classList.add(color);
+    if (cell) {
+      cell.textContent = String(total);
+      cell.classList.remove('color-green', 'color-orange', 'color-red');
+      cell.classList.add(color);
+    }
+    const underCell = els.tbody.querySelector(`[data-under-for="${playerId}"]`);
+    if (underCell) underCell.textContent = `${under} / 5`;
+    const metCell = els.tbody.querySelector(`[data-met-for="${playerId}"]`);
+    if (metCell) metCell.textContent = `${met} / 5`;
   }
 
   function syncSideViews() {
@@ -259,7 +398,7 @@
     if (global.NotificationsModule) NotificationsModule.render();
   }
 
-  function updateDay(playerId, dayKey, value) {
+  function updateDay(playerId, dayKey, bracket) {
     const state = ROSStorage.getState();
     const weekId = els.weekSelector.value;
     const week = state.weeks.find((w) => w.id === weekId);
@@ -272,14 +411,17 @@
     const player = ROSStorage.getPlayerById(playerId);
     if (!player || player.status !== 'Actif' || player.absent) return;
 
-    const points = Number(value);
-    if (![0, 5, 10].includes(points)) return;
+    const safeBracket = ROSModels.VS_BRACKETS.includes(bracket)
+      ? bracket
+      : ROSModels.inferDayBracket(bracket);
+    const points = ROSModels.pointsForBracket(safeBracket, state);
 
     ROSStorage.update(
       (s) => {
         const target = s.weeks.find((w) => w.id === weekId);
         if (!ROSModels.isWeekEditable(target, s.currentWeekId)) return s;
         const score = ROSModels.ensurePlayerScore(target, playerId);
+        score.dayBrackets[dayKey] = safeBracket;
         score.days[dayKey] = points;
         return s;
       },
@@ -338,6 +480,17 @@
   }
 
   async function createNewWeek() {
+    const state = ROSStorage.getState();
+    const current = getActiveWeek(state);
+    if (current && !current.donationsVerified) {
+      await AppUI.confirm({
+        title: 'Vérification des dons',
+        message: 'Les dons d’alliance ont-ils bien été vérifiés pour tous les joueurs ?',
+        confirmLabel: 'Retour au tableau',
+      });
+      return;
+    }
+
     const ok = await AppUI.confirm({
       title: 'Créer la semaine suivante',
       message: 'Créer la semaine suivante ? La semaine actuelle sera automatiquement archivée.',
@@ -348,28 +501,24 @@
     const startDateObj = nextAvailableMonday();
 
     ROSStorage.update((s) => {
-      // 1. Archiver complètement la semaine actuelle (scores intacts, jamais supprimés)
-      const current = s.weeks.find((w) => w.id === s.currentWeekId);
-      if (current) {
-        current.archived = true;
-        current.closedAt = new Date().toISOString();
+      const currentWeek = s.weeks.find((w) => w.id === s.currentWeekId);
+      if (currentWeek) {
+        currentWeek.archived = true;
+        currentWeek.closedAt = new Date().toISOString();
         const actor =
           global.ROSProfiles && typeof ROSProfiles.stampActor === 'function'
             ? ROSProfiles.stampActor()
             : { actorUserId: '', actorPlayerId: null, actorLabel: '' };
-        current.closedByUserId = actor.actorUserId || '';
-        current.closedByPlayerId = actor.actorPlayerId || null;
-        current.closedBy = actor.actorLabel || '';
+        currentWeek.closedByUserId = actor.actorUserId || '';
+        currentWeek.closedByPlayerId = actor.actorPlayerId || null;
+        currentWeek.closedBy = actor.actorLabel || '';
       }
 
-      // 2. Créer la semaine suivante
       const week = ROSModels.createWeek(startDateObj, {
         number: ROSModels.getNextWeekNumber(s.weeks),
         archived: false,
       });
 
-      // 3–9. Actifs uniquement (Absents inclus avec case Absent inchangée côté joueur)
-      // Parti exclus. Jours = Plus de 7,2 M (0), dons = NON, total 0, couleur Verte.
       s.players
         .filter((p) => p.status === 'Actif')
         .forEach((p) => {
@@ -383,6 +532,89 @@
 
     els.weekSelector.value = ROSStorage.getState().currentWeekId;
     AppUI.toast('Nouvelle semaine créée. La précédente est archivée.');
+  }
+
+  async function toggleMode() {
+    const state = ROSStorage.getState();
+    const settings = ROSModels.getVsSettings(state);
+    const target = els.btnToggleMode?.dataset.targetMode === 'afond' ? 'afond' : 'eco';
+    const fromLabel = modeLabel(settings.mode);
+    const toLabel = modeLabel(target);
+
+    const ok = await AppUI.confirm({
+      title: `Passer en ${toLabel}`,
+      message: `Confirmer le passage de ${fromLabel} vers ${toLabel} ? Les pénalités de la semaine active seront recalculées avec le barème ${toLabel}.`,
+      confirmLabel: 'Confirmer',
+    });
+    if (!ok) return;
+
+    ROSStorage.update((s) => {
+      s.vsSettings = ROSModels.normalizeVsSettings({
+        ...ROSModels.getVsSettings(s),
+        mode: target,
+      });
+      const active = s.weeks.find((w) => w.id === s.currentWeekId);
+      if (active && !active.archived) {
+        ROSModels.recalculateWeekWithBareme(active, s);
+      }
+      return s;
+    });
+
+    AppUI.toast(`Mode ${toLabel} activé — pénalités recalculées.`);
+    render();
+    syncSideViews();
+  }
+
+  function saveSettings(event) {
+    event.preventDefault();
+    const readNum = (id) => Number(document.getElementById(id)?.value);
+
+    ROSStorage.update((s) => {
+      s.vsSettings = ROSModels.normalizeVsSettings({
+        mode: ROSModels.getVsSettings(s).mode,
+        afond: {
+          dailyGoal: readNum('vsAfondDailyGoal'),
+          midMin: readNum('vsAfondMidMin'),
+          midPoints: readNum('vsAfondMidPoints'),
+          lowPoints: readNum('vsAfondLowPoints'),
+          donationPenalty: readNum('vsAfondDonation'),
+          redFrom: readNum('vsAfondRedFrom'),
+        },
+        eco: {
+          dailyGoal: readNum('vsEcoDailyGoal'),
+          underPoints: readNum('vsEcoUnderPoints'),
+          donationPenalty: readNum('vsEcoDonation'),
+          redFrom: readNum('vsEcoRedFrom'),
+        },
+      });
+      const active = s.weeks.find((w) => w.id === s.currentWeekId);
+      if (active && !active.archived) {
+        ROSModels.recalculateWeekWithBareme(active, s);
+      }
+      return s;
+    });
+
+    AppUI.toast('Paramètres VS enregistrés.');
+    render();
+    syncSideViews();
+  }
+
+  function onDonationsVerifiedChange() {
+    if (!isSelectedEditable()) {
+      render();
+      return;
+    }
+    const checked = Boolean(els.donationsCheck?.checked);
+    const weekId = els.weekSelector.value;
+    ROSStorage.update(
+      (s) => {
+        const target = s.weeks.find((w) => w.id === weekId);
+        if (!ROSModels.isWeekEditable(target, s.currentWeekId)) return s;
+        target.donationsVerified = checked;
+        return s;
+      },
+      { silent: true }
+    );
   }
 
   function onTableChange(event) {
@@ -403,6 +635,18 @@
     els.btnNewWeek.addEventListener('click', createNewWeek);
     els.weekSelector.addEventListener('change', render);
     els.tbody.addEventListener('change', onTableChange);
+    els.btnToggleMode?.addEventListener('click', toggleMode);
+    els.btnOpenSettings?.addEventListener('click', () => {
+      fillSettingsForm(ROSStorage.getState());
+      showSettingsView(true);
+    });
+    els.btnBackFromSettings?.addEventListener('click', () => showSettingsView(false));
+    els.donationsCheck?.addEventListener('change', onDonationsVerifiedChange);
+    els.settingsForm?.addEventListener('submit', saveSettings);
+    document.querySelectorAll('[data-vs-settings-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => switchSettingsTab(btn.dataset.vsSettingsTab));
+    });
+    showSettingsView(false);
   }
 
   global.VSModule = { init, render, getSelectedWeek, getActiveWeek };

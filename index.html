@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ROS6 Command Center</title>
-  <link rel="stylesheet" href="css/styles.css?v=20260804-4" />
+  <link rel="stylesheet" href="css/styles.css?v=20260805-vs1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -176,54 +176,156 @@
             <p class="panel-subtitle">Lundi → Vendredi · barème points · dons d’alliance</p>
           </div>
           <div class="panel-header-actions">
+            <button type="button" id="btnVsSettings" class="btn btn-ghost">Paramètres VS</button>
             <button type="button" id="btnNewWeek" class="btn btn-primary">+ Nouvelle semaine</button>
           </div>
         </div>
 
-        <div class="vs-week-bar">
-          <div class="vs-week-active">
-            <span class="vs-week-label">Semaine active</span>
-            <strong id="vsActiveWeekTitle">Semaine 1</strong>
-            <span id="vsActiveWeekDates" class="vs-week-dates"></span>
+        <div id="vsMainView">
+          <div id="vsModeBar" class="vs-mode-bar vs-mode-eco">
+            <span id="vsModeLabel" class="vs-mode-label">🟢 Mode actuel : <strong>VS ÉCO</strong></span>
+            <button type="button" id="vsToggleMode" class="btn btn-ghost" data-target-mode="afond">
+              Passer en VS À FOND
+            </button>
           </div>
-          <label class="vs-week-select-wrap">
-            <span>Consulter une semaine</span>
-            <select id="weekSelector" class="input" aria-label="Semaine sélectionnée"></select>
+
+          <div class="vs-week-bar">
+            <div class="vs-week-active">
+              <span class="vs-week-label">Semaine active</span>
+              <strong id="vsActiveWeekTitle">Semaine 1</strong>
+              <span id="vsActiveWeekDates" class="vs-week-dates"></span>
+            </div>
+            <label class="vs-week-select-wrap">
+              <span>Consulter une semaine</span>
+              <select id="weekSelector" class="input" aria-label="Semaine sélectionnée"></select>
+            </label>
+          </div>
+          <p id="vsArchiveNotice" class="vs-archive-notice hidden">
+            Semaine archivée — consultation seule. Les archives ne sont jamais modifiées.
+          </p>
+
+          <label id="vsDonationsVerifiedWrap" class="vs-donations-check">
+            <input type="checkbox" id="vsDonationsVerified" />
+            <span>Vérification des dons effectuée</span>
           </label>
-        </div>
-        <p id="vsArchiveNotice" class="vs-archive-notice hidden">
-          Semaine archivée — consultation seule. Les archives ne sont jamais modifiées.
-        </p>
 
-        <div class="legend">
-          <span class="legend-item"><span class="swatch score-0"></span> Plus de 7,2 M · 0 pt</span>
-          <span class="legend-item"><span class="swatch score-5"></span> 3,7 à 7,2 M · 5 pts</span>
-          <span class="legend-item"><span class="swatch score-10"></span> 0 à 3,6 M · 10 pts</span>
-          <span class="legend-item"><span class="swatch score-don"></span> Dons non réalisés · 5 pts</span>
-          <span class="legend-item"><span class="dot color-green"></span> 0–20</span>
-          <span class="legend-item"><span class="dot color-orange"></span> 25–30</span>
-          <span class="legend-item"><span class="dot color-red"></span> ≥ 35</span>
+          <div class="legend" id="vsLegend">
+            <span class="legend-item"><span class="swatch score-0"></span> Plus de 7,2 M · 0 pt</span>
+            <span class="legend-item"><span class="swatch score-5"></span> 3,7 à 7,2 M · 5 pts</span>
+            <span class="legend-item"><span class="swatch score-10"></span> 0 à 3,6 M · 10 pts</span>
+            <span class="legend-item"><span class="swatch score-don"></span> Dons non réalisés · 5 pts</span>
+            <span class="legend-item"><span class="dot color-green"></span> 0–20</span>
+            <span class="legend-item"><span class="dot color-orange"></span> 25–30</span>
+            <span class="legend-item"><span class="dot color-red"></span> ≥ 35</span>
+          </div>
+
+          <div class="table-wrap">
+            <table class="vs-table" id="vsTable">
+              <thead>
+                <tr>
+                  <th>Joueur</th>
+                  <th>Rôle</th>
+                  <th>Lun</th>
+                  <th>Mar</th>
+                  <th>Mer</th>
+                  <th>Jeu</th>
+                  <th>Ven</th>
+                  <th>Dons non réalisés</th>
+                  <th>Jours sous objectif</th>
+                  <th>Objectifs atteints</th>
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody id="vsTableBody"></tbody>
+            </table>
+          </div>
+          <p id="vsEmpty" class="empty-state hidden">Aucun joueur actif. Ajoutez des joueurs pour saisir le VS.</p>
         </div>
 
-        <div class="table-wrap">
-          <table class="vs-table" id="vsTable">
-            <thead>
-              <tr>
-                <th>Joueur</th>
-                <th>Rôle</th>
-                <th>Lun</th>
-                <th>Mar</th>
-                <th>Mer</th>
-                <th>Jeu</th>
-                <th>Ven</th>
-                <th>Dons non réalisés</th>
-                <th>Total</th>
-              </tr>
-            </thead>
-            <tbody id="vsTableBody"></tbody>
-          </table>
+        <div id="vsSettingsView" class="hidden">
+          <div class="panel-header" style="padding:0;margin-bottom:1rem">
+            <div>
+              <h3>Paramètres VS</h3>
+              <p class="panel-subtitle">Barèmes modifiables — aucune valeur codée en dur</p>
+            </div>
+            <div class="panel-header-actions">
+              <button type="button" id="btnVsBackFromSettings" class="btn btn-ghost">← Retour au VS</button>
+            </div>
+          </div>
+
+          <div class="settings-subtabs" role="tablist" aria-label="Barèmes VS">
+            <button type="button" class="chip-filter is-active" data-vs-settings-tab="afond" aria-selected="true">
+              VS À FOND
+            </button>
+            <button type="button" class="chip-filter" data-vs-settings-tab="eco" aria-selected="false">
+              VS ÉCO
+            </button>
+          </div>
+
+          <form id="vsSettingsForm" class="vs-settings-form">
+            <div id="vsSettingsPaneAfond" class="block">
+              <header class="block-header">
+                <h3>VS À FOND</h3>
+                <p>Barème intensif</p>
+              </header>
+              <div class="vs-settings-grid">
+                <label class="field">
+                  <span>Objectif quotidien</span>
+                  <input type="number" id="vsAfondDailyGoal" class="input" min="0" step="1" required />
+                </label>
+                <label class="field">
+                  <span>Seuil bas (entre ce seuil et objectif − 1)</span>
+                  <input type="number" id="vsAfondMidMin" class="input" min="0" step="1" required />
+                </label>
+                <label class="field">
+                  <span>Points (entre seuil bas et objectif)</span>
+                  <input type="number" id="vsAfondMidPoints" class="input" min="0" step="1" required />
+                </label>
+                <label class="field">
+                  <span>Points (moins que le seuil bas)</span>
+                  <input type="number" id="vsAfondLowPoints" class="input" min="0" step="1" required />
+                </label>
+                <label class="field">
+                  <span>Dons non faits</span>
+                  <input type="number" id="vsAfondDonation" class="input" min="0" step="1" required />
+                </label>
+                <label class="field">
+                  <span>Rouge à partir de</span>
+                  <input type="number" id="vsAfondRedFrom" class="input" min="1" step="1" required />
+                </label>
+              </div>
+            </div>
+
+            <div id="vsSettingsPaneEco" class="block hidden">
+              <header class="block-header">
+                <h3>VS ÉCO</h3>
+                <p>Barème économique (mode par défaut)</p>
+              </header>
+              <div class="vs-settings-grid">
+                <label class="field">
+                  <span>Objectif quotidien</span>
+                  <input type="number" id="vsEcoDailyGoal" class="input" min="0" step="1" required />
+                </label>
+                <label class="field">
+                  <span>Points sous objectif</span>
+                  <input type="number" id="vsEcoUnderPoints" class="input" min="0" step="1" required />
+                </label>
+                <label class="field">
+                  <span>Dons non faits</span>
+                  <input type="number" id="vsEcoDonation" class="input" min="0" step="1" required />
+                </label>
+                <label class="field">
+                  <span>Rouge à partir de</span>
+                  <input type="number" id="vsEcoRedFrom" class="input" min="1" step="1" required />
+                </label>
+              </div>
+            </div>
+
+            <div class="settings-actions" style="margin-top:1rem">
+              <button type="submit" class="btn btn-primary">Enregistrer les paramètres</button>
+            </div>
+          </form>
         </div>
-        <p id="vsEmpty" class="empty-state hidden">Aucun joueur actif. Ajoutez des joueurs pour saisir le VS.</p>
       </section>
 
       <!-- TRAIN -->
@@ -434,6 +536,9 @@
               <p>Disponibilité · sélection · max 20 participants / 10 remplaçants</p>
             </header>
             <div class="settings-actions" style="margin-bottom:0.75rem">
+              <button type="button" id="tempeteOpenSelection" class="btn btn-primary">
+                Sélection des joueurs
+              </button>
               <button type="button" id="tempeteResetAvailability" class="btn btn-ghost">
                 Réinitialiser les disponibilités
               </button>
@@ -867,6 +972,55 @@
     </div>
   </dialog>
 
+  <dialog id="tempeteSelectionModal" class="modal">
+    <div class="modal-card modal-wide">
+      <header class="modal-header">
+        <h3>Sélection des joueurs — Tempête</h3>
+        <button type="button" class="icon-btn" id="tempeteSelectionClose" aria-label="Fermer">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="panel-subtitle" style="margin-top:0">
+          Aide à la composition d’équipe — présence sur les 20 dernières Tempêtes
+        </p>
+        <div class="settings-subtabs" role="tablist" aria-label="Filtre présence" style="margin-bottom:0.85rem">
+          <button type="button" class="chip-filter is-active" data-tempete-presence-filter="all">Tous</button>
+          <button type="button" class="chip-filter" data-tempete-presence-filter="high">Présence ≥ 90 %</button>
+          <button type="button" class="chip-filter" data-tempete-presence-filter="mid">Présence 75–89 %</button>
+          <button type="button" class="chip-filter" data-tempete-presence-filter="low">Présence &lt; 75 %</button>
+        </div>
+        <div class="table-wrap">
+          <table class="archive-table" id="tempeteSelectionTable">
+            <thead>
+              <tr>
+                <th>Pseudo</th>
+                <th>Puissance héros</th>
+                <th>Présence %</th>
+              </tr>
+            </thead>
+            <tbody id="tempeteSelectionBody"></tbody>
+          </table>
+        </div>
+        <p id="tempeteSelectionEmpty" class="empty-state hidden">Aucun joueur pour ce filtre.</p>
+      </div>
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="tempeteSelectionCloseBtn">Fermer</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog id="tempetePresenceModal" class="modal">
+    <div class="modal-card">
+      <header class="modal-header">
+        <h3 id="tempetePresenceTitle">Historique Tempête</h3>
+        <button type="button" class="icon-btn" id="tempetePresenceClose" aria-label="Fermer">×</button>
+      </header>
+      <div class="modal-body" id="tempetePresenceBody"></div>
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="tempetePresenceCloseBtn">Fermer</button>
+      </footer>
+    </div>
+  </dialog>
+
   <!-- Fiche joueur -->
   <div id="playerDetailOverlay" class="drawer-overlay" hidden></div>
   <aside id="playerDetailDrawer" class="drawer drawer-wide" aria-hidden="true" aria-labelledby="playerDetailTitle">
@@ -908,7 +1062,7 @@
   <script src="js/supabase-client.js?v=20260804-4"></script>
   <script src="js/profiles.js?v=20260804-6"></script>
   <script src="js/supabase-sync.js?v=20260804-4"></script>
-  <script src="js/models.js?v=20260804-3"></script>
+  <script src="js/models.js?v=20260805-vs1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
   <script src="js/player-identity.js?v=20260802-4"></script>
   <script src="js/storage.js?v=20260803-7"></script>
@@ -918,11 +1072,11 @@
   <script src="js/players.js?v=20260802-4"></script>
   <script src="js/command.js?v=20260804-3"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
-  <script src="js/vs.js?v=20260804-3"></script>
+  <script src="js/vs.js?v=20260805-vs1"></script>
   <script src="js/archives.js?v=20260802-4"></script>
   <script src="js/train.js?v=20260804-3"></script>
-  <script src="js/ruche.js?v=20260803-7"></script>
-  <script src="js/tempete.js?v=20260804-3"></script>
+  <script src="js/ruche.js?v=20260804-8"></script>
+  <script src="js/tempete.js?v=20260805-vs1"></script>
   <script src="js/backups.js?v=20260803-7"></script>
   <script src="js/app.js?v=20260804-7"></script>
 </body>

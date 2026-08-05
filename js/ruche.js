@@ -189,10 +189,42 @@
     return grid[row][col];
   }
 
+  /**
+   * Maréchal = valeur de la case à position fixe (MARSHAL_ROW, MARSHAL_COL).
+   * Ne dépend pas du libellé affiché ; FREE / vide = non renseigné.
+   */
   function getMarshalId(grid = getState().grid) {
-    const value = grid[MARSHAL_ROW]?.[MARSHAL_COL];
-    if (!value || value === FREE) return null;
-    return value;
+    if (!grid || !Array.isArray(grid)) return null;
+    const row = grid[MARSHAL_ROW];
+    if (!Array.isArray(row)) return null;
+    const value = normalizeCellValue(row[MARSHAL_COL], { allowFree: false });
+    return value || null;
+  }
+
+  /** Fallback : lit le sélecteur de la case centrale (même position fixe). */
+  function readMarshalIdFromDom() {
+    const select =
+      els.grid?.querySelector(
+        `select[data-ruche-select][data-row="${MARSHAL_ROW}"][data-col="${MARSHAL_COL}"]`
+      ) || els.grid?.querySelector('select.ruche-marshal-select');
+    if (!select) return null;
+    return normalizeCellValue(select.value, { allowFree: false });
+  }
+
+  /**
+   * Garantit que la case centrale en état reflète le sélecteur Maréchal.
+   * Utile si l’UI affiche une sélection non encore persistée.
+   */
+  function syncMarshalFromDomIfNeeded() {
+    const fromState = getMarshalId();
+    if (fromState) return fromState;
+    const fromDom = readMarshalIdFromDom();
+    if (!fromDom) return null;
+    const s = getState();
+    s.grid = cloneGrid(s.grid);
+    s.grid[MARSHAL_ROW][MARSHAL_COL] = fromDom;
+    persist();
+    return fromDom;
   }
 
   function getBottomId(trainState = getState()) {
@@ -359,49 +391,90 @@
     const placed = [];
     const counts = new Map();
     let freeCount = 0;
-    const partiIds = new Set();
+    let emptyPlayerSlots = 0;
+    let playersInPlayerSlots = 0;
+    const unknownIds = new Set();
     const issues = [];
-    const marshalId = getMarshalId(grid);
+
+    // Maréchal : uniquement la case à position fixe (pas le libellé UI)
+    let marshalId = getMarshalId(grid);
+    if (!marshalId) {
+      const fromDom = readMarshalIdFromDom();
+      if (fromDom) marshalId = fromDom;
+    }
 
     let caseCount = 0;
     let playerSlotCount = 0;
 
+    const registerPlayer = (id, source, row, col) => {
+      placed.push({ id, source, row, col });
+      counts.set(id, (counts.get(id) || 0) + 1);
+      const player = getPlayerById(id);
+      if (!player || player.status !== 'Actif') unknownIds.add(id);
+    };
+
     grid.forEach((row, r) => {
-      row.forEach((cell, c) => {
+      row.forEach((rawCell, c) => {
         caseCount += 1;
         const marshal = isMarshalCell(r, c);
-        if (!marshal) playerSlotCount += 1;
+        const cell = normalizeCellValue(rawCell, { allowFree: !marshal });
 
-        if (marshal && cell === FREE) {
-          issues.push('La case Maréchal ne peut pas être FREE');
+        if (marshal) {
+          if (rawCell === FREE || rawCell === 'FREE') {
+            issues.push('La case Maréchal ne peut pas être FREE');
+          }
+          // Le Maréchal n'est jamais une des 100 cases joueurs
+          if (cell) registerPlayer(cell, 'marshal', r, c);
+          return;
         }
-        if (!cell) return;
+
+        playerSlotCount += 1;
+        if (!cell) {
+          emptyPlayerSlots += 1;
+          return;
+        }
         if (cell === FREE) {
           freeCount += 1;
           return;
         }
-        placed.push({ id: cell, source: marshal ? 'marshal' : 'grid', row: r, col: c });
-        counts.set(cell, (counts.get(cell) || 0) + 1);
-        const player = getPlayerById(cell);
-        if (player && player.status === 'Parti') partiIds.add(cell);
-        if (!player) partiIds.add(cell);
+        playersInPlayerSlots += 1;
+        registerPlayer(cell, 'grid', r, c);
       });
     });
 
-    // Case du bas = 101ᵉ case, attribuable joueur
+    // Case du bas = 101ᵉ case, slot joueur (FREE autorisé)
     caseCount += 1;
     playerSlotCount += 1;
-    if (bottomId === FREE) {
+    if (!bottomId) {
+      emptyPlayerSlots += 1;
+    } else if (bottomId === FREE) {
       freeCount += 1;
-    } else if (bottomId) {
-      placed.push({ id: bottomId, source: 'bottom' });
-      counts.set(bottomId, (counts.get(bottomId) || 0) + 1);
-      const player = getPlayerById(bottomId);
-      if (player && player.status === 'Parti') partiIds.add(bottomId);
-      if (!player) partiIds.add(bottomId);
+    } else {
+      playersInPlayerSlots += 1;
+      registerPlayer(bottomId, 'bottom');
     }
 
-    if (!marshalId) issues.push('Maréchal non renseigné');
+    if (!marshalId) {
+      issues.push('Maréchal non renseigné');
+    } else if (!activeIds.has(marshalId)) {
+      issues.push('Le Maréchal doit être un joueur actif');
+    }
+
+    if (emptyPlayerSlots > 0) {
+      issues.push(
+        `Cases joueurs vides : ${emptyPlayerSlots} (marquez-les FREE si aucun joueur)`
+      );
+    }
+
+    // FREE valides : joueurs dans slots + FREE = 100 (pas d'exigence artificielle de 100 actifs)
+    if (
+      emptyPlayerSlots === 0 &&
+      playersInPlayerSlots + freeCount !== PLAYER_SLOTS
+    ) {
+      issues.push(
+        `Cases joueurs incohérentes : ${playersInPlayerSlots} joueurs + ${freeCount} FREE ≠ ${PLAYER_SLOTS}`
+      );
+    }
 
     const duplicates = [];
     counts.forEach((count, id) => {
@@ -419,13 +492,18 @@
     const missing = active.filter((p) => !placedUnique.has(p.id));
     const extras = [...placedUnique].filter((id) => !activeIds.has(id));
 
+    const slotsConsistent =
+      emptyPlayerSlots === 0 && playersInPlayerSlots + freeCount === PLAYER_SLOTS;
+
     const canValidate =
       caseCount === TOTAL_CASES &&
       playerSlotCount === PLAYER_SLOTS &&
       Boolean(marshalId) &&
+      activeIds.has(marshalId) &&
+      slotsConsistent &&
       duplicates.length === 0 &&
       missing.length === 0 &&
-      partiIds.size === 0 &&
+      unknownIds.size === 0 &&
       extras.length === 0;
 
     return {
@@ -433,15 +511,20 @@
       caseCount,
       playerSlotCount,
       placedCount: placedUnique.size,
+      playersInPlayerSlots,
       totalActive: active.length,
       freeCount,
+      emptyPlayerSlots,
       marshalId,
       marshalMissing: !marshalId,
+      marshalPseudo: marshalId
+        ? getPlayerById(marshalId)?.pseudo || marshalId
+        : null,
       bottomId,
       duplicates,
       missing,
       issues,
-      partiIds: [...partiIds].map((id) => {
+      partiIds: [...unknownIds].map((id) => {
         const p = getPlayerById(id);
         return { id, pseudo: p ? p.pseudo : id };
       }),
@@ -584,26 +667,29 @@
     const issues = [...(check.issues || [])];
     if (check.duplicates.length) {
       issues.push(
-        `Doublons : ${check.duplicates
+        `Doublons détectés : ${check.duplicates
           .map((d) => `${escapeHtml(d.pseudo)} (×${d.count})`)
           .join(', ')}`
       );
     }
     if (check.partiIds.length) {
       issues.push(
-        `Joueurs invalides / Partis : ${check.partiIds.map((p) => escapeHtml(p.pseudo)).join(', ')}`
+        `Valeurs inconnues / joueurs non actifs : ${check.partiIds
+          .map((p) => escapeHtml(p.pseudo))
+          .join(', ')}`
       );
     }
     if (check.extras.length) {
-      issues.push(`Hors effectif actif : ${check.extras.map((p) => escapeHtml(p.pseudo)).join(', ')}`);
+      issues.push(
+        `Hors effectif actif : ${check.extras.map((p) => escapeHtml(p.pseudo)).join(', ')}`
+      );
     }
 
-    const marshalLabel = check.marshalId
-      ? escapeHtml(labelForValue(check.marshalId))
-      : '—';
-    const bottomLabel = check.bottomId
-      ? escapeHtml(labelForValue(check.bottomId))
-      : '—';
+    const marshalLabel = check.marshalPseudo
+      ? escapeHtml(check.marshalPseudo)
+      : check.marshalId
+        ? escapeHtml(labelForValue(check.marshalId) || check.marshalId)
+        : '—';
 
     const cls = check.canValidate ? 'train-ok' : 'train-errors';
     els.verifyResult.innerHTML = `
@@ -611,11 +697,11 @@
         <strong>Résultat de la vérification</strong>
         <ul class="ruche-stats">
           <li>Cases totales : ${check.caseCount} / ${TOTAL_CASES}</li>
-          <li>Cases joueurs (hors Maréchal) : ${check.playerSlotCount} / ${PLAYER_SLOTS}</li>
-          <li>Joueurs placés : ${check.placedCount} / ${check.totalActive}</li>
-          <li>Maréchal (centre) : ${marshalLabel}</li>
-          <li>Case du bas : ${bottomLabel}</li>
-          <li>FREE : ${check.freeCount}</li>
+          <li>Cases joueurs : ${check.playerSlotCount} / ${PLAYER_SLOTS}</li>
+          <li>Joueurs actifs attendus : ${check.totalActive}</li>
+          <li>Joueurs placés : ${check.placedCount}</li>
+          <li>Cases FREE : ${check.freeCount}</li>
+          <li>Maréchal : ${marshalLabel}</li>
           <li>Doublons : ${check.duplicates.length}</li>
           <li>Joueurs manquants : ${check.missing.length}</li>
         </ul>
@@ -627,7 +713,7 @@
         ${issues.length ? `<p>${issues.join('<br>')}</p>` : ''}
         ${
           check.canValidate
-            ? '<p>La ruche peut être validée (101 cases · Maréchal au centre · case du bas attribuable).</p>'
+            ? `<p>Ruche valide — ${check.totalActive} joueurs actifs, ${check.freeCount} FREE, Maréchal : ${marshalLabel}.</p>`
             : ''
         }
       </div>
@@ -761,15 +847,19 @@
   }
 
   function verifyHive() {
+    syncMarshalFromDomIfNeeded();
     lastCheck = analyzeGrid();
     renderVerifyResult(lastCheck);
     refreshValidateButton();
     AppUI.toast(
-      lastCheck.canValidate ? 'Ruche conforme — validation possible.' : 'Vérification terminée — des écarts restent.'
+      lastCheck.canValidate
+        ? 'Ruche conforme — validation possible.'
+        : 'Vérification terminée — des écarts restent.'
     );
   }
 
   async function validateHive() {
+    syncMarshalFromDomIfNeeded();
     const check = analyzeGrid();
     lastCheck = check;
     renderVerifyResult(check);

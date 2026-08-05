@@ -18,8 +18,8 @@
   };
   const ATTEND = {
     present: 'Présent',
-    absent: 'Absent',
     absent_excuse: 'Absent excusé',
+    absent: 'Absent non excusé',
   };
 
   const PHASE1_BUILDINGS = [
@@ -43,6 +43,7 @@
   const els = {};
   let state = null;
   let showAttendance = false;
+  let presenceFilter = 'all';
 
   function uid(prefix) {
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -339,6 +340,68 @@
   function getPlayerRecStats(playerId) {
     const row = getState().recommendationStats?.[playerId];
     return row ? { ...emptyPlayerStatRow(), ...row } : emptyPlayerStatRow();
+  }
+
+  /**
+   * Historique de présence sur les N dernières Tempêtes où le joueur était inscrit
+   * (participant ou remplaçant). Sert à composer les équipes — pas de sanction.
+   */
+  function getPlayerPresenceHistory(playerId, limit = 20) {
+    const archives = getState().archives || [];
+    const entries = [];
+
+    for (let i = 0; i < archives.length && entries.length < limit; i += 1) {
+      const arch = archives[i];
+      const outcomes = archivePlayerOutcomes(arch);
+      const outcome = outcomes[playerId];
+      if (!outcome) continue;
+      if (outcome.role !== 'participant' && outcome.role !== 'remplacant') continue;
+      const attendance = outcome.attendance || arch.attendance?.[playerId] || null;
+      if (!attendance || !Object.keys(ATTEND).includes(attendance)) continue;
+      entries.push({
+        archiveId: arch.id,
+        team: arch.team,
+        closedAt: arch.closedAt,
+        attendance,
+      });
+    }
+
+    const present = entries.filter((e) => e.attendance === 'present').length;
+    const absentExcuse = entries.filter((e) => e.attendance === 'absent_excuse').length;
+    const absent = entries.filter((e) => e.attendance === 'absent').length;
+    const total = entries.length;
+    const rate = total > 0 ? present / total : null;
+
+    return {
+      entries,
+      total,
+      present,
+      absentExcuse,
+      absent,
+      rate,
+      percent: rate == null ? null : Math.round(rate * 100),
+    };
+  }
+
+  function presenceColorClass(percent) {
+    if (percent == null || !Number.isFinite(percent)) return 'presence-unknown';
+    if (percent >= 90) return 'presence-green';
+    if (percent >= 75) return 'presence-orange';
+    return 'presence-red';
+  }
+
+  function formatPresencePercent(percent) {
+    if (percent == null || !Number.isFinite(percent)) return '—';
+    return `${percent} %`;
+  }
+
+  function formatSelectionPower(player) {
+    const mid = heroPowerMid(player);
+    if (mid > 0) {
+      const rounded = Math.round(mid);
+      return `${rounded} M`;
+    }
+    return heroPowerLabel(player);
   }
 
   function presenceRateForTeam(playerId, teamKey) {
@@ -994,6 +1057,13 @@
     els.attendanceList = document.getElementById('tempeteAttendanceList');
     els.archivesList = document.getElementById('tempeteArchivesList');
     els.archivesEmpty = document.getElementById('tempeteArchivesEmpty');
+    els.btnOpenSelection = document.getElementById('tempeteOpenSelection');
+    els.selectionModal = document.getElementById('tempeteSelectionModal');
+    els.selectionBody = document.getElementById('tempeteSelectionBody');
+    els.selectionEmpty = document.getElementById('tempeteSelectionEmpty');
+    els.presenceModal = document.getElementById('tempetePresenceModal');
+    els.presenceTitle = document.getElementById('tempetePresenceTitle');
+    els.presenceBody = document.getElementById('tempetePresenceBody');
   }
 
   function renderPlayers() {
@@ -1320,6 +1390,104 @@
         `;
       })
       .join('');
+  }
+
+  function matchesPresenceFilter(percent) {
+    if (presenceFilter === 'all') return true;
+    if (percent == null || !Number.isFinite(percent)) return false;
+    if (presenceFilter === 'high') return percent >= 90;
+    if (presenceFilter === 'mid') return percent >= 75 && percent <= 89;
+    if (presenceFilter === 'low') return percent < 75;
+    return true;
+  }
+
+  function renderSelectionModal() {
+    if (!els.selectionBody) return;
+    const players = getActivePlayers()
+      .map((p) => {
+        const history = getPlayerPresenceHistory(p.id, 20);
+        return {
+          id: p.id,
+          pseudo: p.pseudo,
+          powerLabel: formatSelectionPower(p),
+          percent: history.percent,
+        };
+      })
+      .filter((p) => matchesPresenceFilter(p.percent))
+      .sort((a, b) => {
+        const pa = a.percent == null ? -1 : a.percent;
+        const pb = b.percent == null ? -1 : b.percent;
+        if (pb !== pa) return pb - pa;
+        return a.pseudo.localeCompare(b.pseudo, 'fr', { sensitivity: 'base' });
+      });
+
+    document.querySelectorAll('[data-tempete-presence-filter]').forEach((btn) => {
+      btn.classList.toggle('is-active', btn.dataset.tempetePresenceFilter === presenceFilter);
+    });
+
+    if (!players.length) {
+      els.selectionBody.innerHTML = '';
+      els.selectionEmpty?.classList.remove('hidden');
+      return;
+    }
+    els.selectionEmpty?.classList.add('hidden');
+    els.selectionBody.innerHTML = players
+      .map((p) => {
+        const color = presenceColorClass(p.percent);
+        const label = formatPresencePercent(p.percent);
+        const clickable =
+          p.percent == null
+            ? `<span class="tempete-presence-pct ${color}">${escapeHtml(label)}</span>`
+            : `<button type="button" class="tempete-presence-pct ${color}" data-tempete-presence-detail="${p.id}">${escapeHtml(
+                label
+              )}</button>`;
+        return `
+          <tr>
+            <td><strong>${escapeHtml(p.pseudo)}</strong></td>
+            <td>${escapeHtml(p.powerLabel)}</td>
+            <td>${clickable}</td>
+          </tr>
+        `;
+      })
+      .join('');
+  }
+
+  function openSelectionModal() {
+    presenceFilter = 'all';
+    renderSelectionModal();
+    els.selectionModal?.showModal();
+  }
+
+  function closeSelectionModal() {
+    if (els.selectionModal?.open) els.selectionModal.close();
+  }
+
+  function openPresenceDetail(playerId) {
+    const player = getPlayerById(playerId);
+    const history = getPlayerPresenceHistory(playerId, 20);
+    if (els.presenceTitle) {
+      els.presenceTitle.textContent = `Historique Tempête${player ? ` — ${player.pseudo}` : ''}`;
+    }
+    if (els.presenceBody) {
+      const pct = formatPresencePercent(history.percent);
+      const color = presenceColorClass(history.percent);
+      els.presenceBody.innerHTML = `
+        <p class="panel-subtitle" style="margin-top:0">${history.total} participation${
+          history.total > 1 ? 's' : ''
+        }</p>
+        <ul class="tempete-stats">
+          <li>Présent : <strong>${history.present}</strong></li>
+          <li>Absence excusée : <strong>${history.absentExcuse}</strong></li>
+          <li>Absence non excusée : <strong>${history.absent}</strong></li>
+          <li>Présence : <strong class="tempete-presence-pct ${color}">${escapeHtml(pct)}</strong></li>
+        </ul>
+      `;
+    }
+    els.presenceModal?.showModal();
+  }
+
+  function closePresenceModal() {
+    if (els.presenceModal?.open) els.presenceModal.close();
   }
 
   function renderHours() {
@@ -1832,6 +2000,19 @@
     if (btn) showArchive(btn.dataset.tempeteArchive);
   }
 
+  function onSelectionClick(event) {
+    const detail = event.target.closest('[data-tempete-presence-detail]');
+    if (detail) {
+      openPresenceDetail(detail.dataset.tempetePresenceDetail);
+      return;
+    }
+    const filterBtn = event.target.closest('[data-tempete-presence-filter]');
+    if (filterBtn) {
+      presenceFilter = filterBtn.dataset.tempetePresenceFilter || 'all';
+      renderSelectionModal();
+    }
+  }
+
   function init() {
     cacheDom();
     loadState();
@@ -1863,6 +2044,7 @@
       });
     });
 
+    els.btnOpenSelection?.addEventListener('click', openSelectionModal);
     els.btnResetAvailability?.addEventListener('click', onResetAvailabilities);
     els.btnSuggestRemplacants?.addEventListener('click', onSuggestRemplacants);
     els.btnResetStorm?.addEventListener('click', onResetStorm);
@@ -1873,6 +2055,11 @@
 
     els.root?.addEventListener('change', onRootChange);
     els.root?.addEventListener('click', onRootClick);
+    els.selectionModal?.addEventListener('click', onSelectionClick);
+    document.getElementById('tempeteSelectionClose')?.addEventListener('click', closeSelectionModal);
+    document.getElementById('tempeteSelectionCloseBtn')?.addEventListener('click', closeSelectionModal);
+    document.getElementById('tempetePresenceClose')?.addEventListener('click', closePresenceModal);
+    document.getElementById('tempetePresenceCloseBtn')?.addEventListener('click', closePresenceModal);
 
     render();
   }
@@ -1895,5 +2082,6 @@
     STORAGE_KEY,
     getRecentAbsenceAlerts,
     migratePlayerIdentity,
+    getPlayerPresenceHistory,
   };
 })(window);
