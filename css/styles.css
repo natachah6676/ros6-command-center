@@ -104,6 +104,35 @@ select {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 0 1px rgba(199, 58, 67, 0.25);
 }
 
+.brand-logo {
+  display: block;
+  flex-shrink: 0;
+  object-fit: contain;
+  object-position: center;
+  background: transparent;
+  max-width: 100%;
+  height: auto;
+}
+
+.brand-logo--login {
+  width: min(12rem, 58vw);
+  max-height: min(12rem, 40vh);
+}
+
+.brand-logo--nav {
+  width: clamp(1.75rem, 3.6vw, 2.5rem);
+  max-height: 2.5rem;
+}
+
+.brand-logo-failed [data-brand-logo] {
+  display: none !important;
+}
+
+/* Connexion : le PNG contient déjà WAROPS — le titre HTML sert de secours. */
+.auth-brand.has-brand-logo [data-brand-fallback] {
+  display: none;
+}
+
 .brand-text h1 {
   margin: 0;
   font-size: 1.4rem;
@@ -2474,10 +2503,26 @@ tbody tr:hover {
 
 .auth-brand {
   margin-bottom: 0.45rem;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.7rem;
 }
 
-.auth-brand .brand {
-  align-items: flex-start;
+.auth-brand .brand-text h1 {
+  font-size: clamp(1.25rem, 4.5vw, 1.55rem);
+}
+
+@media (max-width: 520px) {
+  .brand-logo--login {
+    width: min(9.5rem, 64vw);
+    max-height: min(9.5rem, 34vh);
+  }
+
+  .brand-logo--nav {
+    width: 1.85rem;
+    max-height: 1.85rem;
+  }
 }
 
 .auth-error {

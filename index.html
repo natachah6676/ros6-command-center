@@ -4,14 +4,23 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WAROPS</title>
-  <link rel="stylesheet" href="css/styles.css?v=20260806-rec4" />
+  <link rel="icon" type="image/png" href="public/assets/branding/warops-logo.png" />
+  <link rel="apple-touch-icon" href="public/assets/branding/warops-logo.png" />
+  <link rel="stylesheet" href="css/styles.css?v=20260806-brand2" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
     <form id="authLoginForm" class="auth-card" autocomplete="on">
-      <div class="brand auth-brand">
-        <span class="brand-mark" aria-hidden="true">W</span>
-        <div class="brand-text">
+      <div class="brand auth-brand" data-brand-root>
+        <img
+          class="brand-logo brand-logo--login"
+          src="public/assets/branding/warops-logo.png"
+          alt="WarOps"
+          width="160"
+          height="160"
+          data-brand-logo
+        />
+        <div class="brand-text" data-brand-fallback>
           <h1>WAROPS</h1>
           <p class="brand-tagline">The Alliance Command Platform</p>
         </div>
@@ -31,9 +40,16 @@
 
   <div class="app hidden">
     <header class="topbar">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true">W</span>
-        <div class="brand-text">
+      <div class="brand" data-brand-root>
+        <img
+          class="brand-logo brand-logo--nav"
+          src="public/assets/branding/warops-logo.png"
+          alt="WarOps"
+          width="40"
+          height="40"
+          data-brand-logo
+        />
+        <div class="brand-text" data-brand-fallback>
           <h1>WAROPS</h1>
           <p class="brand-tagline">The Alliance Command Platform</p>
           <p class="brand-meta" id="brandAllianceLine">Alliance : ROS6</p>
@@ -1158,6 +1174,30 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    (function () {
+      document.querySelectorAll('[data-brand-root]').forEach(function (root) {
+        var logo = root.querySelector('[data-brand-logo]');
+        if (!logo) return;
+        function ok() {
+          root.classList.add('has-brand-logo');
+          root.classList.remove('brand-logo-failed');
+        }
+        function fail() {
+          root.classList.add('brand-logo-failed');
+          root.classList.remove('has-brand-logo');
+          logo.setAttribute('hidden', '');
+          logo.setAttribute('aria-hidden', 'true');
+        }
+        logo.addEventListener('load', ok);
+        logo.addEventListener('error', fail);
+        if (logo.complete) {
+          if (logo.naturalWidth > 0) ok();
+          else fail();
+        }
+      });
+    })();
+  </script>
   <script src="js/supabase-client.js?v=20260804-4"></script>
   <script src="js/profiles.js?v=20260804-6"></script>
   <script src="js/supabase-sync.js?v=20260804-4"></script>
