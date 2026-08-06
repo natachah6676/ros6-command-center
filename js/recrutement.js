@@ -1,11 +1,10 @@
 /**
- * Module Recrutement — joueurs à remplacer (score sur historique VS archivé).
- * Critères fixes (Inactif, Coaching) + agrégation cumulative VS / Dons.
+ * Module Recrutement — joueurs à remplacer.
+ * Score = somme des totaux Archives (computeTotal) sur toutes les semaines
+ * + bonus Inactif / Coaching.
  */
 (function (global) {
   const POINTS = {
-    vs: { green: 0, orange: 5, red: 10 },
-    donations: { green: 0, orange: 5, red: 10 },
     inactive: 40,
     coaching: 10,
   };
@@ -52,18 +51,20 @@
       .replace(/"/g, '&quot;');
   }
 
-  /** Exclusions : Absents, R4, R5, Parti (archivés / désactivés). */
+  /**
+   * Exclusions : R4, R5, Parti / désactivés.
+   * (Les joueurs marqués « absent » restent visibles — même source qu’Archives.)
+   */
   function isExcludedFromRecruitment(player) {
     if (!player) return true;
     if (player.status !== 'Actif') return true;
-    if (player.absent) return true;
     if (player.role === 'R4' || player.role === 'R5') return true;
     return false;
   }
 
   /**
-   * Semaines clôturées / archivées uniquement (pas la semaine en cours).
-   * Dédupliquées par id.
+   * Même source que le module Archives : toutes les semaines de state.weeks,
+   * dédupliquées par id (y compris la semaine en cours si présente).
    */
   function getArchivedWeeks(state) {
     const seen = new Set();
@@ -71,42 +72,10 @@
     (state.weeks || []).forEach((week) => {
       if (!week || !week.id) return;
       if (seen.has(week.id)) return;
-      if (week.id === state.currentWeekId) return;
-      if (!week.archived) return;
       seen.add(week.id);
       weeks.push(week);
     });
     return weeks.sort((a, b) => (a.startDate < b.startDate ? -1 : 1));
-  }
-
-  function colorToPoints(color, table) {
-    if (color === 'color-red') return table.red;
-    if (color === 'color-orange') return table.orange;
-    return table.green;
-  }
-
-  /**
-   * Couleur VS d’une semaine : basée sur les points de jours uniquement
-   * (hors pénalité don), pour ne pas mélanger VS et Dons.
-   */
-  function getVsWeekColor(week, playerId, state) {
-    const score = week?.scores?.[playerId];
-    if (!score) return null;
-    const dayTotal = (ROSModels.DAYS || []).reduce(
-      (sum, day) => sum + (Number(score.days?.[day.key]) || 0),
-      0
-    );
-    return ROSModels.getColorClass(dayTotal, state);
-  }
-
-  /**
-   * Couleur Dons : Vert si don OK, Rouge si don manqué.
-   * (Pas d’Orange distinct dans les données actuelles — réserve pour évolutivité.)
-   */
-  function getDonationWeekColor(week, playerId) {
-    const score = week?.scores?.[playerId];
-    if (!score) return null;
-    return score.allianceDonMissed ? 'color-red' : 'color-green';
   }
 
   function blankHistoryTotals() {
@@ -118,10 +87,14 @@
       donationOrangeWeeks: 0,
       donationRedWeeks: 0,
       weeksCounted: 0,
+      weekDetails: [],
     };
   }
 
-  /** Agrège VS + Dons sur tout l’historique archivé. */
+  /**
+   * Agrège les totaux affichés dans Archives (ROSModels.computeTotal)
+   * pour chaque semaine où le joueur a une entrée de score.
+   */
   function aggregateHistoryScore(player, state) {
     const totals = blankHistoryTotals();
     const weeks = getArchivedWeeks(state);
@@ -130,21 +103,34 @@
       if (!week.scores || !Object.prototype.hasOwnProperty.call(week.scores, player.id)) {
         return;
       }
+      const score = week.scores[player.id];
+      if (!score) return;
+
+      const dayTotal = (ROSModels.DAYS || []).reduce(
+        (sum, day) => sum + (Number(score.days?.[day.key]) || 0),
+        0
+      );
+      const total = ROSModels.computeTotal(score, state);
+      const donationPart = Math.max(0, total - dayTotal);
+      const color = ROSModels.getColorClass(total, state);
+
       totals.weeksCounted += 1;
+      totals.vsPoints += dayTotal;
+      totals.donationPoints += donationPart;
+      totals.weekDetails.push({
+        weekId: week.id,
+        label: week.label || week.id,
+        dayTotal,
+        donationPart,
+        total,
+        color,
+        archived: Boolean(week.archived),
+        isCurrent: week.id === state.currentWeekId,
+      });
 
-      const vsColor = getVsWeekColor(week, player.id, state);
-      if (vsColor) {
-        totals.vsPoints += colorToPoints(vsColor, POINTS.vs);
-        if (vsColor === 'color-orange') totals.vsOrangeWeeks += 1;
-        if (vsColor === 'color-red') totals.vsRedWeeks += 1;
-      }
-
-      const donColor = getDonationWeekColor(week, player.id);
-      if (donColor) {
-        totals.donationPoints += colorToPoints(donColor, POINTS.donations);
-        if (donColor === 'color-orange') totals.donationOrangeWeeks += 1;
-        if (donColor === 'color-red') totals.donationRedWeeks += 1;
-      }
+      if (color === 'color-orange') totals.vsOrangeWeeks += 1;
+      if (color === 'color-red') totals.vsRedWeeks += 1;
+      if (score.allianceDonMissed) totals.donationRedWeeks += 1;
     });
 
     return totals;
@@ -168,12 +154,13 @@
       }
     });
 
-    const score =
-      history.vsPoints + history.donationPoints + inactivePoints + coachingPoints;
+    const archiveTotal = history.vsPoints + history.donationPoints;
+    const score = archiveTotal + inactivePoints + coachingPoints;
 
     return {
       player,
       score,
+      archiveTotal,
       vsPoints: history.vsPoints,
       donationPoints: history.donationPoints,
       inactivePoints,
@@ -183,6 +170,7 @@
       donationOrangeWeeks: history.donationOrangeWeeks,
       donationRedWeeks: history.donationRedWeeks,
       weeksCounted: history.weeksCounted,
+      weekDetails: history.weekDetails,
       flags,
     };
   }

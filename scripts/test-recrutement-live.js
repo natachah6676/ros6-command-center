@@ -106,25 +106,29 @@ function runOnState(rawState) {
     .sort((a, b) => b.score - a.score || a.player.pseudo.localeCompare(b.player.pseudo, 'fr'));
 
   console.log('=== Recrutement live ===');
-  console.log(`archived_weeks=${archived.length} ids=${archived.map((w) => w.id).join(',')}`);
+  console.log(`weeks=${archived.length} ids=${archived.map((w) => w.id).join(',')}`);
   console.log(`current_week=${sandbox.__state.currentWeekId}`);
   console.log(`candidates_ge_15=${candidates.length}`);
   console.log('--- Top scores (y compris < 15) ---');
   allScored.slice(0, 12).forEach((r, i) => {
     console.log(
-      `${i + 1}. ${r.player.pseudo} total=${r.score} VS=${r.vsPoints}(${r.vsRedWeeks}R/${r.vsOrangeWeeks}O) Dons=${r.donationPoints}(${r.donationRedWeeks}R/${r.donationOrangeWeeks}O) inactif=${r.inactivePoints} coaching=${r.coachingPoints} weeks=${r.weeksCounted}`
+      `${i + 1}. ${r.player.pseudo} total=${r.score} VS=${r.vsPoints} Dons=${r.donationPoints} inactif=${r.inactivePoints} coaching=${r.coachingPoints} weeks=${r.weeksCounted}`
     );
   });
   console.log('--- Liste affichée (≥ 15) ---');
-  candidates.slice(0, 15).forEach((r, i) => {
+  candidates.slice(0, 20).forEach((r, i) => {
     console.log(
-      `${i + 1}. ${r.player.pseudo} total=${r.score} VS=${r.vsPoints}(${r.vsRedWeeks}R/${r.vsOrangeWeeks}O) Dons=${r.donationPoints}(${r.donationRedWeeks}R/${r.donationOrangeWeeks}O) inactif=${r.inactivePoints} coaching=${r.coachingPoints}`
+      `${i + 1}. ${r.player.pseudo} total=${r.score} VS=${r.vsPoints} Dons=${r.donationPoints} inactif=${r.inactivePoints} coaching=${r.coachingPoints}`
     );
   });
 
-  if (!archived.every((w) => w.archived && w.id !== sandbox.__state.currentWeekId)) {
-    throw new Error('Semaines non archivées incluses');
-  }
+  const ani = candidates.find((r) => r.player.pseudo === 'Ani Bulgaria');
+  const agent = candidates.find((r) => r.player.pseudo === 'Agent0003');
+  if (!ani) throw new Error('Ani Bulgaria absente de la liste');
+  if (ani.score !== 35) throw new Error(`Ani Bulgaria attendu 35, got ${ani.score}`);
+  if (!agent) throw new Error('Agent0003 absent de la liste');
+  if (agent.vsPoints !== 25) throw new Error(`Agent0003 VS attendu 25, got ${agent.vsPoints}`);
+
   if (!candidates.every((r) => r.score >= 15)) throw new Error('Seuil 15 non respecté');
   if (!candidates.every((r) => !Recrutement.isExcludedFromRecruitment(r.player))) {
     throw new Error('Exclus présents dans la liste');
