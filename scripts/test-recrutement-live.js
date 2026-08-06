@@ -1,6 +1,6 @@
 /**
- * Test Recrutement sur l’état live Supabase (historique archivé réel).
- * node scripts/test-recrutement-live.js
+ * Test Recrutement sur l’état live (fenêtre 8 semaines pondérée).
+ * node scripts/test-recrutement-live.js [dump.json]
  */
 const fs = require('fs');
 const path = require('path');
@@ -58,7 +58,6 @@ function fetchState() {
 async function main() {
   const rows = await fetchState();
   if (!Array.isArray(rows) || !rows[0]?.data) {
-    // RLS peut bloquer l’anon : bascule sur dump MCP si fourni
     const dumpPath = process.argv[2];
     if (!dumpPath || !fs.existsSync(dumpPath)) {
       console.error('Impossible de lire ros6_state (RLS ?) et aucun dump fourni.');
@@ -97,44 +96,40 @@ function runOnState(rawState) {
   const Recrutement = sandbox.window.RecrutementModule;
   const ROSModels = sandbox.window.ROSModels;
 
+  // Ne pas passer par normalizeState ici : il force archived sur toutes les non-courantes,
+  // ce qui est OK. On l’utilise pour coller au runtime app.
   sandbox.__state = ROSModels.normalizeState(rawState);
-  const archived = Recrutement.getArchivedWeeks(sandbox.__state);
+  const windowWeeks = Recrutement.getScoringWeeks(sandbox.__state);
   const candidates = Recrutement.getReplacementCandidates(sandbox.__state);
-  const allScored = (sandbox.__state.players || [])
-    .filter((p) => !Recrutement.isExcludedFromRecruitment(p))
-    .map((p) => Recrutement.scorePlayer(p, sandbox.__state))
-    .sort((a, b) => b.score - a.score || a.player.pseudo.localeCompare(b.player.pseudo, 'fr'));
 
   console.log('=== Recrutement live ===');
-  console.log(`weeks=${archived.length} ids=${archived.map((w) => w.id).join(',')}`);
+  console.log(`window=${windowWeeks.length} ids=${windowWeeks.map((w) => w.id).join(',')}`);
   console.log(`current_week=${sandbox.__state.currentWeekId}`);
-  console.log(`candidates_ge_15=${candidates.length}`);
-  console.log('--- Top scores (y compris < 15) ---');
-  allScored.slice(0, 12).forEach((r, i) => {
+  console.log(`candidates_ge_30=${candidates.length}`);
+  candidates.slice(0, 15).forEach((r, i) => {
+    const weeks = r.weekDetails
+      .map((w) => `r${w.rank}:${w.rawTotal}×${w.weight}`)
+      .join(' ');
     console.log(
-      `${i + 1}. ${r.player.pseudo} total=${r.score} VS=${r.vsPoints} Dons=${r.donationPoints} inactif=${r.inactivePoints} coaching=${r.coachingPoints} weeks=${r.weeksCounted}`
-    );
-  });
-  console.log('--- Liste affichée (≥ 15) ---');
-  candidates.slice(0, 20).forEach((r, i) => {
-    console.log(
-      `${i + 1}. ${r.player.pseudo} total=${r.score} VS=${r.vsPoints} Dons=${r.donationPoints} inactif=${r.inactivePoints} coaching=${r.coachingPoints}`
+      `${i + 1}. ${r.player.pseudo} réel=${r.realScore} affiché=${r.displayedScore} prio=${r.priority.level} inactif=${r.inactivePoints} coaching=${r.coachingPoints} [${weeks}]`
     );
   });
 
-  const ani = candidates.find((r) => r.player.pseudo === 'Ani Bulgaria');
-  const agent = candidates.find((r) => r.player.pseudo === 'Agent0003');
-  if (!ani) throw new Error('Ani Bulgaria absente de la liste');
-  if (ani.score !== 35) throw new Error(`Ani Bulgaria attendu 35, got ${ani.score}`);
-  if (!agent) throw new Error('Agent0003 absent de la liste');
-  if (agent.vsPoints !== 25) throw new Error(`Agent0003 VS attendu 25, got ${agent.vsPoints}`);
-
-  if (!candidates.every((r) => r.score >= 15)) throw new Error('Seuil 15 non respecté');
-  if (!candidates.every((r) => !Recrutement.isExcludedFromRecruitment(r.player))) {
-    throw new Error('Exclus présents dans la liste');
+  if (windowWeeks.length > Recrutement.WINDOW_SIZE) {
+    throw new Error('Fenêtre > 8');
   }
+  if (windowWeeks.some((w) => w.id === sandbox.__state.currentWeekId)) {
+    throw new Error('Semaine courante dans la fenêtre');
+  }
+  if (!candidates.every((r) => r.realScore >= 30)) throw new Error('Seuil 30 non respecté');
+  if (!candidates.every((r) => !Recrutement.isExcludedFromRecruitment(r.player))) {
+    throw new Error('Exclus présents');
+  }
+  if (candidates.some((r) => r.player.absent)) throw new Error('Absent listé');
   for (let i = 1; i < candidates.length; i += 1) {
-    if (candidates[i - 1].score < candidates[i].score) throw new Error('Tri décroissant KO');
+    if (candidates[i - 1].realScore < candidates[i].realScore) {
+      throw new Error('Tri score réel KO');
+    }
   }
   console.log('LIVE_OK');
 }

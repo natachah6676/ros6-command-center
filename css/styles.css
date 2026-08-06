@@ -2623,6 +2623,27 @@ tbody tr:hover {
   margin: 0.12rem 0;
 }
 
+.recrutement-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.recrutement-priority {
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.recrutement-priority-medium {
+  color: #c47b1a;
+}
+
+.recrutement-priority-high {
+  color: #c0392b;
+}
+
 .recrutement-breakdown {
   display: grid;
   gap: 0.65rem;
@@ -2638,5 +2659,9 @@ tbody tr:hover {
 
 .recrutement-block li {
   margin: 0.1rem 0;
+}
+
+.recrutement-scores {
+  color: var(--text, inherit);
 }
 

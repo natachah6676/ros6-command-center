@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WAROPS</title>
-  <link rel="stylesheet" href="css/styles.css?v=20260806-rec2" />
+  <link rel="stylesheet" href="css/styles.css?v=20260806-rec4" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -85,34 +85,14 @@
           <div id="commandWeeklyHistory" class="command-weekly-history" style="margin-top:0.75rem"></div>
         </section>
 
-        <div class="command-layout">
-          <section class="block">
-            <header class="block-header">
-              <h3>Joueurs à contacter</h3>
-              <p>Rouges puis orange — clic pour ouvrir la fiche</p>
-            </header>
-            <div id="commandContactList" class="stack-list"></div>
-            <p id="commandContactEmpty" class="empty-state hidden">Aucun joueur orange ou rouge cette semaine.</p>
-          </section>
-
-          <section class="block">
-            <header class="block-header">
-              <h3>Centre de décision</h3>
-              <p>Actions du jour — cochées jusqu’à demain</p>
-            </header>
-            <div id="commandDecisions" class="stack-list"></div>
-            <p id="commandDecisionsEmpty" class="empty-state hidden">Aucune action en attente pour aujourd’hui.</p>
-          </section>
-
-          <section class="block">
-            <header class="block-header">
-              <h3>Alertes</h3>
-              <p>Triées par importance</p>
-            </header>
-            <div id="commandAlerts" class="stack-list"></div>
-            <p id="commandAlertsEmpty" class="empty-state hidden">Aucune alerte pour le moment.</p>
-          </section>
-        </div>
+        <section class="block">
+          <header class="block-header">
+            <h3>Alertes</h3>
+            <p>Triées par importance</p>
+          </header>
+          <div id="commandAlerts" class="stack-list"></div>
+          <p id="commandAlertsEmpty" class="empty-state hidden">Aucune alerte pour le moment.</p>
+        </section>
 
         <section class="block block-absents" style="margin-top:1rem">
           <header class="block-header">
@@ -457,7 +437,7 @@
         <section class="block">
           <header class="block-header">
             <h3>Joueurs à remplacer</h3>
-            <p>Classés par score décroissant — minimum 15 points</p>
+            <p>8 dernières semaines archivées pondérées — minimum 30 points</p>
           </header>
           <div id="recrutementList" class="stack-list"></div>
           <p id="recrutementEmpty" class="empty-state hidden">Aucun joueur à proposer pour le moment.</p>
@@ -1186,15 +1166,15 @@
   <script src="js/player-identity.js?v=20260802-4"></script>
   <script src="js/storage.js?v=20260806-warops1"></script>
   <script src="js/ui-helpers.js?v=20260802-4"></script>
-  <script src="js/insights.js?v=20260802-4"></script>
+  <script src="js/insights.js?v=20260806-cmd1"></script>
   <script src="js/player-stats.js?v=20260802-4"></script>
   <script src="js/players.js?v=20260806-rec1"></script>
-  <script src="js/command.js?v=20260806-rec1"></script>
+  <script src="js/command.js?v=20260806-cmd1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260805-vs1"></script>
   <script src="js/archives.js?v=20260802-4"></script>
   <script src="js/train.js?v=20260806-train2"></script>
-  <script src="js/recrutement.js?v=20260806-rec3"></script>
+  <script src="js/recrutement.js?v=20260806-rec4"></script>
   <script src="js/ruche.js?v=20260806-prop1"></script>
   <script src="js/tempete.js?v=20260806-assign1"></script>
   <script src="js/backups.js?v=20260806-warops1"></script>

@@ -1,7 +1,6 @@
 /**
- * Module Recrutement — joueurs à remplacer.
- * Score = somme des totaux Archives (computeTotal) sur toutes les semaines
- * + bonus Inactif / Coaching.
+ * Module Recrutement — score de remplacement sur les 8 dernières semaines archivées,
+ * avec pondération récente + bonus Inactif / Coaching.
  */
 (function (global) {
   const POINTS = {
@@ -9,13 +8,24 @@
     coaching: 10,
   };
 
-  /** Score minimum pour apparaître dans la liste. */
-  const MIN_SCORE = 15;
+  /** Fenêtre glissante (semaines archivées les plus récentes). */
+  const WINDOW_SIZE = 8;
 
-  /**
-   * Critères ponctuels (hors historique hebdo) — extensibles.
-   * Chaque entrée : { id, label, points, matches(player, state) }
-   */
+  /** Pondération par rang (1 = semaine archivée la plus récente). */
+  const WEIGHT_BY_RANK = {
+    1: 1,
+    2: 1,
+    3: 0.75,
+    4: 0.75,
+    5: 0.5,
+    6: 0.5,
+    7: 0.5,
+    8: 0.5,
+  };
+
+  /** Score réel minimum pour apparaître dans la liste. */
+  const MIN_SCORE = 30;
+
   const RECRUITMENT_CRITERIA = [
     {
       id: 'inactive',
@@ -51,89 +61,103 @@
       .replace(/"/g, '&quot;');
   }
 
-  /**
-   * Exclusions : R4, R5, Parti / désactivés.
-   * (Les joueurs marqués « absent » restent visibles — même source qu’Archives.)
-   */
+  /** Exclusions : Absents, R4, R5, Parti / désactivés. */
   function isExcludedFromRecruitment(player) {
     if (!player) return true;
     if (player.status !== 'Actif') return true;
+    if (player.absent) return true;
     if (player.role === 'R4' || player.role === 'R5') return true;
     return false;
   }
 
+  function weightForRank(rank) {
+    return WEIGHT_BY_RANK[rank] ?? 0;
+  }
+
+  function formatWeightPercent(weight) {
+    const pct = Math.round(Number(weight) * 100);
+    return `${pct} %`;
+  }
+
+  function formatScoreReal(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '0';
+    return String(n).replace('.', ',');
+  }
+
   /**
-   * Même source que le module Archives : toutes les semaines de state.weeks,
-   * dédupliquées par id (y compris la semaine en cours si présente).
+   * 8 dernières semaines archivées (hors semaine courante), plus récentes d’abord.
+   * Les archives plus anciennes restent en base mais sortent du calcul.
    */
-  function getArchivedWeeks(state) {
+  function getScoringWeeks(state) {
     const seen = new Set();
     const weeks = [];
     (state.weeks || []).forEach((week) => {
       if (!week || !week.id) return;
       if (seen.has(week.id)) return;
+      if (week.id === state.currentWeekId) return;
+      if (!week.archived) return;
       seen.add(week.id);
       weeks.push(week);
     });
-    return weeks.sort((a, b) => (a.startDate < b.startDate ? -1 : 1));
+    weeks.sort((a, b) => {
+      if (a.startDate === b.startDate) return a.id < b.id ? 1 : -1;
+      return a.startDate < b.startDate ? 1 : -1;
+    });
+    return weeks.slice(0, WINDOW_SIZE);
   }
 
-  function blankHistoryTotals() {
-    return {
-      vsPoints: 0,
-      donationPoints: 0,
-      vsOrangeWeeks: 0,
-      vsRedWeeks: 0,
-      donationOrangeWeeks: 0,
-      donationRedWeeks: 0,
-      weeksCounted: 0,
-      weekDetails: [],
-    };
+  /** Alias conservé pour les tests / API. */
+  function getArchivedWeeks(state) {
+    return getScoringWeeks(state);
+  }
+
+  function getPriority(realScore) {
+    if (realScore >= 50) {
+      return { level: 'high', label: 'Priorité élevée', icon: '🔴' };
+    }
+    if (realScore >= MIN_SCORE) {
+      return { level: 'medium', label: 'Priorité moyenne', icon: '🟠' };
+    }
+    return { level: 'none', label: '', icon: '' };
   }
 
   /**
-   * Agrège les totaux affichés dans Archives (ROSModels.computeTotal)
-   * pour chaque semaine où le joueur a une entrée de score.
+   * Agrège les totaux Archives (computeTotal) sur la fenêtre pondérée.
    */
   function aggregateHistoryScore(player, state) {
-    const totals = blankHistoryTotals();
-    const weeks = getArchivedWeeks(state);
+    const scoringWeeks = getScoringWeeks(state);
+    const weekDetails = [];
+    let weightedVs = 0;
 
-    weeks.forEach((week) => {
+    scoringWeeks.forEach((week, index) => {
+      const rank = index + 1;
+      const weight = weightForRank(rank);
       if (!week.scores || !Object.prototype.hasOwnProperty.call(week.scores, player.id)) {
         return;
       }
       const score = week.scores[player.id];
       if (!score) return;
 
-      const dayTotal = (ROSModels.DAYS || []).reduce(
-        (sum, day) => sum + (Number(score.days?.[day.key]) || 0),
-        0
-      );
-      const total = ROSModels.computeTotal(score, state);
-      const donationPart = Math.max(0, total - dayTotal);
-      const color = ROSModels.getColorClass(total, state);
-
-      totals.weeksCounted += 1;
-      totals.vsPoints += dayTotal;
-      totals.donationPoints += donationPart;
-      totals.weekDetails.push({
+      const rawTotal = ROSModels.computeTotal(score, state);
+      const weighted = rawTotal * weight;
+      weightedVs += weighted;
+      weekDetails.push({
         weekId: week.id,
-        label: week.label || week.id,
-        dayTotal,
-        donationPart,
-        total,
-        color,
-        archived: Boolean(week.archived),
-        isCurrent: week.id === state.currentWeekId,
+        label: week.label || `Semaine ${week.number || rank}`,
+        rank,
+        weight,
+        rawTotal,
+        weighted,
       });
-
-      if (color === 'color-orange') totals.vsOrangeWeeks += 1;
-      if (color === 'color-red') totals.vsRedWeeks += 1;
-      if (score.allianceDonMissed) totals.donationRedWeeks += 1;
     });
 
-    return totals;
+    return {
+      weightedVs,
+      weekDetails,
+      weeksCounted: weekDetails.length,
+      windowSize: scoringWeeks.length,
+    };
   }
 
   function scorePlayer(player, state) {
@@ -154,23 +178,24 @@
       }
     });
 
-    const archiveTotal = history.vsPoints + history.donationPoints;
-    const score = archiveTotal + inactivePoints + coachingPoints;
+    const realScore = history.weightedVs + inactivePoints + coachingPoints;
+    const displayedScore = Math.round(realScore);
+    const priority = getPriority(realScore);
 
     return {
       player,
-      score,
-      archiveTotal,
-      vsPoints: history.vsPoints,
-      donationPoints: history.donationPoints,
+      /** Score réel (tri). */
+      score: realScore,
+      realScore,
+      displayedScore,
+      vsPoints: history.weightedVs,
+      donationPoints: 0,
       inactivePoints,
       coachingPoints,
-      vsOrangeWeeks: history.vsOrangeWeeks,
-      vsRedWeeks: history.vsRedWeeks,
-      donationOrangeWeeks: history.donationOrangeWeeks,
-      donationRedWeeks: history.donationRedWeeks,
       weeksCounted: history.weeksCounted,
+      windowSize: history.windowSize,
       weekDetails: history.weekDetails,
+      priority,
       flags,
     };
   }
@@ -179,51 +204,54 @@
     return (state.players || [])
       .filter((p) => !isExcludedFromRecruitment(p))
       .map((p) => scorePlayer(p, state))
-      .filter((row) => row.score >= MIN_SCORE)
+      .filter((row) => row.realScore >= MIN_SCORE)
       .sort((a, b) => {
-        if (b.score !== a.score) return b.score - a.score;
+        if (b.realScore !== a.realScore) return b.realScore - a.realScore;
         return a.player.pseudo.localeCompare(b.player.pseudo, 'fr', { sensitivity: 'base' });
       });
   }
 
-  function formatWeekCount(n, colorLabel) {
-    const count = Number(n) || 0;
-    const label = count === 1 ? 'semaine' : 'semaines';
-    return `${count} ${label} ${colorLabel}`;
+  function renderWeekDetailLines(weekDetails) {
+    if (!weekDetails.length) {
+      return '<li>Aucune semaine dans la fenêtre</li>';
+    }
+    return weekDetails
+      .map(
+        (w) =>
+          `<li>Semaine ${w.rank} : ${escapeHtml(String(w.rawTotal))} ×${escapeHtml(
+            formatWeightPercent(w.weight)
+          )}</li>`
+      )
+      .join('');
   }
 
   function renderPlayerCard(row) {
-    const inactiveLine =
-      row.inactivePoints > 0
-        ? `<div>Inactif : <strong>+${row.inactivePoints}</strong></div>`
-        : `<div>Inactif : 0</div>`;
-    const coachingLine =
-      row.coachingPoints > 0
-        ? `<div>Coaching : <strong>+${row.coachingPoints}</strong></div>`
-        : `<div>Coaching : 0</div>`;
-
+    const priority = row.priority || getPriority(row.realScore);
     return `
       <article class="stack-item recrutement-card" data-player-id="${escapeHtml(row.player.id)}">
         <div class="stack-item-main">
-          <h4 class="stack-item-title">${escapeHtml(row.player.pseudo)} — ${row.score} points</h4>
+          <div class="recrutement-card-head">
+            <h4 class="stack-item-title">${escapeHtml(row.player.pseudo)}</h4>
+            <span class="recrutement-priority recrutement-priority-${priority.level}">
+              ${priority.icon} ${escapeHtml(priority.label)}
+            </span>
+          </div>
           <div class="recrutement-breakdown">
             <div class="recrutement-block">
-              <strong>VS : ${row.vsPoints} points</strong>
-              <ul>
-                <li>${escapeHtml(formatWeekCount(row.vsRedWeeks, 'rouge'))}</li>
-                <li>${escapeHtml(formatWeekCount(row.vsOrangeWeeks, 'orange'))}</li>
-              </ul>
+              <strong>VS :</strong>
+              <ul>${renderWeekDetailLines(row.weekDetails)}</ul>
             </div>
             <div class="recrutement-block">
-              <strong>Dons : ${row.donationPoints} points</strong>
-              <ul>
-                <li>${escapeHtml(formatWeekCount(row.donationRedWeeks, 'rouge'))}</li>
-                <li>${escapeHtml(formatWeekCount(row.donationOrangeWeeks, 'orange'))}</li>
-              </ul>
+              <div>Coaching : ${
+                row.coachingPoints > 0 ? `<strong>+${row.coachingPoints}</strong>` : '0'
+              }</div>
+              <div>Inactif : ${
+                row.inactivePoints > 0 ? `<strong>+${row.inactivePoints}</strong>` : '0'
+              }</div>
             </div>
-            <div class="recrutement-block">
-              ${inactiveLine}
-              ${coachingLine}
+            <div class="recrutement-block recrutement-scores">
+              <div>Score réel : <strong>${escapeHtml(formatScoreReal(row.realScore))}</strong></div>
+              <div>Score affiché : <strong>${row.displayedScore}</strong></div>
             </div>
           </div>
         </div>
@@ -265,9 +293,14 @@
     scorePlayer,
     isExcludedFromRecruitment,
     getArchivedWeeks,
+    getScoringWeeks,
     aggregateHistoryScore,
+    getPriority,
+    weightForRank,
     RECRUITMENT_CRITERIA,
     POINTS,
     MIN_SCORE,
+    WINDOW_SIZE,
+    WEIGHT_BY_RANK,
   };
 })(window);
