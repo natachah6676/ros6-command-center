@@ -117,6 +117,7 @@
     if (tabName === 'players') PlayersModule.render();
     if (tabName === 'vs') VSModule.render();
     if (tabName === 'train' && globalThis.TrainModule) TrainModule.render();
+    if (tabName === 'recrutement' && globalThis.RecrutementModule) RecrutementModule.render();
     if (tabName === 'ruche' && globalThis.RucheModule) RucheModule.render();
     if (tabName === 'tempete' && globalThis.TempeteModule) TempeteModule.render();
     if (tabName === 'archives') ArchivesModule.render();
@@ -187,7 +188,7 @@
     });
     renderCoachingThresholdSettings();
     if (global.PlayersModule) PlayersModule.render();
-    toast('Seuil coaching enregistré.');
+    void confirmParameterSaved('Seuil coaching enregistré.');
   }
 
   function renderAllianceSettings(state = ROSStorage.getState()) {
@@ -212,8 +213,6 @@
     };
     setText('brandAllianceLine', allianceLine);
     setText('brandServerLine', serverLine);
-    setText('authBrandAlliance', allianceLine);
-    setText('authBrandServer', serverLine);
     setText(
       'rucheSubtitle',
       `Plan de ruche ${alliance.tag} — 101 cases (10 × 10 + bas) · Maréchal au centre`
@@ -249,7 +248,29 @@
     });
     renderAllianceSettings();
     applyBrandIdentity();
-    toast('Alliance enregistrée.');
+    void confirmParameterSaved('Alliance enregistrée.');
+  }
+
+  async function confirmParameterSaved(successMessage) {
+    if (!globalThis.ROSSync || typeof ROSSync.flushPush !== 'function') {
+      toast(successMessage);
+      return;
+    }
+    const result = await ROSSync.flushPush();
+    if (result?.ok) {
+      toast(successMessage);
+      return;
+    }
+    if (result?.reason === 'conflict') return;
+    if (result?.reason === 'offline') {
+      toast('Hors connexion — modification conservée localement.');
+      return;
+    }
+    if (result?.reason && result.reason !== 'noop') {
+      // L’erreur de sync a déjà un toast dédié dans ROSSync.
+      return;
+    }
+    toast(successMessage);
   }
 
   function openPowerTierModal(tier = null) {
@@ -331,7 +352,7 @@
 
     closePowerTierModal();
     renderPowerTiersSettings();
-    toast(id ? 'Tranche mise à jour.' : 'Tranche ajoutée.');
+    void confirmParameterSaved(id ? 'Tranche mise à jour.' : 'Tranche ajoutée.');
   }
 
   async function deletePowerTier(tierId) {
@@ -365,7 +386,7 @@
     });
 
     renderPowerTiersSettings();
-    toast('Tranche supprimée.');
+    void confirmParameterSaved('Tranche supprimée.');
   }
 
   function getEffectiveAppRole() {
@@ -422,10 +443,19 @@
     PlayersModule.render();
     VSModule.render();
     if (globalThis.TrainModule) TrainModule.render();
+    if (globalThis.RecrutementModule) RecrutementModule.render();
     if (globalThis.RucheModule) RucheModule.render();
     if (globalThis.TempeteModule) TempeteModule.render();
     ArchivesModule.render();
     NotificationsModule.render();
+    renderAllianceSettings();
+    applyBrandIdentity();
+    if (globalThis.RucheModule?.renderSettings) RucheModule.renderSettings();
+    if (globalThis.BackupsModule) BackupsModule.render();
+  }
+
+  function onRemoteDataApplied() {
+    renderAll();
   }
 
   function exportData() {
@@ -579,6 +609,7 @@
     VSModule.init();
     ArchivesModule.init();
     if (globalThis.TrainModule) TrainModule.init();
+    if (globalThis.RecrutementModule) RecrutementModule.init();
     if (globalThis.RucheModule) RucheModule.init();
     if (globalThis.TempeteModule) TempeteModule.init();
     if (globalThis.BackupsModule) BackupsModule.init();
@@ -591,6 +622,7 @@
       PlayersModule.render();
       VSModule.render();
       if (globalThis.TrainModule) TrainModule.render();
+      if (globalThis.RecrutementModule) RecrutementModule.render();
       if (globalThis.RucheModule) RucheModule.render();
       if (globalThis.TempeteModule) TempeteModule.render();
       ArchivesModule.render();
@@ -654,7 +686,7 @@
 
   function init() {
     cacheDom();
-    window.AppUI = { toast, confirm, switchTab };
+    window.AppUI = { toast, confirm, switchTab, onRemoteDataApplied };
     // Avant ROSSync : la migration « Importer vers Supabase » utilise AppUI.confirm
     // et doit pouvoir cliquer #confirmOk immédiatement.
     bindEvents();

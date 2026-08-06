@@ -48,6 +48,7 @@
 
   const els = {};
   let state = null;
+  let skipPersist = false;
   let presenceFilter = 'all';
   /** Mode de la fenêtre commune : 'verify' | 'close' */
   let rosterModalMode = null;
@@ -257,10 +258,22 @@
   }
 
   function persist() {
+    if (skipPersist) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     if (global.ROSSync && typeof ROSSync.schedulePush === 'function') {
       ROSSync.schedulePush();
     }
+  }
+
+  /** Recharge depuis localStorage sans renvoyer vers Supabase. */
+  function hydrateFromStorage() {
+    skipPersist = true;
+    try {
+      loadState();
+    } finally {
+      skipPersist = false;
+    }
+    return state;
   }
 
   function getState() {
@@ -2606,6 +2619,7 @@
   global.TempeteModule = {
     init,
     render,
+    hydrateFromStorage,
     STORAGE_KEY,
     getRecentAbsenceAlerts,
     migratePlayerIdentity,

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WAROPS</title>
-  <link rel="stylesheet" href="css/styles.css?v=20260806-assign1" />
+  <link rel="stylesheet" href="css/styles.css?v=20260806-rec1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -14,8 +14,6 @@
         <div class="brand-text">
           <h1>WAROPS</h1>
           <p class="brand-tagline">The Alliance Command Platform</p>
-          <p class="brand-meta" id="authBrandAlliance">Alliance : ROS6</p>
-          <p class="brand-meta brand-meta--muted" id="authBrandServer">Serveur : 602</p>
         </div>
       </div>
       <label class="field">
@@ -59,6 +57,7 @@
       <button type="button" class="tab" data-tab="players" role="tab" aria-selected="false">Gestion des membres</button>
       <button type="button" class="tab" data-tab="vs" role="tab" aria-selected="false">VS</button>
       <button type="button" class="tab" data-tab="train" role="tab" aria-selected="false">Train</button>
+      <button type="button" class="tab" data-tab="recrutement" role="tab" aria-selected="false">Recrutement</button>
       <button type="button" class="tab" data-tab="ruche" role="tab" aria-selected="false">Ruche</button>
       <button type="button" class="tab" data-tab="tempete" role="tab" aria-selected="false">Tempête du Désert</button>
       <button type="button" class="tab" data-tab="archives" role="tab" aria-selected="false">Archives</button>
@@ -117,8 +116,8 @@
 
         <section class="block block-absents" style="margin-top:1rem">
           <header class="block-header">
-            <h3>Absents</h3>
-            <p>Ignorés du VS · exclus des futurs tirages Train</p>
+            <h3 id="commandAbsentsTitle">Absents (0)</h3>
+            <p>Joueurs marqués absents</p>
           </header>
           <div id="commandAbsentsList" class="absent-chips"></div>
           <p id="commandAbsentsEmpty" class="empty-state hidden">Aucun joueur absent.</p>
@@ -379,6 +378,7 @@
                     <button type="button" id="trainVipDraw" class="btn btn-ghost">🎲 Tirage au sort</button>
                   </div>
                   <div id="trainVipDrawPanel" style="margin-top:0.75rem"></div>
+                  <div id="trainVipExclusionStats" class="train-exclusion-stats" aria-live="polite"></div>
                 </section>
                 <section class="block" style="margin-top:0.85rem">
                   <header class="block-header">
@@ -446,6 +446,24 @@
         </div>
       </section>
 
+      <!-- RECRUTEMENT -->
+      <section id="panel-recrutement" class="panel" role="tabpanel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Recrutement</h2>
+            <p class="panel-subtitle">Joueurs à remplacer — score automatique selon les critères</p>
+          </div>
+        </div>
+        <section class="block">
+          <header class="block-header">
+            <h3>Joueurs à remplacer</h3>
+            <p>Classés par score décroissant — score 0 masqué</p>
+          </header>
+          <div id="recrutementList" class="stack-list"></div>
+          <p id="recrutementEmpty" class="empty-state hidden">Aucun joueur à proposer pour le moment.</p>
+        </section>
+      </section>
+
       <!-- RUCHE -->
       <section id="panel-ruche" class="panel" role="tabpanel" hidden>
         <div class="panel-header">
@@ -485,7 +503,7 @@
                 <p>Calculée automatiquement · modifiable · n’écrase la ruche actuelle qu’après validation</p>
               </header>
               <div id="rucheProposalStats" class="ruche-proposal-stats" aria-live="polite">
-                Joueurs conservés : 0 · Joueurs déplacés : 0
+                Gain estimé : 0 % · Déplacements : 0 joueurs
               </div>
               <div class="ruche-toolbar settings-actions">
                 <button type="button" id="rucheProposalOptimize" class="btn btn-ghost">
@@ -889,6 +907,13 @@
           </label>
           <small class="field-hint">Par défaut : apparaît dans le coaching s’il est dans le seuil défini en Paramètres</small>
         </fieldset>
+        <label class="field checkbox-field" id="playerInactiveField">
+          <span class="checkbox-line">
+            <input type="checkbox" id="playerInactive" />
+            <span>Inactif</span>
+          </span>
+          <small class="field-hint">Signalé pour le module Recrutement — n’exclut pas du VS</small>
+        </label>
         <label class="field checkbox-field" id="playerAbsentField">
           <span class="checkbox-line">
             <input type="checkbox" id="playerAbsent" />
@@ -1156,22 +1181,23 @@
   <script src="js/supabase-client.js?v=20260804-4"></script>
   <script src="js/profiles.js?v=20260804-6"></script>
   <script src="js/supabase-sync.js?v=20260804-4"></script>
-  <script src="js/models.js?v=20260806-warops1"></script>
+  <script src="js/models.js?v=20260806-rec1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
   <script src="js/player-identity.js?v=20260802-4"></script>
   <script src="js/storage.js?v=20260806-warops1"></script>
   <script src="js/ui-helpers.js?v=20260802-4"></script>
   <script src="js/insights.js?v=20260802-4"></script>
   <script src="js/player-stats.js?v=20260802-4"></script>
-  <script src="js/players.js?v=20260806-coach1"></script>
-  <script src="js/command.js?v=20260806-coach1"></script>
+  <script src="js/players.js?v=20260806-rec1"></script>
+  <script src="js/command.js?v=20260806-rec1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260805-vs1"></script>
   <script src="js/archives.js?v=20260802-4"></script>
-  <script src="js/train.js?v=20260804-3"></script>
+  <script src="js/train.js?v=20260806-train2"></script>
+  <script src="js/recrutement.js?v=20260806-rec1"></script>
   <script src="js/ruche.js?v=20260806-prop1"></script>
   <script src="js/tempete.js?v=20260806-assign1"></script>
   <script src="js/backups.js?v=20260806-warops1"></script>
-  <script src="js/app.js?v=20260806-warops1"></script>
+  <script src="js/app.js?v=20260806-rec1"></script>
 </body>
 </html>

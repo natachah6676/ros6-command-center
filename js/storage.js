@@ -7,6 +7,16 @@
   let state = null;
   const listeners = new Set();
 
+  function notifyListeners() {
+    listeners.forEach((fn) => {
+      try {
+        fn(state);
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  }
+
   function load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -27,21 +37,26 @@
     }
   }
 
+  /** Recharge l’état mémoire depuis localStorage sans déclencher de push Supabase. */
+  function hydrateFromStorage() {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return getState();
+    try {
+      state = ROSModels.normalizeState(JSON.parse(raw));
+    } catch (error) {
+      console.error('Erreur hydrate localStorage', error);
+    }
+    notifyListeners();
+    return state;
+  }
+
   function persist(notify = true) {
     if (!state) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     if (global.ROSSync && typeof ROSSync.schedulePush === 'function') {
       ROSSync.schedulePush();
     }
-    if (notify) {
-      listeners.forEach((fn) => {
-        try {
-          fn(state);
-        } catch (err) {
-          console.error(err);
-        }
-      });
-    }
+    if (notify) notifyListeners();
   }
 
   function getState() {
@@ -112,6 +127,7 @@
   global.ROSStorage = {
     STORAGE_KEY,
     load,
+    hydrateFromStorage,
     getState,
     update,
     subscribe,

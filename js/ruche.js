@@ -42,6 +42,7 @@
   const els = {};
   let state = null;
   let lastCheck = null;
+  let skipPersist = false;
 
   function uid(prefix) {
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -160,10 +161,22 @@
   }
 
   function persist() {
+    if (skipPersist) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     if (global.ROSSync && typeof ROSSync.schedulePush === 'function') {
       ROSSync.schedulePush();
     }
+  }
+
+  /** Recharge depuis localStorage sans renvoyer vers Supabase. */
+  function hydrateFromStorage() {
+    skipPersist = true;
+    try {
+      loadState();
+    } finally {
+      skipPersist = false;
+    }
+    return state;
   }
 
   function getState() {
@@ -365,11 +378,13 @@
     return slotKey(a) === slotKey(b);
   }
 
-  function slotDistance(slot) {
-    if (!slot || slot.type === 'bottom') return 1000;
-    const dr = Math.abs(Number(slot.row) - MARSHAL_ROW);
-    const dc = Math.abs(Number(slot.col) - MARSHAL_COL);
-    return Math.max(dr, dc) * 10 + Math.hypot(dr, dc);
+  /** Distance Chebyshev au Maréchal (case du bas = anneau extérieur). */
+  function chebyshevDist(slot) {
+    if (!slot || slot.type === 'bottom') return GRID_SIZE;
+    return Math.max(
+      Math.abs(Number(slot.row) - MARSHAL_ROW),
+      Math.abs(Number(slot.col) - MARSHAL_COL)
+    );
   }
 
   function getProposal() {
@@ -426,24 +441,122 @@
     return isOfficerPlayer(player);
   }
 
-  function powerSortPlayers(playerIds, mainState = ROSStorage.getState()) {
-    return playerIds
-      .slice()
-      .sort((a, b) => {
-        const pa = getPlayerById(a);
-        const pb = getPlayerById(b);
-        const va = ROSModels.getPlayerPowerSortValue(pa, mainState);
-        const vb = ROSModels.getPlayerPowerSortValue(pb, mainState);
-        if (vb !== va) return vb - va;
-        return String(pa?.pseudo || a).localeCompare(String(pb?.pseudo || b), 'fr', {
-          sensitivity: 'base',
-        });
-      });
+  function playerPowerValue(playerId, mainState) {
+    return ROSModels.getPlayerPowerSortValue(getPlayerById(playerId), mainState);
   }
 
   /**
-   * Proposition : Maréchal / R5 / R4 figés, membres par puissance vers le centre,
-   * en conservant les placements déjà cohérents (min déplacements).
+   * Qualité d’une disposition : paires concordantes (plus fort plus près du Maréchal).
+   * Max = n(n-1)/2 pour n joueurs déplaçables.
+   */
+  function placementQuality(posMap, movableIds, mainState) {
+    const ids = movableIds.filter((id) => posMap.has(id));
+    let score = 0;
+    for (let i = 0; i < ids.length; i += 1) {
+      for (let j = i + 1; j < ids.length; j += 1) {
+        const a = ids[i];
+        const b = ids[j];
+        const pa = playerPowerValue(a, mainState);
+        const pb = playerPowerValue(b, mainState);
+        if (pa === pb) {
+          score += 1;
+          continue;
+        }
+        const stronger = pa > pb ? a : b;
+        const weaker = pa > pb ? b : a;
+        if (chebyshevDist(posMap.get(stronger)) <= chebyshevDist(posMap.get(weaker))) {
+          score += 1;
+        }
+      }
+    }
+    return score;
+  }
+
+  function pairConcordant(idA, idB, distA, distB, mainState) {
+    const pa = playerPowerValue(idA, mainState);
+    const pb = playerPowerValue(idB, mainState);
+    if (pa === pb) return true;
+    if (pa > pb) return distA <= distB;
+    return distB <= distA;
+  }
+
+  /** Δ qualité après échange des positions de idA et idB (O(n)). */
+  function qualityDeltaForSwap(posMap, movableIds, idA, idB, mainState) {
+    if (!idA || !idB || idA === idB) return 0;
+    const slotA = posMap.get(idA);
+    const slotB = posMap.get(idB);
+    if (!slotA || !slotB) return 0;
+    const distA = chebyshevDist(slotA);
+    const distB = chebyshevDist(slotB);
+    let delta = 0;
+    // Paire A-B
+    if (pairConcordant(idA, idB, distA, distB, mainState)) delta -= 1;
+    if (pairConcordant(idA, idB, distB, distA, mainState)) delta += 1;
+    // Paires avec les autres
+    for (let i = 0; i < movableIds.length; i += 1) {
+      const other = movableIds[i];
+      if (other === idA || other === idB) continue;
+      const otherSlot = posMap.get(other);
+      if (!otherSlot) continue;
+      const distO = chebyshevDist(otherSlot);
+      if (pairConcordant(idA, other, distA, distO, mainState)) delta -= 1;
+      if (pairConcordant(idA, other, distB, distO, mainState)) delta += 1;
+      if (pairConcordant(idB, other, distB, distO, mainState)) delta -= 1;
+      if (pairConcordant(idB, other, distA, distO, mainState)) delta += 1;
+    }
+    return delta;
+  }
+
+  /** Δ qualité en déplaçant playerId vers toSlot (laisse FREE derrière) — O(n). */
+  function qualityDeltaForMoveToEmpty(posMap, movableIds, playerId, toSlot, mainState) {
+    const fromSlot = posMap.get(playerId);
+    if (!fromSlot || !toSlot) return 0;
+    const distFrom = chebyshevDist(fromSlot);
+    const distTo = chebyshevDist(toSlot);
+    let delta = 0;
+    for (let i = 0; i < movableIds.length; i += 1) {
+      const other = movableIds[i];
+      if (other === playerId) continue;
+      const otherSlot = posMap.get(other);
+      if (!otherSlot) continue;
+      const distO = chebyshevDist(otherSlot);
+      if (pairConcordant(playerId, other, distFrom, distO, mainState)) delta -= 1;
+      if (pairConcordant(playerId, other, distTo, distO, mainState)) delta += 1;
+    }
+    return delta;
+  }
+
+  function maxPlacementQuality(n) {
+    if (n < 2) return 1;
+    return (n * (n - 1)) / 2;
+  }
+
+  /** Joueur sans inversion vs les autres : déjà bien placé → ne jamais le déplacer. */
+  function isWellPlaced(playerId, posMap, movableIds, mainState) {
+    const mySlot = posMap.get(playerId);
+    if (!mySlot) return false;
+    const myPower = playerPowerValue(playerId, mainState);
+    const myDist = chebyshevDist(mySlot);
+    for (let i = 0; i < movableIds.length; i += 1) {
+      const otherId = movableIds[i];
+      if (otherId === playerId) continue;
+      const otherSlot = posMap.get(otherId);
+      if (!otherSlot) continue;
+      const otherPower = playerPowerValue(otherId, mainState);
+      const otherDist = chebyshevDist(otherSlot);
+      if (myPower === otherPower) continue;
+      if (myPower > otherPower && myDist > otherDist) return false;
+      if (myPower < otherPower && myDist < otherDist) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Optimisation parcimonieuse :
+   * - conserver la ruche actuelle
+   * - ne déplacer que des joueurs mal placés (inversions)
+   * - forte pénalité par déplacement (qualité d’abord sous contrainte de peu de moves)
+   * - s’arrêter dès qu’un bon niveau est atteint (~95 %)
    */
   function buildOptimizedProposal(sourceGrid, sourceBottom) {
     const hive = {
@@ -472,15 +585,6 @@
       if (value && value !== FREE) movableIds.push(value);
     }
 
-    unlockedSlots.sort((a, b) => {
-      const da = slotDistance(a);
-      const db = slotDistance(b);
-      if (da !== db) return da - db;
-      if (a.type !== b.type) return a.type === 'grid' ? -1 : 1;
-      if ((a.row || 0) !== (b.row || 0)) return (a.row || 0) - (b.row || 0);
-      return (a.col || 0) - (b.col || 0);
-    });
-
     const uniqueMovable = [];
     const seen = new Set();
     movableIds.forEach((id) => {
@@ -488,22 +592,8 @@
       seen.add(id);
       uniqueMovable.push(id);
     });
-    const players = powerSortPlayers(uniqueMovable, mainState);
-    const currentPos = collectPlayerPositions(hive.grid, hive.bottomId);
 
-    const orderingOk =
-      players.length > 0 &&
-      players.every((id) => currentPos.has(id)) &&
-      players.every((stronger, i) =>
-        players.slice(i + 1).every((weaker) => {
-          const a = currentPos.get(stronger);
-          const b = currentPos.get(weaker);
-          if (!a || !b) return false;
-          return slotDistance(a) <= slotDistance(b);
-        })
-      );
-
-    if (orderingOk) {
+    if (uniqueMovable.length < 2) {
       return {
         grid: cloneGrid(sourceGrid),
         bottomId: normalizeCellValue(sourceBottom, { allowFree: true }),
@@ -511,58 +601,121 @@
       };
     }
 
-    const ideal = new Map();
-    const count = Math.min(players.length, unlockedSlots.length);
-    for (let i = 0; i < count; i += 1) {
-      ideal.set(players[i], unlockedSlots[i]);
+    const maxQ = maxPlacementQuality(uniqueMovable.length);
+    /** Seuil d’arrêt : ~95 % de la qualité idéale suffit (évite de tout retrier pour 100 %). */
+    const TARGET_RATIO = 0.95;
+    /** Budget souple de joueurs déplacés (stat final) — on s’arrête si déjà bon. */
+    const MOVE_SOFT_CAP = Math.max(8, Math.min(14, Math.ceil(uniqueMovable.length * 0.1)));
+    /**
+     * Coût d’un déplacement en points de qualité.
+     * Sur une petite ruche : faible (autorise la correction d’une inversion).
+     * Sur une grande ruche : plus élevé (rejette les micro-ajustements coûteux).
+     */
+    const MOVE_PENALTY = Math.max(0, Math.floor(Math.sqrt(maxQ) * 0.2) - 1);
+
+    const initialPositions = collectPlayerPositions(hive.grid, hive.bottomId);
+    const posMap = () => collectPlayerPositions(hive.grid, hive.bottomId);
+
+    let quality = placementQuality(posMap(), uniqueMovable, mainState);
+    if (quality / maxQ >= TARGET_RATIO) {
+      return {
+        grid: cloneGrid(sourceGrid),
+        bottomId: normalizeCellValue(sourceBottom, { allowFree: true }),
+        generatedAt: new Date().toISOString(),
+      };
     }
 
-    unlockedSlots.forEach((slot) => setHiveSlot(hive, slot, FREE));
+    const maxPasses = Math.min(50, uniqueMovable.length * 2);
+    for (let pass = 0; pass < maxPasses; pass += 1) {
+      const positions = posMap();
+      quality = placementQuality(positions, uniqueMovable, mainState);
+      if (quality / maxQ >= TARGET_RATIO) break;
 
-    const placed = new Set();
-    const usedSlots = new Set();
+      let movedNow = 0;
+      positions.forEach((slot, playerId) => {
+        const from = initialPositions.get(playerId);
+        if (!from || !sameSlot(from, slot)) movedNow += 1;
+      });
+      if (movedNow >= MOVE_SOFT_CAP && quality / maxQ >= 0.9) break;
 
-    players.forEach((playerId) => {
-      const target = ideal.get(playerId);
-      if (!target) return;
-      const cur = currentPos.get(playerId);
-      if (cur && sameSlot(cur, target)) {
-        setHiveSlot(hive, target, playerId);
-        placed.add(playerId);
-        usedSlots.add(slotKey(target));
+      const wellPlaced = new Set();
+      uniqueMovable.forEach((id) => {
+        if (isWellPlaced(id, positions, uniqueMovable, mainState)) wellPlaced.add(id);
+      });
+
+      const emptySlots = unlockedSlots.filter((slot) => {
+        const value = getCellValueFromHive(hive, slot);
+        return !value || value === FREE;
+      });
+
+      let best = null;
+
+      const consider = (slotA, slotB, valA, valB, delta, moves) => {
+        const net = delta - MOVE_PENALTY * moves;
+        if (delta <= 0 || net < 0) return;
+        if (
+          !best ||
+          net > best.net ||
+          (net === best.net && delta > best.delta) ||
+          (net === best.net && delta === best.delta && moves < best.moves)
+        ) {
+          best = { slotA, slotB, valA, valB, net, delta, moves };
+        }
+      };
+
+      for (let i = 0; i < uniqueMovable.length; i += 1) {
+        for (let j = i + 1; j < uniqueMovable.length; j += 1) {
+          const idA = uniqueMovable[i];
+          const idB = uniqueMovable[j];
+          if (wellPlaced.has(idA) || wellPlaced.has(idB)) continue;
+          const slotA = positions.get(idA);
+          const slotB = positions.get(idB);
+          if (!slotA || !slotB) continue;
+          const pA = playerPowerValue(idA, mainState);
+          const pB = playerPowerValue(idB, mainState);
+          if (pA === pB) continue;
+          const stronger = pA > pB ? idA : idB;
+          const weaker = pA > pB ? idB : idA;
+          const strongSlot = stronger === idA ? slotA : slotB;
+          const weakSlot = weaker === idA ? slotA : slotB;
+          if (chebyshevDist(strongSlot) <= chebyshevDist(weakSlot)) continue;
+          const delta = qualityDeltaForSwap(positions, uniqueMovable, idA, idB, mainState);
+          consider(slotA, slotB, idA, idB, delta, 2);
+        }
       }
-    });
 
-    const remPlayers = players.filter((id) => !placed.has(id));
-    const remSlots = unlockedSlots.filter((slot) => !usedSlots.has(slotKey(slot)));
+      uniqueMovable.forEach((playerId) => {
+        if (wellPlaced.has(playerId)) return;
+        const fromSlot = positions.get(playerId);
+        if (!fromSlot) return;
+        const fromDist = chebyshevDist(fromSlot);
+        emptySlots.forEach((toSlot) => {
+          if (chebyshevDist(toSlot) >= fromDist) return;
+          const delta = qualityDeltaForMoveToEmpty(
+            positions,
+            uniqueMovable,
+            playerId,
+            toSlot,
+            mainState
+          );
+          consider(fromSlot, toSlot, playerId, FREE, delta, 1);
+        });
+      });
 
-    remPlayers.slice().forEach((playerId) => {
-      if (placed.has(playerId)) return;
-      const cur = currentPos.get(playerId);
-      if (!cur) return;
-      const livePlayers = remPlayers.filter((id) => !placed.has(id));
-      const liveSlots = remSlots.filter((slot) => !usedSlots.has(slotKey(slot)));
-      const playerIdx = livePlayers.indexOf(playerId);
-      const slotIdx = liveSlots.findIndex((slot) => sameSlot(slot, cur));
-      if (playerIdx < 0 || slotIdx < 0 || playerIdx !== slotIdx) return;
-      setHiveSlot(hive, liveSlots[slotIdx], playerId);
-      placed.add(playerId);
-      usedSlots.add(slotKey(liveSlots[slotIdx]));
-    });
-
-    const finalPlayers = remPlayers.filter((id) => !placed.has(id));
-    const finalSlots = remSlots.filter((slot) => !usedSlots.has(slotKey(slot)));
-    finalPlayers.forEach((playerId, index) => {
-      if (!finalSlots[index]) return;
-      setHiveSlot(hive, finalSlots[index], playerId);
-      usedSlots.add(slotKey(finalSlots[index]));
-    });
+      if (!best) break;
+      setHiveSlot(hive, best.slotA, best.valB);
+      setHiveSlot(hive, best.slotB, best.valA);
+    }
 
     return {
       grid: hive.grid,
       bottomId: hive.bottomId,
       generatedAt: new Date().toISOString(),
     };
+  }
+
+  function computeIdealQuality(movableIds, mainState) {
+    return maxPlacementQuality(movableIds.length);
   }
 
   function computeProposalStats(currentGrid, currentBottom, proposalGrid, proposalBottom) {
@@ -575,7 +728,28 @@
       if (toPos && sameSlot(fromPos, toPos)) kept += 1;
       else moved += 1;
     });
-    return { kept, moved, total: fromMap.size };
+
+    const mainState = ROSStorage.getState();
+    const movableIds = [];
+    const seen = new Set();
+    fromMap.forEach((_pos, playerId) => {
+      if (seen.has(playerId)) return;
+      if (isOfficerPlayer(getPlayerById(playerId))) return;
+      seen.add(playerId);
+      movableIds.push(playerId);
+    });
+
+    const maxQ = computeIdealQuality(movableIds, mainState);
+    const qProposal = placementQuality(toMap, movableIds, mainState);
+    const estimatedGainPct = Math.round((100 * qProposal) / Math.max(1, maxQ));
+
+    return {
+      kept,
+      moved,
+      total: fromMap.size,
+      estimatedGainPct,
+      optimizationPct: estimatedGainPct,
+    };
   }
 
   function ensureProposal(force = false) {
@@ -679,7 +853,7 @@
     const stats = computeProposalStats(s.grid, s.bottomId, proposal.grid, proposal.bottomId);
     const ok = await AppUI.confirm({
       title: 'Valider cette proposition',
-      message: `Remplacer la ruche actuelle par la proposition ?\n\nJoueurs conservés : ${stats.kept}\nJoueurs déplacés : ${stats.moved}\n\nL’ancienne ruche sera archivée.`,
+      message: `Remplacer la ruche actuelle par la proposition ?\n\nGain estimé : ${stats.estimatedGainPct} %\nDéplacements : ${stats.moved} joueurs\n\nL’ancienne ruche sera archivée.`,
       confirmLabel: 'Valider la proposition',
     });
     if (!ok) return;
@@ -982,11 +1156,11 @@
     const s = getState();
     const proposal = s.proposal;
     if (!proposal) {
-      els.proposalStats.textContent = 'Joueurs conservés : 0 · Joueurs déplacés : 0';
+      els.proposalStats.textContent = 'Gain estimé : 0 % · Déplacements : 0 joueurs';
       return;
     }
     const stats = computeProposalStats(s.grid, s.bottomId, proposal.grid, proposal.bottomId);
-    els.proposalStats.innerHTML = `Joueurs conservés : <strong>${stats.kept}</strong> · Joueurs déplacés : <strong>${stats.moved}</strong>`;
+    els.proposalStats.innerHTML = `Gain estimé : <strong>${stats.estimatedGainPct} %</strong> · Déplacements : <strong>${stats.moved}</strong> joueurs`;
   }
 
   function renderProposalBottom(hive) {
@@ -1694,6 +1868,7 @@
     init,
     render,
     renderSettings,
+    hydrateFromStorage,
     migratePlayerIdentity,
     STORAGE_KEY,
     GRID_SIZE,

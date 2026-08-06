@@ -26,6 +26,8 @@
     els.statusField = document.getElementById('playerStatusField');
     els.absent = document.getElementById('playerAbsent');
     els.absentField = document.getElementById('playerAbsentField');
+    els.inactive = document.getElementById('playerInactive');
+    els.inactiveField = document.getElementById('playerInactiveField');
     els.heroPower = document.getElementById('playerHeroPower');
     els.preferredVolant = document.getElementById('playerPreferredVolant');
     els.coachingAlways = document.getElementById('playerCoachingAlways');
@@ -131,11 +133,13 @@
     els.role.value = 'Membre';
     els.status.value = 'Actif';
     els.absent.checked = false;
+    if (els.inactive) els.inactive.checked = false;
     fillHeroPowerSelect('');
     if (els.preferredVolant) els.preferredVolant.checked = false;
     setCoachingExceptionValue('always');
     els.statusField.hidden = true;
     els.absentField.hidden = false;
+    if (els.inactiveField) els.inactiveField.hidden = false;
     els.modal.showModal();
     els.pseudo.focus();
   }
@@ -149,11 +153,13 @@
     els.role.value = player.role;
     els.status.value = player.status;
     els.absent.checked = Boolean(player.absent);
+    if (els.inactive) els.inactive.checked = Boolean(player.inactive);
     fillHeroPowerSelect(player.heroPowerTierId || '');
     if (els.preferredVolant) els.preferredVolant.checked = Boolean(player.preferredVolant);
     setCoachingExceptionValue(player.coachingException);
     els.statusField.hidden = false;
     els.absentField.hidden = player.status === 'Parti';
+    if (els.inactiveField) els.inactiveField.hidden = player.status === 'Parti';
     els.modal.showModal();
     els.pseudo.focus();
   }
@@ -239,12 +245,13 @@
     detailAllowEdit = options.allowEdit !== false;
 
     els.detailTitle.textContent = player.pseudo;
-    els.detailSubtitle.textContent = `${player.role} · ${player.status}${player.absent ? ' · Absent' : ''}`;
+    els.detailSubtitle.textContent = `${player.role} · ${player.status}${player.absent ? ' · Absent' : ''}${player.inactive ? ' · Inactif' : ''}`;
     els.detailEdit.hidden = !detailAllowEdit;
 
     const currentWeek = ROSModels.getCurrentWeekFromState(ROSStorage.getState());
     const summary = ROSModels.getWeekScoreSummary(currentWeek, playerId);
     const absentBadge = player.absent ? '<span class="badge badge-absent">Absent</span>' : '';
+    const inactiveBadge = player.inactive ? '<span class="badge badge-status-parti">Inactif</span>' : '';
     const vsNote = player.absent
       ? 'Ignoré des calculs VS tant qu’il est absent (historique des semaines précédentes inchangé).'
       : summary.hasRecord
@@ -261,6 +268,7 @@
         <span class="badge badge-role">${ROSUI.escapeHtml(player.role)}</span>
         <span class="badge badge-status-${player.status.toLowerCase()}">${ROSUI.escapeHtml(player.status)}</span>
         ${absentBadge}
+        ${inactiveBadge}
       </div>
 
       <div class="detail-item">
@@ -372,6 +380,7 @@
     const role = els.role.value;
     const status = els.statusField.hidden ? 'Actif' : els.status.value;
     const absent = status === 'Parti' ? false : Boolean(els.absent.checked);
+    const inactive = status === 'Parti' ? false : Boolean(els.inactive?.checked);
     const heroPowerTierId = (els.heroPower?.value || '').trim() || null;
     const preferredVolant = Boolean(els.preferredVolant?.checked);
     const coachingException = getCoachingExceptionValue();
@@ -419,12 +428,14 @@
         player.role = role;
         player.status = status;
         player.absent = absent;
+        player.inactive = inactive;
         player.heroPowerTierId = heroPowerTierId;
         player.preferredVolant = preferredVolant;
         player.coachingException = coachingException;
         if (previousStatus === 'Actif' && status === 'Parti') {
           player.leftAt = new Date().toISOString();
           player.absent = false;
+          player.inactive = false;
         }
         if (previousStatus === 'Parti' && status === 'Actif') {
           player.leftAt = null;
@@ -451,6 +462,7 @@
           role,
           status: 'Actif',
           absent,
+          inactive,
           heroPowerTierId,
           preferredVolant,
           coachingException,
@@ -807,7 +819,11 @@
     els.filterStatus.value = 'Actif';
     els.status.addEventListener('change', () => {
       els.absentField.hidden = els.status.value === 'Parti';
-      if (els.status.value === 'Parti') els.absent.checked = false;
+      if (els.inactiveField) els.inactiveField.hidden = els.status.value === 'Parti';
+      if (els.status.value === 'Parti') {
+        els.absent.checked = false;
+        if (els.inactive) els.inactive.checked = false;
+      }
     });
   }
 

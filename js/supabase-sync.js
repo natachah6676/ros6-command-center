@@ -28,10 +28,15 @@
   let suppressPush = false;
   let pushTimer = null;
   let pushing = false;
+  let pushQueued = false;
+  /** Chaîne de promises pour sérialiser flushPush / schedulePush. */
+  let pushChain = Promise.resolve();
   let bootstrapped = false;
   let bootstrapping = false;
   let onReadyCallback = null;
   let appStarted = false;
+  /** Versions écrites avec succès par cet onglet (évite un faux conflit sur nos propres pushes). */
+  const ownPushedVersions = new Set();
 
   function $(id) {
     return document.getElementById(id);
@@ -207,6 +212,44 @@
     }
   }
 
+  /**
+   * Applique le cache localStorage aux états mémoire + rafraîchit l’UI,
+   * sans recharger toute la page (pas de déconnexion visuelle).
+   */
+  function hydrateAppFromLocalCache() {
+    suppressPush = true;
+    try {
+      if (global.ROSStorage && typeof ROSStorage.hydrateFromStorage === 'function') {
+        ROSStorage.hydrateFromStorage();
+      }
+      if (global.TrainModule && typeof TrainModule.hydrateFromStorage === 'function') {
+        TrainModule.hydrateFromStorage();
+      }
+      if (global.RucheModule && typeof RucheModule.hydrateFromStorage === 'function') {
+        RucheModule.hydrateFromStorage();
+      }
+      if (global.TempeteModule && typeof TempeteModule.hydrateFromStorage === 'function') {
+        TempeteModule.hydrateFromStorage();
+      }
+    } finally {
+      suppressPush = false;
+    }
+    if (typeof global.AppUI?.onRemoteDataApplied === 'function') {
+      global.AppUI.onRemoteDataApplied();
+    }
+  }
+
+  /**
+   * Un conflit « réel » = version distante plus récente qui n’a pas été
+   * produite par un push réussi de cet onglet.
+   */
+  function isExternalRemoteConflict(remoteVersion) {
+    const version = Number(remoteVersion) || 0;
+    if (version <= localVersion) return false;
+    if (ownPushedVersions.has(version)) return false;
+    return true;
+  }
+
   async function fetchRemoteRow() {
     const { data, error } = await client
       .from('ros6_state')
@@ -236,55 +279,117 @@
       return { ok: false, reason: 'offline' };
     }
 
+    // Sérialise via une file de promises (flushPush attend la fin du push en cours).
+    const run = () => runPushAttempt({ force });
+    const resultPromise = pushChain.then(run, run);
+    pushChain = resultPromise.then(
+      () => undefined,
+      () => undefined
+    );
+    return resultPromise;
+  }
+
+  async function runPushAttempt({ force = false } = {}) {
     pushing = true;
     setSyncStatus('saving');
+    let lastResult = { ok: false, reason: 'noop' };
+    let attempts = 0;
+    const maxAttempts = 8;
+
     try {
-      let remote;
-      try {
-        remote = await ensureRemoteRow();
-      } catch (error) {
-        setSyncStatus('error', error.message || 'lecture impossible');
-        if (global.AppUI) AppUI.toast(`Supabase : ${error.message || error}`);
-        return { ok: false, reason: 'fetch', error };
-      }
-
-      const remoteVersion = Number(remote.version) || 0;
-      if (!force && remoteVersion > localVersion) {
-        setSyncStatus('error', 'version distante plus récente');
-        writeMeta(remoteVersion);
-        applyStoresToLocal(remote.data || {}, { reload: false });
-        if (global.AppUI) {
-          await AppUI.confirm({
-            title: 'Données plus récentes détectées',
-            message:
-              'La base partagée contient une version plus récente. Les données locales de cache sont remplacées par la version Supabase. L’application va se recharger.',
-            confirmLabel: 'Recharger',
-          });
+      do {
+        pushQueued = false;
+        attempts += 1;
+        if (attempts > maxAttempts) {
+          setSyncStatus('error', 'trop de tentatives');
+          if (global.AppUI) {
+            AppUI.toast('Synchronisation interrompue — réessayez dans un instant.');
+          }
+          lastResult = { ok: false, reason: 'retries' };
+          break;
         }
-        global.location.reload();
-        return { ok: false, reason: 'conflict' };
-      }
 
-      const payload = collectStores();
-      const nextVersion = remoteVersion + 1;
-      const { error } = await client
-        .from('ros6_state')
-        .upsert(
-          {
-            id: ROW_ID,
-            data: payload,
-            version: nextVersion,
-            updated_at: new Date().toISOString(),
-            updated_by: session.user.id,
-          },
-          { onConflict: 'id' }
-        );
+        let remote;
+        try {
+          remote = await ensureRemoteRow();
+        } catch (error) {
+          setSyncStatus('error', error.message || 'lecture impossible');
+          if (global.AppUI) AppUI.toast(`Supabase : ${error.message || error}`);
+          lastResult = { ok: false, reason: 'fetch', error };
+          break;
+        }
 
-      if (error) throw error;
+        const remoteVersion = Number(remote.version) || 0;
 
-      writeMeta(nextVersion);
-      setSyncStatus('synced');
-      return { ok: true, version: nextVersion };
+        if (!force && isExternalRemoteConflict(remoteVersion)) {
+          // Autre appareil / autre utilisateur : adopter Supabase, mettre à jour le cache, pas de reload.
+          writeMeta(remoteVersion);
+          applyStoresToLocal(remote.data || {}, { reload: false });
+          hydrateAppFromLocalCache();
+          setSyncStatus('synced', 'mis à jour depuis Supabase');
+          if (global.AppUI) {
+            await AppUI.confirm({
+              title: 'Données plus récentes détectées',
+              message:
+                'Un autre appareil ou un autre utilisateur a modifié les données partagées. Le cache local a été mis à jour avec la version Supabase.',
+              confirmLabel: 'OK',
+            });
+          }
+          lastResult = { ok: false, reason: 'conflict' };
+          pushQueued = false;
+          break;
+        }
+
+        if (!force && remoteVersion > localVersion && ownPushedVersions.has(remoteVersion)) {
+          writeMeta(remoteVersion);
+        }
+
+        const payload = collectStores();
+        const nextVersion = remoteVersion + 1;
+
+        if (force) {
+          const { error } = await client.from('ros6_state').upsert(
+            {
+              id: ROW_ID,
+              data: payload,
+              version: nextVersion,
+              updated_at: new Date().toISOString(),
+              updated_by: session.user.id,
+            },
+            { onConflict: 'id' }
+          );
+          if (error) throw error;
+        } else {
+          const { data: updated, error } = await client
+            .from('ros6_state')
+            .update({
+              data: payload,
+              version: nextVersion,
+              updated_at: new Date().toISOString(),
+              updated_by: session.user.id,
+            })
+            .eq('id', ROW_ID)
+            .eq('version', remoteVersion)
+            .select('id, version')
+            .maybeSingle();
+
+          if (error) throw error;
+
+          if (!updated) {
+            pushQueued = true;
+            continue;
+          }
+        }
+
+        // Succès Supabase → puis mise à jour du cache local (méta + stores), sans reload.
+        ownPushedVersions.add(nextVersion);
+        writeMeta(nextVersion);
+        applyStoresToLocal(payload, { reload: false });
+        setSyncStatus('synced');
+        lastResult = { ok: true, version: nextVersion };
+      } while (pushQueued);
+
+      return lastResult;
     } catch (error) {
       console.error('ROSSync push', error);
       const msg = error?.message || String(error);
@@ -302,8 +407,17 @@
     setSyncStatus('saving');
     clearTimeout(pushTimer);
     pushTimer = setTimeout(() => {
+      pushTimer = null;
       pushToSupabase();
     }, 500);
+  }
+
+  /** Annule le debounce et pousse immédiatement (attend la confirmation Supabase). */
+  async function flushPush() {
+    if (!bootstrapped || !session || suppressPush) return { ok: false, reason: 'noop' };
+    clearTimeout(pushTimer);
+    pushTimer = null;
+    return pushToSupabase();
   }
 
   async function migrateLocalIfNeeded(remote) {
@@ -589,7 +703,8 @@
   global.ROSSync = {
     init,
     schedulePush,
-    pushNow: () => pushToSupabase(),
+    flushPush,
+    pushNow: () => flushPush(),
     getSession: () => session,
     refreshUserLabel: updateUserLabel,
     STORE_KEYS,

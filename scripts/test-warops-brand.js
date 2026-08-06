@@ -36,6 +36,10 @@ assert(html.includes('>WAROPS</h1>'), 'Titre produit WAROPS');
 assert(html.includes('The Alliance Command Platform'), 'Sous-titre plateforme');
 assert(html.includes('id="brandAllianceLine"'), 'Ligne Alliance header');
 assert(html.includes('id="brandServerLine"'), 'Ligne Serveur header');
+assert(!html.includes('id="authBrandAlliance"'), 'Pas d’Alliance sur l’écran de connexion');
+assert(!html.includes('id="authBrandServer"'), 'Pas de Serveur sur l’écran de connexion');
+assert(!html.includes('authBrandAlliance'), 'Réf. auth Alliance absente');
+assert(!appCode.includes('authBrandAlliance'), 'JS ne remplit plus l’Alliance auth');
 assert(!html.includes('ROS6 Command Center'), 'Ancien nom produit retiré du HTML');
 assert(!html.includes('>Command Center</h1>'), 'Ancien h1 Command Center retiré');
 

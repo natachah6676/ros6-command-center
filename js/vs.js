@@ -594,9 +594,25 @@
       return s;
     });
 
-    AppUI.toast('Paramètres VS enregistrés.');
     render();
     syncSideViews();
+    void confirmVsSettingsSaved();
+  }
+
+  async function confirmVsSettingsSaved() {
+    if (!global.ROSSync || typeof ROSSync.flushPush !== 'function') {
+      AppUI.toast('Paramètres VS enregistrés.');
+      return;
+    }
+    const result = await ROSSync.flushPush();
+    if (result?.ok || result?.reason === 'noop') {
+      AppUI.toast('Paramètres VS enregistrés.');
+      return;
+    }
+    if (result?.reason === 'conflict') return;
+    if (result?.reason === 'offline') {
+      AppUI.toast('Hors connexion — paramètres conservés localement.');
+    }
   }
 
   function onDonationsVerifiedChange() {

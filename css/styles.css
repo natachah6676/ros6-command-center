@@ -2589,3 +2589,37 @@ tbody tr:hover {
   color: #f0c075;
 }
 
+.train-exclusion-stats {
+  margin-top: 0.85rem;
+}
+
+.train-exclusion-card {
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border, #2a313c);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 0.9rem;
+}
+
+.train-exclusion-card ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--muted, #9aa3b2);
+}
+
+.train-exclusion-card li {
+  margin: 0.15rem 0;
+}
+
+.recrutement-card .recrutement-reasons {
+  margin: 0.45rem 0 0;
+  padding-left: 0;
+  list-style: none;
+  color: var(--muted, #9aa3b2);
+  font-size: 0.88rem;
+}
+
+.recrutement-card .recrutement-reasons li {
+  margin: 0.12rem 0;
+}
+

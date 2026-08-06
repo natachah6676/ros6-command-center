@@ -22,6 +22,7 @@
     els.alertsEmpty = document.getElementById('commandAlertsEmpty');
     els.absentsList = document.getElementById('commandAbsentsList');
     els.absentsEmpty = document.getElementById('commandAbsentsEmpty');
+    els.absentsTitle = document.getElementById('commandAbsentsTitle');
   }
 
   function currentWeekKey() {
@@ -263,6 +264,9 @@
   }
 
   function renderAbsents(absents) {
+    if (els.absentsTitle) {
+      els.absentsTitle.textContent = `Absents (${absents.length})`;
+    }
     els.absentsList.innerHTML = absents
       .map(
         (player) => `
