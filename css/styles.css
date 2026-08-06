@@ -2086,9 +2086,43 @@ tbody tr:hover {
 
 .ruche-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 0.9fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
   align-items: start;
+}
+
+.ruche-dual {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.ruche-proposal-stats {
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.8rem;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--steel-light);
+}
+
+.ruche-proposal-stats strong {
+  color: var(--text);
+}
+
+.ruche-cell.is-locked {
+  outline: 1px dashed rgba(91, 155, 213, 0.55);
+}
+
+.ruche-cell.is-proposal-drag {
+  opacity: 0.55;
+}
+
+.ruche-cell.is-proposal-drop-target {
+  box-shadow: 0 0 0 2px rgba(199, 58, 67, 0.55);
 }
 
 .ruche-toolbar {
@@ -2248,6 +2282,10 @@ tbody tr:hover {
 }
 
 @media (max-width: 1100px) {
+  .ruche-dual {
+    grid-template-columns: 1fr;
+  }
+
   .ruche-layout {
     grid-template-columns: 1fr;
   }

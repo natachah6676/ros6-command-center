@@ -89,11 +89,21 @@
 
   function createBlankState() {
     return {
-      version: 4,
+      version: 5,
       grid: createEmptyGrid(),
       bottomId: null,
       colors: { ...DEFAULT_COLORS },
       archives: [],
+      proposal: null,
+    };
+  }
+
+  function normalizeProposal(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    return {
+      grid: normalizeGrid(raw.grid),
+      bottomId: normalizeCellValue(raw.bottomId, { allowFree: true }),
+      generatedAt: String(raw.generatedAt || ''),
     };
   }
 
@@ -130,11 +140,12 @@
         colors.r4 = DEFAULT_COLORS.r4;
       }
       state = {
-        version: 4,
+        version: 5,
         grid,
         bottomId: normalizeCellValue(parsed.bottomId, { allowFree: true }),
         colors,
         archives: Array.isArray(parsed.archives) ? parsed.archives : [],
+        proposal: normalizeProposal(parsed.proposal),
       };
       if (global.ROSPlayerIdentity && global.ROSStorage) {
         ROSPlayerIdentity.migrateRucheState(state, ROSStorage.getState().players);
@@ -338,6 +349,349 @@
 
   function isOfficerRole(role) {
     return role === 'R5' || role === 'R4';
+  }
+
+  function isOfficerPlayer(player) {
+    return Boolean(player && isOfficerRole(player.role));
+  }
+
+  function slotKey(slot) {
+    if (!slot) return '';
+    if (slot.type === 'bottom') return 'bottom';
+    return `grid:${slot.row}:${slot.col}`;
+  }
+
+  function sameSlot(a, b) {
+    return slotKey(a) === slotKey(b);
+  }
+
+  function slotDistance(slot) {
+    if (!slot || slot.type === 'bottom') return 1000;
+    const dr = Math.abs(Number(slot.row) - MARSHAL_ROW);
+    const dc = Math.abs(Number(slot.col) - MARSHAL_COL);
+    return Math.max(dr, dc) * 10 + Math.hypot(dr, dc);
+  }
+
+  function getProposal() {
+    const s = getState();
+    if (!s.proposal) return null;
+    return {
+      grid: cloneGrid(s.proposal.grid),
+      bottomId: s.proposal.bottomId,
+      generatedAt: s.proposal.generatedAt || '',
+    };
+  }
+
+  function collectPlayerPositions(grid, bottomId) {
+    const map = new Map();
+    for (let r = 0; r < GRID_SIZE; r += 1) {
+      for (let c = 0; c < GRID_SIZE; c += 1) {
+        const value = normalizeCellValue(grid?.[r]?.[c], { allowFree: !isMarshalCell(r, c) });
+        if (value && value !== FREE) map.set(value, { type: 'grid', row: r, col: c });
+      }
+    }
+    const bottom = normalizeCellValue(bottomId, { allowFree: true });
+    if (bottom && bottom !== FREE) map.set(bottom, { type: 'bottom' });
+    return map;
+  }
+
+  function getCellValueFromHive(hive, slot) {
+    if (!hive || !slot) return null;
+    if (slot.type === 'bottom') return normalizeCellValue(hive.bottomId, { allowFree: true });
+    return normalizeCellValue(hive.grid?.[slot.row]?.[slot.col], {
+      allowFree: !isMarshalCell(slot.row, slot.col),
+    });
+  }
+
+  function setHiveSlot(hive, slot, value) {
+    const next = normalizeCellValue(value, {
+      allowFree: !(slot.type === 'grid' && isMarshalCell(slot.row, slot.col)),
+    });
+    if (slot.type === 'bottom') {
+      hive.bottomId = next;
+      return;
+    }
+    if (isMarshalCell(slot.row, slot.col) && next === FREE) {
+      hive.grid[slot.row][slot.col] = null;
+      return;
+    }
+    hive.grid[slot.row][slot.col] = next;
+  }
+
+  function isLockedSlotOnHive(hive, slot) {
+    if (!slot) return true;
+    if (slot.type === 'grid' && isMarshalCell(slot.row, slot.col)) return true;
+    const value = getCellValueFromHive(hive, slot);
+    const player = getPlayerById(value);
+    return isOfficerPlayer(player);
+  }
+
+  function powerSortPlayers(playerIds, mainState = ROSStorage.getState()) {
+    return playerIds
+      .slice()
+      .sort((a, b) => {
+        const pa = getPlayerById(a);
+        const pb = getPlayerById(b);
+        const va = ROSModels.getPlayerPowerSortValue(pa, mainState);
+        const vb = ROSModels.getPlayerPowerSortValue(pb, mainState);
+        if (vb !== va) return vb - va;
+        return String(pa?.pseudo || a).localeCompare(String(pb?.pseudo || b), 'fr', {
+          sensitivity: 'base',
+        });
+      });
+  }
+
+  /**
+   * Proposition : Maréchal / R5 / R4 figés, membres par puissance vers le centre,
+   * en conservant les placements déjà cohérents (min déplacements).
+   */
+  function buildOptimizedProposal(sourceGrid, sourceBottom) {
+    const hive = {
+      grid: cloneGrid(sourceGrid),
+      bottomId: normalizeCellValue(sourceBottom, { allowFree: true }),
+    };
+    const mainState = ROSStorage.getState();
+    const unlockedSlots = [];
+    const movableIds = [];
+
+    for (let r = 0; r < GRID_SIZE; r += 1) {
+      for (let c = 0; c < GRID_SIZE; c += 1) {
+        if (isMarshalCell(r, c)) continue;
+        const slot = { type: 'grid', row: r, col: c };
+        if (isLockedSlotOnHive(hive, slot)) continue;
+        unlockedSlots.push(slot);
+        const value = getCellValueFromHive(hive, slot);
+        if (value && value !== FREE) movableIds.push(value);
+      }
+    }
+
+    const bottomSlot = { type: 'bottom' };
+    if (!isLockedSlotOnHive(hive, bottomSlot)) {
+      unlockedSlots.push(bottomSlot);
+      const value = getCellValueFromHive(hive, bottomSlot);
+      if (value && value !== FREE) movableIds.push(value);
+    }
+
+    unlockedSlots.sort((a, b) => {
+      const da = slotDistance(a);
+      const db = slotDistance(b);
+      if (da !== db) return da - db;
+      if (a.type !== b.type) return a.type === 'grid' ? -1 : 1;
+      if ((a.row || 0) !== (b.row || 0)) return (a.row || 0) - (b.row || 0);
+      return (a.col || 0) - (b.col || 0);
+    });
+
+    const uniqueMovable = [];
+    const seen = new Set();
+    movableIds.forEach((id) => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      uniqueMovable.push(id);
+    });
+    const players = powerSortPlayers(uniqueMovable, mainState);
+    const currentPos = collectPlayerPositions(hive.grid, hive.bottomId);
+
+    const orderingOk =
+      players.length > 0 &&
+      players.every((id) => currentPos.has(id)) &&
+      players.every((stronger, i) =>
+        players.slice(i + 1).every((weaker) => {
+          const a = currentPos.get(stronger);
+          const b = currentPos.get(weaker);
+          if (!a || !b) return false;
+          return slotDistance(a) <= slotDistance(b);
+        })
+      );
+
+    if (orderingOk) {
+      return {
+        grid: cloneGrid(sourceGrid),
+        bottomId: normalizeCellValue(sourceBottom, { allowFree: true }),
+        generatedAt: new Date().toISOString(),
+      };
+    }
+
+    const ideal = new Map();
+    const count = Math.min(players.length, unlockedSlots.length);
+    for (let i = 0; i < count; i += 1) {
+      ideal.set(players[i], unlockedSlots[i]);
+    }
+
+    unlockedSlots.forEach((slot) => setHiveSlot(hive, slot, FREE));
+
+    const placed = new Set();
+    const usedSlots = new Set();
+
+    players.forEach((playerId) => {
+      const target = ideal.get(playerId);
+      if (!target) return;
+      const cur = currentPos.get(playerId);
+      if (cur && sameSlot(cur, target)) {
+        setHiveSlot(hive, target, playerId);
+        placed.add(playerId);
+        usedSlots.add(slotKey(target));
+      }
+    });
+
+    const remPlayers = players.filter((id) => !placed.has(id));
+    const remSlots = unlockedSlots.filter((slot) => !usedSlots.has(slotKey(slot)));
+
+    remPlayers.slice().forEach((playerId) => {
+      if (placed.has(playerId)) return;
+      const cur = currentPos.get(playerId);
+      if (!cur) return;
+      const livePlayers = remPlayers.filter((id) => !placed.has(id));
+      const liveSlots = remSlots.filter((slot) => !usedSlots.has(slotKey(slot)));
+      const playerIdx = livePlayers.indexOf(playerId);
+      const slotIdx = liveSlots.findIndex((slot) => sameSlot(slot, cur));
+      if (playerIdx < 0 || slotIdx < 0 || playerIdx !== slotIdx) return;
+      setHiveSlot(hive, liveSlots[slotIdx], playerId);
+      placed.add(playerId);
+      usedSlots.add(slotKey(liveSlots[slotIdx]));
+    });
+
+    const finalPlayers = remPlayers.filter((id) => !placed.has(id));
+    const finalSlots = remSlots.filter((slot) => !usedSlots.has(slotKey(slot)));
+    finalPlayers.forEach((playerId, index) => {
+      if (!finalSlots[index]) return;
+      setHiveSlot(hive, finalSlots[index], playerId);
+      usedSlots.add(slotKey(finalSlots[index]));
+    });
+
+    return {
+      grid: hive.grid,
+      bottomId: hive.bottomId,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  function computeProposalStats(currentGrid, currentBottom, proposalGrid, proposalBottom) {
+    const fromMap = collectPlayerPositions(currentGrid, currentBottom);
+    const toMap = collectPlayerPositions(proposalGrid, proposalBottom);
+    let kept = 0;
+    let moved = 0;
+    fromMap.forEach((fromPos, playerId) => {
+      const toPos = toMap.get(playerId);
+      if (toPos && sameSlot(fromPos, toPos)) kept += 1;
+      else moved += 1;
+    });
+    return { kept, moved, total: fromMap.size };
+  }
+
+  function ensureProposal(force = false) {
+    const s = getState();
+    if (!force && s.proposal && Array.isArray(s.proposal.grid)) return s.proposal;
+    s.proposal = buildOptimizedProposal(s.grid, s.bottomId);
+    persist();
+    return s.proposal;
+  }
+
+  function regenerateProposal() {
+    ensureProposal(true);
+    render();
+    AppUI.toast('Proposition recalculée.');
+  }
+
+  function updateProposal(mutator) {
+    const s = getState();
+    if (!s.proposal) ensureProposal(true);
+    const draft = {
+      grid: cloneGrid(s.proposal.grid),
+      bottomId: s.proposal.bottomId,
+      generatedAt: s.proposal.generatedAt || '',
+    };
+    const next = mutator(draft) || draft;
+    s.proposal = {
+      grid: normalizeGrid(next.grid),
+      bottomId: normalizeCellValue(next.bottomId, { allowFree: true }),
+      generatedAt: next.generatedAt || s.proposal.generatedAt || '',
+    };
+    persist();
+    render();
+  }
+
+  function removePlayerFromProposal(hive, playerId, keep) {
+    if (!playerId || playerId === FREE) return;
+    for (let r = 0; r < GRID_SIZE; r += 1) {
+      for (let c = 0; c < GRID_SIZE; c += 1) {
+        if (keep?.type === 'grid' && keep.row === r && keep.col === c) continue;
+        if (hive.grid[r][c] === playerId) hive.grid[r][c] = FREE;
+      }
+    }
+    if (!(keep?.type === 'bottom') && hive.bottomId === playerId) hive.bottomId = FREE;
+  }
+
+  function setProposalSlot(slot, value) {
+    if (!slot) return;
+    updateProposal((hive) => {
+      if (isLockedSlotOnHive(hive, slot)) return hive;
+      let next = normalizeCellValue(value, { allowFree: true });
+      if (next && next !== FREE) removePlayerFromProposal(hive, next, slot);
+      setHiveSlot(hive, slot, next);
+      return hive;
+    });
+  }
+
+  function swapProposalSlots(slotA, slotB) {
+    if (!slotA || !slotB || sameSlot(slotA, slotB)) return;
+    updateProposal((hive) => {
+      if (isLockedSlotOnHive(hive, slotA) || isLockedSlotOnHive(hive, slotB)) return hive;
+      const a = getCellValueFromHive(hive, slotA);
+      const b = getCellValueFromHive(hive, slotB);
+      setHiveSlot(hive, slotA, b || FREE);
+      setHiveSlot(hive, slotB, a || FREE);
+      return hive;
+    });
+  }
+
+  function archiveCurrentHive(labelPrefix = 'Ruche') {
+    const s = getState();
+    const check = analyzeGrid();
+    const stamp = new Date();
+    const label = `${labelPrefix} ${stamp.toLocaleDateString('fr-FR')} ${stamp.toLocaleTimeString('fr-FR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })}`;
+    const active = getActivePlayers();
+    s.archives.unshift({
+      id: uid('ruche'),
+      label,
+      createdAt: stamp.toISOString(),
+      grid: cloneGrid(s.grid),
+      marshalId: getMarshalId(s.grid),
+      bottomId: getBottomId(s),
+      colors: { ...s.colors },
+      placedCount: check.placedCount,
+      freeCount: check.freeCount,
+      caseCount: TOTAL_CASES,
+      players: active.map((p) => ({ id: p.id, pseudo: p.pseudo, role: p.role })),
+    });
+  }
+
+  async function validateProposal() {
+    ensureProposal(false);
+    const s = getState();
+    const proposal = s.proposal;
+    if (!proposal) {
+      AppUI.toast('Aucune proposition à valider.');
+      return;
+    }
+    const stats = computeProposalStats(s.grid, s.bottomId, proposal.grid, proposal.bottomId);
+    const ok = await AppUI.confirm({
+      title: 'Valider cette proposition',
+      message: `Remplacer la ruche actuelle par la proposition ?\n\nJoueurs conservés : ${stats.kept}\nJoueurs déplacés : ${stats.moved}\n\nL’ancienne ruche sera archivée.`,
+      confirmLabel: 'Valider la proposition',
+    });
+    if (!ok) return;
+
+    archiveCurrentHive('Ruche avant proposition');
+    s.grid = cloneGrid(proposal.grid);
+    s.bottomId = normalizeCellValue(proposal.bottomId, { allowFree: true });
+    s.proposal = buildOptimizedProposal(s.grid, s.bottomId);
+    persist();
+    lastCheck = null;
+    render();
+    AppUI.toast('Proposition validée — ancienne ruche archivée.');
   }
 
   /**
@@ -551,6 +905,11 @@
     els.colorMarshal = document.getElementById('rucheColorMarshal');
     els.colorR4 = document.getElementById('rucheColorR4');
     els.colorFree = document.getElementById('rucheColorFree');
+    els.proposalBoard = document.getElementById('rucheProposalBoard');
+    els.proposalGrid = document.getElementById('rucheProposalGrid');
+    els.proposalStats = document.getElementById('rucheProposalStats');
+    els.btnProposalOptimize = document.getElementById('rucheProposalOptimize');
+    els.btnProposalValidate = document.getElementById('rucheProposalValidate');
   }
 
   function buildOptions(currentValue, except, { allowFree = true, emptyLabel = '—' } = {}) {
@@ -570,6 +929,164 @@
       );
     });
     return opts.join('');
+  }
+
+  function getProposalUsedExcept(except) {
+    const proposal = getState().proposal;
+    const used = new Set();
+    if (!proposal) return used;
+    for (let r = 0; r < GRID_SIZE; r += 1) {
+      for (let c = 0; c < GRID_SIZE; c += 1) {
+        if (except?.type === 'grid' && except.row === r && except.col === c) continue;
+        const value = proposal.grid?.[r]?.[c];
+        if (value && value !== FREE) used.add(value);
+      }
+    }
+    if (!(except?.type === 'bottom')) {
+      const bottom = proposal.bottomId;
+      if (bottom && bottom !== FREE) used.add(bottom);
+    }
+    return used;
+  }
+
+  function buildProposalOptions(
+    currentValue,
+    except,
+    { allowFree = true, emptyLabel = '—', locked = false } = {}
+  ) {
+    if (locked) {
+      const label = labelForValue(currentValue) || emptyLabel;
+      const val = currentValue || '';
+      return `<option value="${escapeHtml(val)}" selected>${escapeHtml(label)}</option>`;
+    }
+    const used = getProposalUsedExcept(except);
+    const players = getActivePlayers().filter((p) => !used.has(p.id) || p.id === currentValue);
+    const opts = [`<option value="">${escapeHtml(emptyLabel)}</option>`];
+    if (allowFree) {
+      opts.push(
+        `<option value="${FREE}" ${currentValue === FREE ? 'selected' : ''}>FREE</option>`
+      );
+    }
+    players.forEach((p) => {
+      const selected = p.id === currentValue ? 'selected' : '';
+      const roleMark = p.role === 'R5' ? ' · R5' : p.role === 'R4' ? ' · R4' : '';
+      opts.push(
+        `<option value="${p.id}" ${selected}>${escapeHtml(p.pseudo)}${roleMark}</option>`
+      );
+    });
+    return opts.join('');
+  }
+
+  function renderProposalStats() {
+    if (!els.proposalStats) return;
+    const s = getState();
+    const proposal = s.proposal;
+    if (!proposal) {
+      els.proposalStats.textContent = 'Joueurs conservés : 0 · Joueurs déplacés : 0';
+      return;
+    }
+    const stats = computeProposalStats(s.grid, s.bottomId, proposal.grid, proposal.bottomId);
+    els.proposalStats.innerHTML = `Joueurs conservés : <strong>${stats.kept}</strong> · Joueurs déplacés : <strong>${stats.moved}</strong>`;
+  }
+
+  function renderProposalBottom(hive) {
+    const bottomId = hive.bottomId;
+    const locked = isLockedSlotOnHive(hive, { type: 'bottom' });
+    const bg = colorForValue(bottomId);
+    const fg = textColorForBg(bg === 'transparent' ? '#1e232b' : bg);
+    const filled = Boolean(bottomId);
+    return `
+      <div class="ruche-footer">
+        <div
+          class="ruche-cell ruche-bottom-cell ${filled ? 'is-filled' : ''} ${locked ? 'is-locked' : ''}"
+          data-proposal-cell
+          data-slot-type="bottom"
+          data-locked="${locked ? '1' : '0'}"
+          draggable="${locked ? 'false' : 'true'}"
+          data-value="${escapeHtml(bottomId || '')}"
+          style="${filled ? `background:${bg};color:${fg};border-color:${bg}` : ''}"
+        >
+          <span class="ruche-cell-coord">Bas</span>
+          <select
+            class="input ruche-cell-select"
+            data-proposal-bottom-select
+            ${locked ? 'disabled' : ''}
+            aria-label="Proposition — case du bas"
+          >
+            ${buildProposalOptions(bottomId, { type: 'bottom' }, {
+              allowFree: true,
+              emptyLabel: '—',
+              locked,
+            })}
+          </select>
+          <span class="ruche-cell-label" aria-hidden="true">${escapeHtml(labelForValue(bottomId))}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderProposalGrid() {
+    if (!els.proposalGrid || !els.proposalBoard) return;
+    ensureProposal(false);
+    const hive = getState().proposal;
+    if (!hive) return;
+    const cells = [];
+    for (let r = 0; r < GRID_SIZE; r += 1) {
+      for (let c = 0; c < GRID_SIZE; c += 1) {
+        const value = hive.grid[r][c];
+        const marshal = isMarshalCell(r, c);
+        const slot = { type: 'grid', row: r, col: c };
+        const locked = isLockedSlotOnHive(hive, slot);
+        const bg = colorForGridCell(r, c, value);
+        const fg = textColorForBg(bg === 'transparent' ? '#1e232b' : bg);
+        const filled = Boolean(value) || marshal;
+        cells.push(`
+          <div
+            class="ruche-cell ${filled ? 'is-filled' : ''} ${marshal ? 'ruche-cell-marshal' : ''} ${
+              locked ? 'is-locked' : ''
+            }"
+            role="gridcell"
+            data-proposal-cell
+            data-slot-type="grid"
+            data-row="${r}"
+            data-col="${c}"
+            data-locked="${locked ? '1' : '0'}"
+            draggable="${locked || marshal ? 'false' : 'true'}"
+            data-value="${escapeHtml(value || '')}"
+            style="background:${marshal || value ? bg : 'var(--bg-elevated)'};color:${fg};border-color:${
+              marshal || value ? bg : 'var(--border-soft)'
+            }"
+          >
+            ${
+              marshal
+                ? '<span class="ruche-marshal-badge">Maréchal</span>'
+                : `<span class="ruche-cell-coord">${r + 1},${c + 1}</span>`
+            }
+            <select
+              class="input ruche-cell-select ${marshal ? 'ruche-marshal-select' : ''}"
+              data-proposal-select
+              data-row="${r}"
+              data-col="${c}"
+              ${locked || marshal ? 'disabled' : ''}
+              aria-label="${marshal ? 'Proposition — Maréchal' : `Proposition — case ${r + 1}, ${c + 1}`}"
+            >
+              ${buildProposalOptions(value, { type: 'grid', row: r, col: c }, {
+                allowFree: !marshal,
+                emptyLabel: marshal ? '— Maréchal —' : '—',
+                locked: locked || marshal,
+              })}
+            </select>
+            <span class="ruche-cell-label" aria-hidden="true">${escapeHtml(labelForValue(value))}</span>
+          </div>
+        `);
+      }
+    }
+    els.proposalGrid.style.setProperty('--ruche-cols', String(GRID_SIZE));
+    els.proposalGrid.innerHTML = cells.join('');
+    const existingFooter = els.proposalBoard.querySelector('.ruche-footer');
+    if (existingFooter) existingFooter.remove();
+    els.proposalBoard.insertAdjacentHTML('beforeend', renderProposalBottom(hive));
+    renderProposalStats();
   }
 
   function renderBottomSlot() {
@@ -840,6 +1357,7 @@
   function render() {
     if (!els.root) return;
     renderGrid();
+    renderProposalGrid();
     renderArchives();
     renderSettings();
     if (lastCheck) renderVerifyResult(lastCheck);
@@ -875,26 +1393,8 @@
     });
     if (!ok) return;
 
-    const stamp = new Date();
-    const label = `Ruche ${stamp.toLocaleDateString('fr-FR')} ${stamp.toLocaleTimeString('fr-FR', {
-      hour: '2-digit',
-      minute: '2-digit',
-    })}`;
-    const active = getActivePlayers();
     update((s) => {
-      s.archives.unshift({
-        id: uid('ruche'),
-        label,
-        createdAt: stamp.toISOString(),
-        grid: cloneGrid(s.grid),
-        marshalId: getMarshalId(s.grid),
-        bottomId: getBottomId(s),
-        colors: { ...s.colors },
-        placedCount: check.placedCount,
-        freeCount: check.freeCount,
-        caseCount: TOTAL_CASES,
-        players: active.map((p) => ({ id: p.id, pseudo: p.pseudo, role: p.role })),
-      });
+      archiveCurrentHive('Ruche');
       return s;
     });
     lastCheck = analyzeGrid();
@@ -932,6 +1432,20 @@
   }
 
   function onCellChange(event) {
+    const proposalBottom = event.target.closest('[data-proposal-bottom-select]');
+    if (proposalBottom) {
+      setProposalSlot({ type: 'bottom' }, proposalBottom.value || FREE);
+      return;
+    }
+    const proposalSelect = event.target.closest('[data-proposal-select]');
+    if (proposalSelect) {
+      const row = Number(proposalSelect.dataset.row);
+      const col = Number(proposalSelect.dataset.col);
+      let value = proposalSelect.value || FREE;
+      if (isMarshalCell(row, col) && value === FREE) value = null;
+      setProposalSlot({ type: 'grid', row, col }, value);
+      return;
+    }
     const bottomSelect = event.target.closest('[data-ruche-bottom-select]');
     if (bottomSelect) {
       setBottom(bottomSelect.value || null);
@@ -944,6 +1458,79 @@
     let value = select.value || null;
     if (isMarshalCell(row, col) && value === FREE) value = null;
     setCell(row, col, value);
+  }
+
+  function parseProposalSlotFromEl(el) {
+    if (!el) return null;
+    const cell = el.closest('[data-proposal-cell]');
+    if (!cell || cell.dataset.locked === '1') return null;
+    if (cell.dataset.slotType === 'bottom') return { type: 'bottom' };
+    return {
+      type: 'grid',
+      row: Number(cell.dataset.row),
+      col: Number(cell.dataset.col),
+    };
+  }
+
+  let proposalDragSlot = null;
+
+  function onProposalDragStart(event) {
+    if (event.target.closest('select')) {
+      event.preventDefault();
+      return;
+    }
+    const slot = parseProposalSlotFromEl(event.target);
+    if (!slot) {
+      event.preventDefault();
+      return;
+    }
+    proposalDragSlot = slot;
+    event.currentTarget.classList?.add?.('is-proposal-drag');
+    const cell = event.target.closest('[data-proposal-cell]');
+    if (cell) cell.classList.add('is-proposal-drag');
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', slotKey(slot));
+  }
+
+  function onProposalDragEnd() {
+    els.proposalBoard?.querySelectorAll('.is-proposal-drag, .is-proposal-drop-target').forEach((node) => {
+      node.classList.remove('is-proposal-drag', 'is-proposal-drop-target');
+    });
+    proposalDragSlot = null;
+  }
+
+  function onProposalDragOver(event) {
+    const slot = parseProposalSlotFromEl(event.target);
+    if (!slot || !proposalDragSlot) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    const cell = event.target.closest('[data-proposal-cell]');
+    if (cell) cell.classList.add('is-proposal-drop-target');
+  }
+
+  function onProposalDragLeave(event) {
+    const cell = event.target.closest('[data-proposal-cell]');
+    if (cell) cell.classList.remove('is-proposal-drop-target');
+  }
+
+  function onProposalDrop(event) {
+    event.preventDefault();
+    const target = parseProposalSlotFromEl(event.target);
+    const source = proposalDragSlot;
+    const cell = event.target.closest('[data-proposal-cell]');
+    if (cell) cell.classList.remove('is-proposal-drop-target');
+    if (!source || !target) return;
+    swapProposalSlots(source, target);
+  }
+
+  function bindProposalDnD() {
+    if (!els.proposalBoard || els.proposalBoard.dataset.dndBound === '1') return;
+    els.proposalBoard.dataset.dndBound = '1';
+    els.proposalBoard.addEventListener('dragstart', onProposalDragStart);
+    els.proposalBoard.addEventListener('dragend', onProposalDragEnd);
+    els.proposalBoard.addEventListener('dragover', onProposalDragOver);
+    els.proposalBoard.addEventListener('dragleave', onProposalDragLeave);
+    els.proposalBoard.addEventListener('drop', onProposalDrop);
   }
 
   function onRootClick(event) {
@@ -1082,6 +1669,12 @@
     if (els.btnValidate) els.btnValidate.addEventListener('click', validateHive);
     if (els.btnExportPng) els.btnExportPng.addEventListener('click', exportPng);
     if (els.btnClear) els.btnClear.addEventListener('click', clearGrid);
+    if (els.btnProposalOptimize) {
+      els.btnProposalOptimize.addEventListener('click', regenerateProposal);
+    }
+    if (els.btnProposalValidate) {
+      els.btnProposalValidate.addEventListener('click', validateProposal);
+    }
 
     [els.colorMarshal, els.colorR4, els.colorFree].forEach((input) => {
       if (input) input.addEventListener('change', onColorChange);
@@ -1091,7 +1684,9 @@
       els.root.addEventListener('change', onCellChange);
       els.root.addEventListener('click', onRootClick);
     }
+    bindProposalDnD();
 
+    ensureProposal(false);
     render();
   }
 
@@ -1118,5 +1713,8 @@
     setBottom,
     isMarshalCell,
     analyzeGrid,
+    buildOptimizedProposal,
+    computeProposalStats,
+    ensureProposal,
   };
 })(window);
