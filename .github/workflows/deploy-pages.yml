@@ -12,10 +12,10 @@ permissions:
   pages: write
   id-token: write
 
-# Avoid overlapping deploys that cause "Timeout reached, aborting!"
+# One deploy at a time. Do not cancel in-flight deploys (that leaves Pages "errored").
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
