@@ -20,7 +20,7 @@ function assert(cond, msg) {
   }
 }
 
-const logoPath = path.join(root, 'public/assets/branding/warops-logo.png');
+const logoPath = path.join(root, 'assets/branding/warops-logo.png');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'css/styles.css'), 'utf8');
 
@@ -33,6 +33,7 @@ assert(
   'signature PNG'
 );
 assert(html.includes('assets/branding/warops-logo.png'), 'chemin HTML');
+assert(!html.includes('public/assets/'), 'pas de chemin /public/assets');
 assert(html.includes('rel="icon"'), 'favicon');
 assert(html.includes('brand-logo--login'), 'classe login');
 assert(html.includes('brand-logo--nav'), 'classe nav');
@@ -47,9 +48,7 @@ function serveOnce() {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
       const url = decodeURIComponent((req.url || '/').split('?')[0]);
-      // Comme Vercel : le contenu de /public est servi à la racine.
-      let rel = url === '/' ? 'index.html' : url.replace(/^\//, '');
-      if (rel.startsWith('assets/')) rel = path.join('public', rel);
+      const rel = url === '/' ? 'index.html' : url.replace(/^\//, '');
       const file = path.normalize(path.join(root, rel));
       if (!file.startsWith(root)) {
         res.writeHead(403);
@@ -76,10 +75,7 @@ function serveOnce() {
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address();
       const base = `http://127.0.0.1:${port}`;
-      Promise.all([
-        fetch(`${base}/assets/branding/warops-logo.png`),
-        fetch(`${base}/`),
-      ])
+      Promise.all([fetch(`${base}/assets/branding/warops-logo.png`), fetch(`${base}/`)])
         .then(async ([logoRes, pageRes]) => {
           const bytes = (await logoRes.arrayBuffer()).byteLength;
           const pageHtml = await pageRes.text();
@@ -106,3 +102,4 @@ serveOnce()
     console.error(error);
     process.exit(1);
   });
+}
