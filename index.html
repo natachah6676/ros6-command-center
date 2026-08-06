@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ROS6 Command Center</title>
-  <link rel="stylesheet" href="css/styles.css?v=20260805-vs1" />
+  <link rel="stylesheet" href="css/styles.css?v=20260806-ux2" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -498,46 +498,38 @@
         <div class="panel-header">
           <div>
             <h2>Tempête du Désert</h2>
-            <p class="panel-subtitle">Préparation des équipes, stratégie et mail ROS6</p>
-          </div>
-          <div class="settings-actions">
-            <button type="button" id="tempeteResetStorm" class="btn btn-ghost">🔄 Réinitialiser</button>
+            <p class="panel-subtitle">Deux Tempêtes indépendantes — A et B</p>
           </div>
         </div>
 
         <div class="tempete-layout">
-          <section class="block">
-            <header class="block-header">
-              <h3>Équipes &amp; horaires</h3>
-              <p>Deux équipes — horaires modifiables</p>
-            </header>
-            <div class="tempete-teams">
-              <label class="field">
-                <span>Équipe active</span>
-                <select id="tempeteActiveTeam" class="input">
-                  <option value="A">Équipe A</option>
-                  <option value="B">Équipe B</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>Horaire Équipe A</span>
-                <input type="text" id="tempeteHourA" class="input" value="13h" maxlength="20" />
-              </label>
-              <label class="field">
-                <span>Horaire Équipe B</span>
-                <input type="text" id="tempeteHourB" class="input" value="22h" maxlength="20" />
-              </label>
-            </div>
-          </section>
+          <div id="tempeteStormCards" class="tempete-storm-cards"></div>
 
           <section class="block">
             <header class="block-header">
-              <h3>Joueurs actifs</h3>
-              <p>Disponibilité · sélection · max 20 participants / 10 remplaçants</p>
+              <h3>Sélection des joueurs</h3>
+              <p>Affectez les joueurs à la Tempête A ou B · horaires modifiables</p>
             </header>
-            <div class="settings-actions" style="margin-bottom:0.75rem">
+            <div class="tempete-teams">
+              <label class="field">
+                <span>Tempête en cours d’édition</span>
+                <select id="tempeteActiveTeam" class="input">
+                  <option value="A">Tempête A</option>
+                  <option value="B">Tempête B</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Horaire Tempête A</span>
+                <input type="text" id="tempeteHourA" class="input" value="13h" maxlength="20" />
+              </label>
+              <label class="field">
+                <span>Horaire Tempête B</span>
+                <input type="text" id="tempeteHourB" class="input" value="22h" maxlength="20" />
+              </label>
+            </div>
+            <div class="settings-actions" style="margin:0.85rem 0 0.75rem">
               <button type="button" id="tempeteOpenSelection" class="btn btn-primary">
-                Sélection des joueurs
+                Aide à la sélection
               </button>
               <button type="button" id="tempeteResetAvailability" class="btn btn-ghost">
                 Réinitialiser les disponibilités
@@ -565,16 +557,14 @@
             <div id="tempeteSuggestions" class="tempete-suggestions hidden" style="margin-top:0.85rem"></div>
           </section>
 
-          <section class="block">
+          <section class="block" id="tempeteStrategyBlock">
             <header class="block-header">
-              <h3>Stratégie</h3>
-              <p>Génération automatique puis ajustements manuels</p>
+              <h3 id="tempeteStrategyTitle">Stratégie</h3>
+              <p id="tempeteStrategySubtitle">Détail de la Tempête sélectionnée</p>
             </header>
             <div class="settings-actions">
-              <button type="button" id="tempeteGenerate" class="btn btn-primary">Générer la stratégie</button>
               <button type="button" id="tempeteGenerateMail" class="btn btn-ghost">Générer le mail</button>
               <button type="button" id="tempeteCopyMail" class="btn btn-ghost" disabled>Copier le mail</button>
-              <button type="button" id="tempeteClose" class="btn btn-primary">Clôturer la Tempête</button>
             </div>
             <div id="tempeteAnalysis" style="margin-top:0.85rem"></div>
             <div id="tempeteAssignments" style="margin-top:0.85rem"></div>
@@ -585,13 +575,6 @@
               </header>
               <pre id="tempeteMailText" class="tempete-mail-text"></pre>
               <p id="tempeteMailFeedback" class="train-ok hidden" style="margin-top:0.65rem">Mail copié.</p>
-            </div>
-            <div id="tempeteAttendanceBlock" class="hidden" style="margin-top:0.85rem">
-              <header class="block-header">
-                <h3>Présence — clôture</h3>
-                <p>Statut obligatoire pour chaque inscrit (participant ou remplaçant)</p>
-              </header>
-              <div id="tempeteAttendanceList" class="stack-list"></div>
             </div>
           </section>
 
@@ -1021,6 +1004,24 @@
     </div>
   </dialog>
 
+  <dialog id="tempeteRosterModal" class="modal">
+    <div class="modal-card modal-wide">
+      <header class="modal-header">
+        <h3 id="tempeteRosterModalTitle">Vérifier les joueurs</h3>
+        <button type="button" class="icon-btn" id="tempeteRosterModalX" aria-label="Fermer">×</button>
+      </header>
+      <div class="modal-body">
+        <p id="tempeteRosterModalHint" class="panel-subtitle" style="margin-top:0"></p>
+        <div id="tempeteRosterModalBody" class="tempete-roster-review"></div>
+        <p id="tempeteRosterModalTotal" class="tempete-roster-total"></p>
+      </div>
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="tempeteRosterModalCancel">⬅ Retour</button>
+        <button type="button" class="btn btn-primary" id="tempeteRosterModalConfirm">✅ Valider les joueurs</button>
+      </footer>
+    </div>
+  </dialog>
+
   <!-- Fiche joueur -->
   <div id="playerDetailOverlay" class="drawer-overlay" hidden></div>
   <aside id="playerDetailDrawer" class="drawer drawer-wide" aria-hidden="true" aria-labelledby="playerDetailTitle">
@@ -1076,7 +1077,7 @@
   <script src="js/archives.js?v=20260802-4"></script>
   <script src="js/train.js?v=20260804-3"></script>
   <script src="js/ruche.js?v=20260804-8"></script>
-  <script src="js/tempete.js?v=20260805-vs1"></script>
+  <script src="js/tempete.js?v=20260806-ux2"></script>
   <script src="js/backups.js?v=20260803-7"></script>
   <script src="js/app.js?v=20260804-7"></script>
 </body>

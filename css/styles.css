@@ -587,6 +587,126 @@ button.tempete-presence-pct:hover {
   cursor: default;
 }
 
+.tempete-roster-review {
+  display: grid;
+  gap: 1.15rem;
+}
+
+.tempete-roster-team {
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.tempete-roster-team h4 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.tempete-roster-section {
+  margin-bottom: 0.75rem;
+}
+
+.tempete-roster-section:last-child {
+  margin-bottom: 0;
+}
+
+.tempete-roster-section-title {
+  margin: 0 0 0.4rem;
+  color: var(--steel);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tempete-roster-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.tempete-roster-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.tempete-roster-list li:last-child {
+  border-bottom: 0;
+}
+
+.tempete-roster-empty {
+  color: var(--steel);
+  font-style: italic;
+}
+
+.tempete-roster-total {
+  margin: 1rem 0 0;
+  font-weight: 700;
+}
+
+.tempete-roster-status {
+  min-width: 11rem;
+}
+
+.tempete-storm-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+  margin-bottom: 0.25rem;
+}
+
+.tempete-storm-card {
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.tempete-storm-card.is-focused {
+  border-color: rgba(59, 130, 246, 0.45);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.2);
+}
+
+.tempete-storm-card-header h3 {
+  margin: 0 0 0.25rem;
+  font-size: 1.15rem;
+}
+
+.tempete-storm-card-meta {
+  margin: 0;
+  color: var(--steel);
+  font-size: 0.9rem;
+}
+
+.tempete-storm-card-status {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.tempete-storm-card-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.tempete-storm-card-actions .btn {
+  width: 100%;
+  justify-content: center;
+}
+
 .vs-week-active {
   display: flex;
   flex-direction: column;

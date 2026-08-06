@@ -22,6 +22,12 @@
     absent: 'Absent non excusé',
   };
 
+  const ATTEND_UI = {
+    present: '🟢 Présent',
+    absent_excuse: '🟡 Absent excusé',
+    absent: '🔴 Absent',
+  };
+
   const PHASE1_BUILDINGS = [
     { key: 'hopital1', label: 'Hôpital 1', group: 'hopital' },
     { key: 'hopital2', label: 'Hôpital 2', group: 'hopital' },
@@ -42,8 +48,13 @@
 
   const els = {};
   let state = null;
-  let showAttendance = false;
   let presenceFilter = 'all';
+  /** Mode de la fenêtre commune : 'verify' | 'close' */
+  let rosterModalMode = null;
+  /** Tempête ciblée par la fenêtre commune ('A' | 'B'). */
+  let rosterModalTeam = 'A';
+  /** Brouillon des statuts pour la clôture (avant confirmation). */
+  let closeAttendanceDraft = {};
 
   function uid(prefix) {
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -66,6 +77,26 @@
     };
   }
 
+  function createBlankTeamValidation() {
+    return {
+      A: { validated: false, fingerprint: '' },
+      B: { validated: false, fingerprint: '' },
+    };
+  }
+
+  function normalizeTeamValidation(raw) {
+    const blank = createBlankTeamValidation();
+    const src = raw && typeof raw === 'object' ? raw : {};
+    ['A', 'B'].forEach((key) => {
+      const row = src[key] && typeof src[key] === 'object' ? src[key] : {};
+      blank[key] = {
+        validated: Boolean(row.validated),
+        fingerprint: String(row.fingerprint || ''),
+      };
+    });
+    return blank;
+  }
+
   function createBlankState() {
     return {
       version: 1,
@@ -74,6 +105,7 @@
       teams: { A: createBlankTeam(), B: createBlankTeam() },
       archives: [],
       recommendationStats: {},
+      teamValidation: createBlankTeamValidation(),
     };
   }
 
@@ -132,6 +164,16 @@
           parsed.recommendationStats && typeof parsed.recommendationStats === 'object'
             ? parsed.recommendationStats
             : {},
+        teamValidation: normalizeTeamValidation(
+          parsed.teamValidation ||
+            (parsed.playersValidated
+              ? {
+                  // Ancienne validation globale : on ne la reporte pas (re-validation par Tempête)
+                  A: { validated: false, fingerprint: '' },
+                  B: { validated: false, fingerprint: '' },
+                }
+              : null)
+        ),
       };
       if (global.ROSPlayerIdentity && global.ROSStorage) {
         ROSPlayerIdentity.migrateTempeteState(state, ROSStorage.getState().players);
@@ -141,7 +183,17 @@
       const changed =
         JSON.stringify(rebuilt) !== JSON.stringify(state.recommendationStats || {});
       state.recommendationStats = rebuilt;
-      if (changed) persist();
+      // Invalide les validations obsolètes (sélection modifiée hors session)
+      let validationChanged = false;
+      ['A', 'B'].forEach((key) => {
+        const row = state.teamValidation[key];
+        if (row.validated && row.fingerprint !== getTeamRosterFingerprint(key)) {
+          row.validated = false;
+          row.fingerprint = '';
+          validationChanged = true;
+        }
+      });
+      if (changed || validationChanged) persist();
       return state;
     } catch (error) {
       console.error('Tempête: chargement impossible', error);
@@ -448,6 +500,62 @@
         preferredVolant: Boolean(p.preferredVolant),
         listIndex: listIndex.get(p.id) ?? 0,
       }));
+  }
+
+  /** Empreinte stable de la sélection d’une Tempête (participants + remplaçants). */
+  function getTeamRosterFingerprint(teamKey) {
+    const s = getState();
+    const key = teamKey === 'B' ? 'B' : 'A';
+    const team = s.teams?.[key] || createBlankTeam();
+    const idsFor = (selection) =>
+      Object.keys(team.roster || {})
+        .filter((id) => normalizeRosterEntry(team.roster[id]).selection === selection)
+        .sort();
+    return JSON.stringify({
+      p: idsFor('participant'),
+      r: idsFor('remplacant'),
+    });
+  }
+
+  function isPlayersValidated(teamKey = activeTeamKey()) {
+    const s = getState();
+    const key = teamKey === 'B' ? 'B' : 'A';
+    if (!s.teamValidation) s.teamValidation = createBlankTeamValidation();
+    const row = s.teamValidation[key] || { validated: false, fingerprint: '' };
+    return Boolean(row.validated) && row.fingerprint === getTeamRosterFingerprint(key);
+  }
+
+  function clearTeamValidation(targetOrKey = null, maybeKey = null) {
+    let s = getState();
+    let key = null;
+    if (targetOrKey && typeof targetOrKey === 'object' && targetOrKey.teams) {
+      s = targetOrKey;
+      key = maybeKey === 'B' ? 'B' : maybeKey === 'A' ? 'A' : null;
+    } else if (targetOrKey === 'A' || targetOrKey === 'B') {
+      key = targetOrKey;
+    }
+    if (!s.teamValidation) s.teamValidation = createBlankTeamValidation();
+    if (key) {
+      s.teamValidation[key] = { validated: false, fingerprint: '' };
+    } else {
+      s.teamValidation = createBlankTeamValidation();
+    }
+    return s;
+  }
+
+  function setActiveTeam(teamKey, options = {}) {
+    const key = teamKey === 'B' ? 'B' : 'A';
+    const silent = Boolean(options.silent);
+    if (getState().activeTeam === key) return key;
+    if (silent) {
+      getState().activeTeam = key;
+      return key;
+    }
+    update((s) => {
+      s.activeTeam = key;
+      return s;
+    });
+    return key;
   }
 
   function sortByPowerStable(players) {
@@ -1043,18 +1151,16 @@
     els.suggestions = document.getElementById('tempeteSuggestions');
     els.btnResetAvailability = document.getElementById('tempeteResetAvailability');
     els.btnSuggestRemplacants = document.getElementById('tempeteSuggestRemplacants');
-    els.btnResetStorm = document.getElementById('tempeteResetStorm');
-    els.btnGenerate = document.getElementById('tempeteGenerate');
     els.btnGenerateMail = document.getElementById('tempeteGenerateMail');
     els.btnCopyMail = document.getElementById('tempeteCopyMail');
-    els.btnClose = document.getElementById('tempeteClose');
+    els.stormCards = document.getElementById('tempeteStormCards');
+    els.strategyTitle = document.getElementById('tempeteStrategyTitle');
+    els.strategySubtitle = document.getElementById('tempeteStrategySubtitle');
     els.analysis = document.getElementById('tempeteAnalysis');
     els.assignments = document.getElementById('tempeteAssignments');
     els.mailBlock = document.getElementById('tempeteMailBlock');
     els.mailText = document.getElementById('tempeteMailText');
     els.mailFeedback = document.getElementById('tempeteMailFeedback');
-    els.attendanceBlock = document.getElementById('tempeteAttendanceBlock');
-    els.attendanceList = document.getElementById('tempeteAttendanceList');
     els.archivesList = document.getElementById('tempeteArchivesList');
     els.archivesEmpty = document.getElementById('tempeteArchivesEmpty');
     els.btnOpenSelection = document.getElementById('tempeteOpenSelection');
@@ -1064,6 +1170,14 @@
     els.presenceModal = document.getElementById('tempetePresenceModal');
     els.presenceTitle = document.getElementById('tempetePresenceTitle');
     els.presenceBody = document.getElementById('tempetePresenceBody');
+    els.rosterModal = document.getElementById('tempeteRosterModal');
+    els.rosterModalTitle = document.getElementById('tempeteRosterModalTitle');
+    els.rosterModalHint = document.getElementById('tempeteRosterModalHint');
+    els.rosterModalBody = document.getElementById('tempeteRosterModalBody');
+    els.rosterModalTotal = document.getElementById('tempeteRosterModalTotal');
+    els.rosterModalCancel = document.getElementById('tempeteRosterModalCancel');
+    els.rosterModalConfirm = document.getElementById('tempeteRosterModalConfirm');
+    els.rosterModalX = document.getElementById('tempeteRosterModalX');
   }
 
   function renderPlayers() {
@@ -1129,20 +1243,96 @@
 
   function updateActionButtonsState() {
     const team = getTeam();
+    const teamKey = activeTeamKey();
     const controls = team.strategy ? collectControlIssues(team) : { blocking: false };
     const blocked = Boolean(controls.blocking);
+
     if (els.btnGenerateMail) {
       els.btnGenerateMail.disabled = blocked || !team.strategy;
       els.btnGenerateMail.title = blocked
         ? 'Corrigez les doublons et joueurs oubliés avant de générer le mail.'
-        : '';
+        : !team.strategy
+          ? 'Générez d’abord la stratégie de cette Tempête.'
+          : '';
     }
-    if (els.btnClose) {
-      els.btnClose.disabled = blocked && Boolean(team.strategy);
-      els.btnClose.title = blocked
-        ? 'Corrigez les doublons et joueurs oubliés avant de clôturer.'
-        : '';
+    if (els.strategyTitle) els.strategyTitle.textContent = `Stratégie — Tempête ${teamKey}`;
+    if (els.strategySubtitle) {
+      els.strategySubtitle.textContent = team.strategy
+        ? `Détail de la Tempête ${teamKey}`
+        : `Aucune stratégie générée pour la Tempête ${teamKey}`;
     }
+    renderStormCards();
+  }
+
+  function renderStormCards() {
+    if (!els.stormCards) return;
+    const focused = activeTeamKey();
+    const hourA = getState().hours?.A || '13h';
+    const hourB = getState().hours?.B || '22h';
+
+    els.stormCards.innerHTML = ['A', 'B']
+      .map((key) => {
+        const team = getTeam(key);
+        const count = countInscribedForTeam(key);
+        const validated = isPlayersValidated(key);
+        const hasStrategy = Boolean(team.strategy);
+        const controls = hasStrategy ? collectControlIssues(team) : { blocking: false };
+        const generateDisabled = !validated;
+        const closeDisabled = !hasStrategy || Boolean(controls.blocking);
+        const status = hasStrategy
+          ? controls.blocking
+            ? '⚠️ Stratégie à corriger'
+            : '✅ Stratégie prête'
+          : validated
+            ? '✅ Joueurs validés'
+            : 'Sélection à vérifier';
+        const hour = key === 'B' ? hourB : hourA;
+        return `
+          <article class="tempete-storm-card ${focused === key ? 'is-focused' : ''}" data-tempete-card="${key}">
+            <header class="tempete-storm-card-header">
+              <h3>🌪️ Tempête ${key}</h3>
+              <p class="tempete-storm-card-meta">${escapeHtml(hour)} · ${count} joueur${count > 1 ? 's' : ''}</p>
+              <p class="tempete-storm-card-status">${status}</p>
+            </header>
+            <div class="tempete-storm-card-actions">
+              <button type="button" class="btn btn-ghost" data-tempete-action="verify" data-team="${key}">
+                Vérifier les joueurs
+              </button>
+              <button
+                type="button"
+                class="btn btn-primary"
+                data-tempete-action="generate"
+                data-team="${key}"
+                ${generateDisabled ? 'disabled' : ''}
+                title="${
+                  generateDisabled
+                    ? 'Vérifiez et validez les joueurs de cette Tempête avant de générer.'
+                    : ''
+                }"
+              >
+                Générer la stratégie
+              </button>
+              <button
+                type="button"
+                class="btn btn-primary"
+                data-tempete-action="close"
+                data-team="${key}"
+                ${closeDisabled ? 'disabled' : ''}
+                title="${
+                  !hasStrategy
+                    ? 'Générez une stratégie avant de clôturer.'
+                    : controls.blocking
+                      ? 'Corrigez les doublons et joueurs oubliés avant de clôturer.'
+                      : ''
+                }"
+              >
+                Clôturer la Tempête
+              </button>
+            </div>
+          </article>
+        `;
+      })
+      .join('');
   }
 
   function renderAnalysis() {
@@ -1329,37 +1519,152 @@
   }
 
   function renderAttendance() {
-    if (!els.attendanceBlock) return;
-    if (!showAttendance) {
-      els.attendanceBlock.classList.add('hidden');
+    // Ancienne liste inline retirée — la clôture passe par la fenêtre commune.
+  }
+
+  function playerListHtml(players, options = {}) {
+    const { withStatus = false, attendanceMap = {} } = options;
+    if (!players.length) {
+      return `<li class="tempete-roster-empty">Aucun</li>`;
+    }
+    return players
+      .map((p) => {
+        if (!withStatus) {
+          return `<li><strong>${escapeHtml(p.pseudo)}</strong></li>`;
+        }
+        const current = attendanceMap[p.id] || 'present';
+        const opts = Object.keys(ATTEND_UI)
+          .map(
+            (k) =>
+              `<option value="${k}" ${current === k ? 'selected' : ''}>${ATTEND_UI[k]}</option>`
+          )
+          .join('');
+        return `
+          <li>
+            <strong>${escapeHtml(p.pseudo)}</strong>
+            <select class="input tempete-roster-status" data-tempete-close-status="${p.id}" aria-label="Statut ${escapeHtml(
+              p.pseudo
+            )}">${opts}</select>
+          </li>
+        `;
+      })
+      .join('');
+  }
+
+  function teamRosterSectionHtml(teamKey, options = {}) {
+    const team = getTeam(teamKey);
+    const participants = getSelectedPlayers(team, 'participant');
+    const remplacants = getSelectedPlayers(team, 'remplacant');
+    return `
+      <section class="tempete-roster-team">
+        <h4>Tempête ${teamKey}</h4>
+        <div class="tempete-roster-section">
+          <p class="tempete-roster-section-title">Participants</p>
+          <ul class="tempete-roster-list">${playerListHtml(participants, options)}</ul>
+        </div>
+        <div class="tempete-roster-section">
+          <p class="tempete-roster-section-title">Remplaçants</p>
+          <ul class="tempete-roster-list">${playerListHtml(remplacants, options)}</ul>
+        </div>
+      </section>
+    `;
+  }
+
+  function countInscribedForTeam(teamKey) {
+    const team = getTeam(teamKey);
+    return (
+      countSelection(team, 'participant') + countSelection(team, 'remplacant')
+    );
+  }
+
+  function renderRosterModalContent() {
+    if (!els.rosterModalBody) return;
+    const teamKey = rosterModalTeam === 'B' ? 'B' : 'A';
+
+    if (rosterModalMode === 'verify') {
+      if (els.rosterModalTitle) els.rosterModalTitle.textContent = `Vérifier les joueurs — Tempête ${teamKey}`;
+      if (els.rosterModalHint) {
+        els.rosterModalHint.textContent =
+          'Comparez cette liste avec les inscrits dans Last War. Aucune modification ici.';
+      }
+      if (els.rosterModalCancel) els.rosterModalCancel.textContent = '⬅ Retour';
+      if (els.rosterModalConfirm) els.rosterModalConfirm.textContent = '✅ Valider';
+
+      els.rosterModalBody.innerHTML = teamRosterSectionHtml(teamKey);
+      const total = countInscribedForTeam(teamKey);
+      if (els.rosterModalTotal) {
+        els.rosterModalTotal.textContent = `Nombre total de joueurs : ${total}`;
+      }
       return;
     }
-    const team = getTeam();
+
+    if (rosterModalMode === 'close') {
+      if (els.rosterModalTitle) els.rosterModalTitle.textContent = `Clôturer la Tempête ${teamKey}`;
+      if (els.rosterModalHint) {
+        els.rosterModalHint.textContent =
+          'Par défaut tous les joueurs sont présents. Modifiez uniquement les absents.';
+      }
+      if (els.rosterModalCancel) els.rosterModalCancel.textContent = '⬅ Annuler';
+      if (els.rosterModalConfirm) {
+        els.rosterModalConfirm.textContent = `✅ Clôturer la Tempête ${teamKey}`;
+      }
+
+      els.rosterModalBody.innerHTML = teamRosterSectionHtml(teamKey, {
+        withStatus: true,
+        attendanceMap: closeAttendanceDraft,
+      });
+      const total = countInscribedForTeam(teamKey);
+      if (els.rosterModalTotal) {
+        els.rosterModalTotal.textContent = `Nombre total de joueurs : ${total}`;
+      }
+    }
+  }
+
+  function openVerifyPlayersModal(teamKey = activeTeamKey()) {
+    rosterModalTeam = teamKey === 'B' ? 'B' : 'A';
+    setActiveTeam(rosterModalTeam);
+    rosterModalMode = 'verify';
+    closeAttendanceDraft = {};
+    renderRosterModalContent();
+    els.rosterModal?.showModal();
+  }
+
+  function openCloseStormModal(teamKey = activeTeamKey()) {
+    rosterModalTeam = teamKey === 'B' ? 'B' : 'A';
+    setActiveTeam(rosterModalTeam);
+    const team = getTeam(rosterModalTeam);
     const inscribed = [
       ...getSelectedPlayers(team, 'participant'),
       ...getSelectedPlayers(team, 'remplacant'),
     ];
-    els.attendanceBlock.classList.remove('hidden');
-    els.attendanceList.innerHTML = inscribed
-      .map((p) => {
-        const current = team.attendance[p.id] || 'present';
-        const opts = Object.entries(ATTEND)
-          .map(
-            ([k, label]) =>
-              `<option value="${k}" ${current === k ? 'selected' : ''}>${label}</option>`
-          )
-          .join('');
-        return `
-          <article class="stack-item">
-            <div class="stack-item-main">
-              <h4 class="stack-item-title">${escapeHtml(p.pseudo)}</h4>
-              <p class="panel-subtitle">${SELECT[ensureRosterEntry(team, p.id).selection] || ''}</p>
-            </div>
-            <select class="input" data-tempete-attendance="${p.id}" style="max-width:11rem">${opts}</select>
-          </article>
-        `;
-      })
-      .join('');
+    closeAttendanceDraft = {};
+    inscribed.forEach((p) => {
+      closeAttendanceDraft[p.id] = 'present';
+    });
+    rosterModalMode = 'close';
+    renderRosterModalContent();
+    els.rosterModal?.showModal();
+  }
+
+  function closeRosterModal() {
+    rosterModalMode = null;
+    closeAttendanceDraft = {};
+    if (els.rosterModal?.open) els.rosterModal.close();
+  }
+
+  function onValidatePlayers() {
+    const teamKey = rosterModalTeam === 'B' ? 'B' : 'A';
+    update((s) => {
+      if (!s.teamValidation) s.teamValidation = createBlankTeamValidation();
+      s.teamValidation[teamKey] = {
+        validated: true,
+        fingerprint: getTeamRosterFingerprint(teamKey),
+      };
+      s.activeTeam = teamKey;
+      return s;
+    });
+    closeRosterModal();
+    AppUI.toast(`Tempête ${teamKey} : joueurs validés — génération disponible.`);
   }
 
   function renderArchives() {
@@ -1499,13 +1804,35 @@
 
   function render() {
     if (!els.root) return;
+    // Garde les validations cohérentes avec chaque sélection
+    const s0 = getState();
+    if (!s0.teamValidation) s0.teamValidation = createBlankTeamValidation();
+    let stale = false;
+    ['A', 'B'].forEach((key) => {
+      const row = s0.teamValidation[key];
+      if (row?.validated && row.fingerprint !== getTeamRosterFingerprint(key)) {
+        stale = true;
+      }
+    });
+    if (stale) {
+      update((s) => {
+        ['A', 'B'].forEach((key) => {
+          const row = s.teamValidation?.[key];
+          if (row?.validated && row.fingerprint !== getTeamRosterFingerprint(key)) {
+            clearTeamValidation(s, key);
+          }
+        });
+        return s;
+      });
+      return;
+    }
     renderHours();
     renderPlayers();
     renderAnalysis();
     renderAssignments();
     renderMail();
-    renderAttendance();
     renderArchives();
+    updateActionButtonsState();
   }
 
   function setRosterField(playerId, field, value) {
@@ -1519,7 +1846,7 @@
           const otherEntry = s.teams[other]?.roster?.[playerId];
           const otherSel = otherEntry ? normalizeRosterEntry(otherEntry).selection : 'non_retenu';
           if (otherSel === 'participant' || otherSel === 'remplacant') {
-            AppUI.toast(`Déjà affecté en Équipe ${other}`);
+            AppUI.toast(`Déjà affecté en Tempête ${other}`);
             return s;
           }
         }
@@ -1531,7 +1858,11 @@
           AppUI.toast('Maximum 10 remplaçants.');
           return s;
         }
+        const previous = entry.selection;
         entry.selection = value;
+        if (previous !== value) {
+          clearTeamValidation(s, teamKey);
+        }
         // Invalider stratégie si la sélection change
         team.strategy = null;
         team.mail = '';
@@ -1721,39 +2052,27 @@
     AppUI.toast('Disponibilités réinitialisées : Indisponible.');
   }
 
-  /** Recommence la préparation — aucune archive, stats inchangées. */
-  async function onResetStorm() {
-    const teamKey = activeTeamKey();
-    const ok = await AppUI.confirm({
-      title: 'Réinitialiser la Tempête',
-      message:
-        'Voulez-vous vraiment réinitialiser cette Tempête ?\n\nToutes les affectations seront supprimées.\n\nLes archives et les statistiques ne seront pas modifiées.',
-      confirmLabel: 'Réinitialiser',
-    });
-    if (!ok) return;
-
-    showAttendance = false;
-    update((s) => {
-      // Remplace uniquement l’équipe active en cours de préparation
-      s.teams[teamKey] = createBlankTeam();
-      seedMissingRosterAsUnavailable(s.teams[teamKey]);
-      // archives, hours, activeTeam, puissances / volants préférés (fiche joueur) inchangés
-      return s;
-    });
-    renderSuggestions(null);
-    AppUI.toast(`Équipe ${teamKey} réinitialisée — aucune archive créée.`);
-  }
-
-  async function onGenerate() {
+  async function onGenerateForTeam(teamKey) {
+    const key = teamKey === 'B' ? 'B' : 'A';
+    setActiveTeam(key);
+    if (!isPlayersValidated(key)) {
+      AppUI.toast(`Vérifiez et validez les joueurs de la Tempête ${key}.`);
+      openVerifyPlayersModal(key);
+      return;
+    }
     const strategy = generateStrategy();
     if (!strategy) return;
     update((s) => {
-      s.teams[s.activeTeam].strategy = strategy;
-      s.teams[s.activeTeam].mail = '';
+      s.activeTeam = key;
+      s.teams[key].strategy = strategy;
+      s.teams[key].mail = '';
       return s;
     });
-    showAttendance = false;
-    AppUI.toast('Stratégie générée.');
+    AppUI.toast(`Stratégie générée — Tempête ${key}.`);
+  }
+
+  async function onGenerate() {
+    return onGenerateForTeam(activeTeamKey());
   }
 
   function onGenerateMail() {
@@ -1793,18 +2112,20 @@
     AppUI.toast('Mail copié.');
   }
 
-  async function onCloseStorm() {
-    const team = getTeam();
+  async function onCloseStormForTeam(teamKey) {
+    const key = teamKey === 'B' ? 'B' : 'A';
+    setActiveTeam(key);
+    const team = getTeam(key);
     const inscribed = [
       ...getSelectedPlayers(team, 'participant'),
       ...getSelectedPlayers(team, 'remplacant'),
     ];
     if (!inscribed.length) {
-      AppUI.toast('Aucun inscrit à clôturer.');
+      AppUI.toast(`Aucun inscrit à clôturer pour la Tempête ${key}.`);
       return;
     }
     if (!team.strategy) {
-      AppUI.toast('Générez une stratégie avant de clôturer.');
+      AppUI.toast(`Générez une stratégie pour la Tempête ${key} avant de clôturer.`);
       return;
     }
 
@@ -1815,41 +2136,44 @@
       return;
     }
 
-    // Première étape : afficher les présences (défaut Présent)
-    if (!showAttendance) {
-      showAttendance = true;
-      update((s) => {
-        const t = s.teams[s.activeTeam];
-        inscribed.forEach((p) => {
-          if (!t.attendance[p.id]) t.attendance[p.id] = 'present';
-        });
-        return s;
-      });
-      AppUI.toast('Vérifiez les présences, puis recliquez sur Clôturer la Tempête.');
+    openCloseStormModal(key);
+  }
+
+  async function onCloseStorm() {
+    return onCloseStormForTeam(activeTeamKey());
+  }
+
+  function finalizeCloseStorm() {
+    const teamKey = rosterModalTeam === 'B' ? 'B' : activeTeamKey();
+    const current = getTeam(teamKey);
+    const inscribed = [
+      ...getSelectedPlayers(current, 'participant'),
+      ...getSelectedPlayers(current, 'remplacant'),
+    ];
+    if (!inscribed.length || !current.strategy) {
+      AppUI.toast('Clôture impossible.');
       return;
     }
 
-    const current = getTeam();
-    const incomplete = inscribed.filter((p) => !current.attendance[p.id]);
-    if (incomplete.length) {
-      AppUI.toast('Présence incomplète — clôture impossible.');
+    const controls = collectControlIssues(current);
+    if (controls.blocking) {
+      AppUI.toast('Clôture bloquée : corrigez les doublons et les joueurs oubliés.');
+      closeRosterModal();
+      renderAnalysis();
       return;
     }
 
-    const ok = await AppUI.confirm({
-      title: 'Clôturer la Tempête',
-      message:
-        'Archiver cette Tempête et mettre à jour les compteurs d’absence des joueurs ?',
-      confirmLabel: 'Clôturer',
+    // Appliquer le brouillon de présences (défaut Présent)
+    const attendance = {};
+    inscribed.forEach((p) => {
+      const status = closeAttendanceDraft[p.id];
+      attendance[p.id] = Object.keys(ATTEND).includes(status) ? status : 'present';
     });
-    if (!ok) return;
 
-    const teamKey = activeTeamKey();
     const s = getState();
     const participants = getSelectedPlayers(current, 'participant');
     const remplacants = getSelectedPlayers(current, 'remplacant');
 
-    // Outcomes pour le moteur de recommandation (tous les joueurs actifs)
     const playerOutcomes = {};
     const inscribedIds = new Set([...participants, ...remplacants].map((p) => p.id));
     getActivePlayers().forEach((p) => {
@@ -1858,7 +2182,7 @@
           ensureRosterEntry(current, p.id).selection === 'remplacant' ? 'remplacant' : 'participant';
         playerOutcomes[p.id] = {
           role,
-          attendance: current.attendance[p.id] || null,
+          attendance: attendance[p.id] || null,
           team: teamKey,
         };
       } else {
@@ -1898,16 +2222,17 @@
       })),
       strategy: current.strategy,
       mail: current.mail || buildMail(teamKey),
-      attendance: { ...current.attendance },
+      attendance: { ...attendance },
       hours: { ...s.hours },
       playerOutcomes,
     };
 
+    // Stats joueurs : uniquement les inscrits de CETTE Tempête
     ROSStorage.update((alliance) => {
       inscribed.forEach((p) => {
         const player = alliance.players.find((x) => x.id === p.id);
         if (!player) return;
-        const status = current.attendance[p.id];
+        const status = attendance[p.id];
         if (status === 'absent') {
           player.stormAbsencesUnexcused = Math.max(0, Number(player.stormAbsencesUnexcused) || 0) + 1;
         } else if (status === 'absent_excuse') {
@@ -1917,16 +2242,19 @@
       return alliance;
     });
 
+    closeRosterModal();
+
     update((st) => {
       st.archives.unshift(archive);
       st.recommendationStats = rebuildRecommendationStats(st.archives);
       st.teams[teamKey] = createBlankTeam();
       seedMissingRosterAsUnavailable(st.teams[teamKey]);
+      clearTeamValidation(st, teamKey);
+      // L’autre Tempête (roster, stratégie, validation) reste intacte
       return st;
     });
-    showAttendance = false;
     renderSuggestions(null);
-    AppUI.toast('Tempête clôturée et archivée — statistiques de recommandation mises à jour.');
+    AppUI.toast(`Tempête ${teamKey} clôturée — l’autre Tempête n’a pas été modifiée.`);
   }
 
   function resolveArchivedPlayerName(entry) {
@@ -1981,16 +2309,29 @@
       );
       return;
     }
-    const att = event.target.closest('[data-tempete-attendance]');
-    if (att) {
-      update((s) => {
-        s.teams[s.activeTeam].attendance[att.dataset.tempeteAttendance] = att.value;
-        return s;
-      });
+    const closeStatus = event.target.closest('[data-tempete-close-status]');
+    if (closeStatus) {
+      const playerId = closeStatus.dataset.tempeteCloseStatus;
+      const value = closeStatus.value;
+      closeAttendanceDraft[playerId] = Object.keys(ATTEND).includes(value) ? value : 'present';
     }
   }
 
   function onRootClick(event) {
+    const actionBtn = event.target.closest('[data-tempete-action]');
+    if (actionBtn) {
+      const team = actionBtn.dataset.team === 'B' ? 'B' : 'A';
+      const action = actionBtn.dataset.tempeteAction;
+      if (action === 'verify') openVerifyPlayersModal(team);
+      else if (action === 'generate') onGenerateForTeam(team);
+      else if (action === 'close') onCloseStormForTeam(team);
+      return;
+    }
+    const card = event.target.closest('[data-tempete-card]');
+    if (card && !event.target.closest('button')) {
+      setActiveTeam(card.dataset.tempeteCard === 'B' ? 'B' : 'A');
+      return;
+    }
     const remove = event.target.closest('[data-tempete-remove-row]');
     if (remove) {
       removePlayerFromRow(remove.dataset.tempeteRemoveRow, remove.dataset.tempeteRemovePlayer);
@@ -2028,7 +2369,6 @@
         s.activeTeam = els.activeTeam.value === 'B' ? 'B' : 'A';
         return s;
       });
-      showAttendance = false;
       renderSuggestions(null);
     });
     els.hourA?.addEventListener('change', () => {
@@ -2047,15 +2387,19 @@
     els.btnOpenSelection?.addEventListener('click', openSelectionModal);
     els.btnResetAvailability?.addEventListener('click', onResetAvailabilities);
     els.btnSuggestRemplacants?.addEventListener('click', onSuggestRemplacants);
-    els.btnResetStorm?.addEventListener('click', onResetStorm);
-    els.btnGenerate?.addEventListener('click', onGenerate);
     els.btnGenerateMail?.addEventListener('click', onGenerateMail);
     els.btnCopyMail?.addEventListener('click', onCopyMail);
-    els.btnClose?.addEventListener('click', onCloseStorm);
 
     els.root?.addEventListener('change', onRootChange);
     els.root?.addEventListener('click', onRootClick);
     els.selectionModal?.addEventListener('click', onSelectionClick);
+    els.rosterModal?.addEventListener('change', onRootChange);
+    els.rosterModalCancel?.addEventListener('click', closeRosterModal);
+    els.rosterModalX?.addEventListener('click', closeRosterModal);
+    els.rosterModalConfirm?.addEventListener('click', () => {
+      if (rosterModalMode === 'verify') onValidatePlayers();
+      else if (rosterModalMode === 'close') finalizeCloseStorm();
+    });
     document.getElementById('tempeteSelectionClose')?.addEventListener('click', closeSelectionModal);
     document.getElementById('tempeteSelectionCloseBtn')?.addEventListener('click', closeSelectionModal);
     document.getElementById('tempetePresenceClose')?.addEventListener('click', closePresenceModal);
