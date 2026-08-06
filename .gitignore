@@ -7,3 +7,4 @@ Thumbs.db
 !.env.example
 **/service_role*
 **/*service-role*
+scripts/_live-state-dump.json
