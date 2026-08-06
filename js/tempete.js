@@ -56,6 +56,60 @@
   /** Brouillon des statuts pour la clôture (avant confirmation). */
   let closeAttendanceDraft = {};
 
+  /** UI Affectations Phase 1 (affichage seul — pas de logique stratégie). */
+  const assignmentsPanelUi = {
+    A: { open: false, snapshot: null },
+    B: { open: false, snapshot: null },
+  };
+
+  function assignmentsUiFor(teamKey = activeTeamKey()) {
+    const key = teamKey === 'B' ? 'B' : 'A';
+    if (!assignmentsPanelUi[key]) {
+      assignmentsPanelUi[key] = { open: false, snapshot: null };
+    }
+    return assignmentsPanelUi[key];
+  }
+
+  function cloneAssignmentState(strategy) {
+    return {
+      phase1: JSON.parse(JSON.stringify(strategy?.phase1 || {})),
+      volantIds: [...(strategy?.volantIds || [])],
+      assignmentsManual: Boolean(strategy?.assignmentsManual),
+    };
+  }
+
+  function restoreAssignmentState(strategy, snapshot) {
+    if (!strategy || !snapshot) return;
+    strategy.phase1 = JSON.parse(JSON.stringify(snapshot.phase1 || {}));
+    strategy.volantIds = [...(snapshot.volantIds || [])];
+    strategy.assignmentsManual = Boolean(snapshot.assignmentsManual);
+  }
+
+  function countAssignmentSummary(strategy) {
+    const playerIds = new Set();
+    let buildingsUsed = 0;
+    PHASE1_BUILDINGS.forEach((b) => {
+      const ids = strategy?.phase1?.[b.key] || [];
+      if (ids.length) {
+        buildingsUsed += 1;
+        ids.forEach((id) => playerIds.add(id));
+      }
+    });
+    const volants = strategy?.volantIds || [];
+    if (volants.length) {
+      buildingsUsed += 1;
+      volants.forEach((id) => playerIds.add(id));
+    }
+    const emptyImportant = PHASE1_BUILDINGS.filter(
+      (b) => !(strategy?.phase1?.[b.key] || []).length
+    ).length;
+    return {
+      playersAssigned: playerIds.size,
+      buildingsUsed,
+      emptyImportant,
+    };
+  }
+
   function uid(prefix) {
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
   }
@@ -771,6 +825,7 @@
       phase1,
       phase2,
       assignments: {},
+      assignmentsManual: false,
     };
 
     participants.forEach((p) => {
@@ -1022,6 +1077,7 @@
       const team = s.teams[s.activeTeam];
       if (!team.strategy) return s;
       mutator(team.strategy, team);
+      team.strategy.assignmentsManual = true;
       rebuildAssignments(team.strategy, getSelectedPlayers(team, 'participant'));
       team.mail = '';
       return s;
@@ -1420,16 +1476,52 @@
 
   function renderAssignments() {
     if (!els.assignments) return;
+    const teamKey = activeTeamKey();
     const team = getTeam();
     const strategy = team.strategy;
+    const ui = assignmentsUiFor(teamKey);
     if (!strategy) {
-      els.assignments.innerHTML = '<p class="empty-state">Générez une stratégie pour voir les affectations.</p>';
+      ui.open = false;
+      ui.snapshot = null;
+      els.assignments.innerHTML =
+        '<p class="empty-state">Générez une stratégie pour voir les affectations.</p>';
       updateActionButtonsState();
       return;
     }
 
     const participants = getSelectedPlayers(team, 'participant');
     const analysis = analyzeStrategy(team);
+    const controls = analysis.controls || collectControlIssues(team);
+    const summary = countAssignmentSummary(strategy);
+    const alertTotal =
+      (controls.duplicates?.length || 0) +
+      (controls.forgotten?.length || 0) +
+      (controls.remplacantAssigned?.length || 0) +
+      (controls.unavailableAssigned?.length || 0) +
+      summary.emptyImportant;
+    const blocking = Boolean(controls.blocking);
+    const manual = Boolean(strategy.assignmentsManual);
+    const statusLabel = manual ? 'Affectations modifiées manuellement' : 'Affectations automatiques';
+    const statusClass = manual
+      ? 'tempete-assign-status is-manual'
+      : 'tempete-assign-status is-auto';
+
+    const compactAlerts = `
+      <ul class="tempete-assign-compact-stats">
+        <li>Nombre de joueurs affectés : <strong>${summary.playersAssigned}</strong></li>
+        <li>Nombre de bâtiments utilisés : <strong>${summary.buildingsUsed}</strong></li>
+        <li>Alertes éventuelles : <strong>${alertTotal}</strong></li>
+        <li>Doublons : <strong>${controls.duplicates?.length || 0}</strong></li>
+        <li>Joueurs oubliés : <strong>${controls.forgotten?.length || 0}</strong></li>
+        <li>Bâtiments vides : <strong>${summary.emptyImportant}</strong></li>
+        ${
+          blocking
+            ? '<li class="tempete-assign-blocking"><strong>Vérification nécessaire</strong> — erreur bloquant le mail</li>'
+            : ''
+        }
+      </ul>
+    `;
+
     const avgByKey = Object.fromEntries(
       (analysis.buildingAverages || []).map((b) => [b.key, b.averageLabel])
     );
@@ -1480,28 +1572,107 @@
       `;
     }).join('');
 
+    const tableHtml = ui.open
+      ? `
+        <div class="tempete-assign-editor" id="tempeteAssignEditor">
+          <div class="tempete-assign-editor-actions settings-actions">
+            <button type="button" class="btn btn-primary" data-tempete-assign-action="save">
+              Enregistrer les modifications
+            </button>
+            <button type="button" class="btn btn-ghost" data-tempete-assign-action="cancel">
+              Annuler
+            </button>
+            <button type="button" class="btn btn-ghost" data-tempete-assign-action="collapse">
+              Replier
+            </button>
+          </div>
+          <div class="table-wrap">
+            <table class="archive-table" style="vertical-align:top">
+              <thead>
+                <tr>
+                  <th>Bâtiment</th>
+                  <th>Joueurs · tranche</th>
+                  <th>Moyenne</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>
+      `
+      : '';
+
     els.assignments.innerHTML = `
-      <div class="block">
+      <div class="block tempete-assign-block ${blocking ? 'has-blocking' : ''}">
         <header class="block-header">
           <h3>Affectations Phase 1</h3>
-          <p>Par bâtiment — modifications recalculées immédiatement</p>
+          <p>Affectations générées automatiquement</p>
         </header>
-        <div class="table-wrap">
-          <table class="archive-table" style="vertical-align:top">
-            <thead>
-              <tr>
-                <th>Bâtiment</th>
-                <th>Joueurs · tranche</th>
-                <th>Moyenne</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
+        <div class="${statusClass}" aria-live="polite">${escapeHtml(statusLabel)}</div>
+        ${compactAlerts}
+        ${
+          ui.open
+            ? ''
+            : `<div class="settings-actions" style="margin-top:0.75rem">
+                <button
+                  type="button"
+                  class="btn ${blocking ? 'btn-primary tempete-assign-open-urgent' : 'btn-ghost'}"
+                  data-tempete-assign-action="open"
+                >
+                  Voir / modifier les affectations
+                </button>
+              </div>`
+        }
+        ${tableHtml}
       </div>
     `;
     updateActionButtonsState();
+  }
+
+  function openAssignmentsEditor() {
+    const team = getTeam();
+    if (!team.strategy) return;
+    const ui = assignmentsUiFor();
+    ui.snapshot = cloneAssignmentState(team.strategy);
+    ui.open = true;
+    renderAssignments();
+  }
+
+  function collapseAssignmentsEditor() {
+    const ui = assignmentsUiFor();
+    ui.open = false;
+    ui.snapshot = null;
+    renderAssignments();
+  }
+
+  function saveAssignmentsEditor() {
+    const ui = assignmentsUiFor();
+    ui.open = false;
+    ui.snapshot = null;
+    renderAnalysis();
+    renderAssignments();
+    AppUI.toast('Affectations enregistrées.');
+  }
+
+  function cancelAssignmentsEditor() {
+    const ui = assignmentsUiFor();
+    const snap = ui.snapshot;
+    ui.open = false;
+    ui.snapshot = null;
+    if (snap) {
+      update((s) => {
+        const t = s.teams[s.activeTeam];
+        if (!t.strategy) return s;
+        restoreAssignmentState(t.strategy, snap);
+        rebuildAssignments(t.strategy, getSelectedPlayers(t, 'participant'));
+        t.mail = '';
+        return s;
+      });
+    } else {
+      renderAssignments();
+    }
+    AppUI.toast('Modifications annulées.');
   }
 
   function renderMail() {
@@ -2068,6 +2239,9 @@
       s.teams[key].mail = '';
       return s;
     });
+    const ui = assignmentsUiFor(key);
+    ui.open = false;
+    ui.snapshot = null;
     AppUI.toast(`Stratégie générée — Tempête ${key}.`);
   }
 
@@ -2318,6 +2492,15 @@
   }
 
   function onRootClick(event) {
+    const assignAction = event.target.closest('[data-tempete-assign-action]');
+    if (assignAction) {
+      const action = assignAction.dataset.tempeteAssignAction;
+      if (action === 'open') openAssignmentsEditor();
+      else if (action === 'save') saveAssignmentsEditor();
+      else if (action === 'cancel') cancelAssignmentsEditor();
+      else if (action === 'collapse') collapseAssignmentsEditor();
+      return;
+    }
     const actionBtn = event.target.closest('[data-tempete-action]');
     if (actionBtn) {
       const team = actionBtn.dataset.team === 'B' ? 'B' : 'A';

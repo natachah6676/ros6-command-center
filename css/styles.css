@@ -731,6 +731,72 @@ button.tempete-presence-pct:hover {
   justify-content: center;
 }
 
+.tempete-assign-status {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0 0.65rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.tempete-assign-status.is-auto {
+  background: rgba(91, 155, 213, 0.16);
+  color: #c5d8ef;
+  border: 1px solid rgba(91, 155, 213, 0.35);
+}
+
+.tempete-assign-status.is-manual {
+  background: rgba(208, 137, 42, 0.16);
+  color: #f0d2a0;
+  border: 1px solid rgba(208, 137, 42, 0.4);
+}
+
+.tempete-assign-compact-stats {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--steel-light);
+  font-size: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.tempete-assign-compact-stats strong {
+  color: var(--text);
+}
+
+.tempete-assign-blocking {
+  color: #ffb4b8;
+  list-style: none;
+  margin-left: -1.1rem;
+  margin-top: 0.35rem;
+  padding: 0.45rem 0.65rem;
+  background: rgba(166, 31, 40, 0.18);
+  border: 1px solid rgba(199, 58, 67, 0.45);
+  border-radius: var(--radius-sm);
+}
+
+.tempete-assign-block.has-blocking {
+  border-color: rgba(199, 58, 67, 0.45);
+}
+
+.tempete-assign-open-urgent {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 4px 14px var(--red-glow);
+}
+
+.tempete-assign-editor {
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border-soft);
+}
+
+.tempete-assign-editor-actions {
+  margin-bottom: 0.75rem;
+}
+
 .vs-week-active {
   display: flex;
   flex-direction: column;
