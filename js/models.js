@@ -332,6 +332,81 @@
     return opts.join('');
   }
 
+  /**
+   * Tranches de puissance globale (M) — distinctes de la puissance héros.
+   * Ordre de force croissant via sortValue.
+   */
+  function createGlobalPowerTiers() {
+    const tiers = [{ id: 'gp_lt_45', label: 'Moins de 45 M', sortValue: 44.9 }];
+    for (let start = 45; start <= 195; start += 5) {
+      const endLabel = `${start + 4},9`;
+      tiers.push({
+        id: `gp_${start}_${start + 5}`,
+        label: `${start} à ${endLabel} M`,
+        sortValue: start + 4.9,
+      });
+    }
+    tiers.push({ id: 'gp_ge_200', label: '200 M et plus', sortValue: 200 });
+    return tiers;
+  }
+
+  const GLOBAL_POWER_TIERS = createGlobalPowerTiers();
+  const GLOBAL_POWER_TIER_IDS = new Set(GLOBAL_POWER_TIERS.map((t) => t.id));
+
+  function getGlobalPowerTiers() {
+    return GLOBAL_POWER_TIERS.slice();
+  }
+
+  function normalizeGlobalPowerTierId(value) {
+    const id = String(value || '').trim();
+    if (!id) return null;
+    return GLOBAL_POWER_TIER_IDS.has(id) ? id : null;
+  }
+
+  function getGlobalPowerTierById(tierId) {
+    const id = normalizeGlobalPowerTierId(tierId);
+    if (!id) return null;
+    return GLOBAL_POWER_TIERS.find((t) => t.id === id) || null;
+  }
+
+  function getPlayerGlobalPowerTier(player) {
+    return getGlobalPowerTierById(player?.globalPowerTierId);
+  }
+
+  function getPlayerGlobalPowerLabel(player) {
+    const tier = getPlayerGlobalPowerTier(player);
+    return tier ? tier.label : 'Non renseignée';
+  }
+
+  /** Plus élevé = plus fort. Non renseignée = -1. */
+  function getPlayerGlobalPowerSortValue(player) {
+    const tier = getPlayerGlobalPowerTier(player);
+    return tier ? Number(tier.sortValue) : -1;
+  }
+
+  function buildGlobalPowerSelectOptions(selectedId = '') {
+    const selected = normalizeGlobalPowerTierId(selectedId) || '';
+    const opts = [`<option value="">Non renseignée</option>`];
+    GLOBAL_POWER_TIERS.forEach((tier) => {
+      const sel = tier.id === selected ? ' selected' : '';
+      opts.push(
+        `<option value="${escapeAttr(tier.id)}"${sel}>${escapeHtmlLite(tier.label)}</option>`
+      );
+    });
+    return opts.join('');
+  }
+
+  function canEditGlobalPower() {
+    if (global.ROSProfiles && typeof global.ROSProfiles.isActiveR5 === 'function') {
+      return Boolean(global.ROSProfiles.isActiveR5());
+    }
+    if (global.ROSProfiles && typeof global.ROSProfiles.getAppRole === 'function') {
+      return global.ROSProfiles.getAppRole() === 'R5';
+    }
+    const shared = global.ROSStorage ? global.ROSStorage.getState()?.appRole : null;
+    return shared === 'R5';
+  }
+
   function escapeAttr(value) {
     return String(value)
       .replace(/&/g, '&amp;')
@@ -437,6 +512,7 @@
     absent = false,
     inactive = false,
     heroPowerTierId = null,
+    globalPowerTierId = null,
     preferredVolant = false,
     coachingException = 'always',
   }) {
@@ -448,6 +524,7 @@
       absent: Boolean(absent),
       inactive: Boolean(inactive),
       heroPowerTierId: heroPowerTierId ? String(heroPowerTierId) : null,
+      globalPowerTierId: normalizeGlobalPowerTierId(globalPowerTierId),
       preferredVolant: Boolean(preferredVolant),
       coachingException: coachingException === 'never' ? 'never' : 'always',
       stormAbsencesUnexcused: 0,
@@ -781,6 +858,7 @@
             absent: Boolean(p.absent),
             inactive: Boolean(p.inactive),
             heroPowerTierId,
+            globalPowerTierId: normalizeGlobalPowerTierId(p.globalPowerTierId),
             preferredVolant: Boolean(p.preferredVolant),
             coachingException: normalizeCoachingException(p.coachingException),
             stormAbsencesUnexcused: Math.max(0, Number(p.stormAbsencesUnexcused) || 0),
@@ -1016,6 +1094,14 @@
     getPlayerPowerLabel,
     countPlayersUsingPowerTier,
     buildPowerTierSelectOptions,
+    getGlobalPowerTiers,
+    normalizeGlobalPowerTierId,
+    getGlobalPowerTierById,
+    getPlayerGlobalPowerTier,
+    getPlayerGlobalPowerLabel,
+    getPlayerGlobalPowerSortValue,
+    buildGlobalPowerSelectOptions,
+    canEditGlobalPower,
     createDefaultCoachingThreshold,
     normalizeCoachingThreshold,
     getCoachingThreshold,

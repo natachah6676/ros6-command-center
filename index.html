@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20260806-brand4" />
+  <link rel="stylesheet" href="css/styles.css?v=20260806-gp1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -453,8 +453,19 @@
         <section class="block">
           <header class="block-header">
             <h3>Joueurs à remplacer</h3>
-            <p>8 dernières semaines archivées pondérées — minimum 30 points</p>
+            <p>Historique pondéré + puissance globale — minimum 15 points</p>
           </header>
+          <div class="toolbar" style="margin-bottom:0.75rem">
+            <label class="field" style="margin:0;min-width:14rem">
+              <span>Trier par</span>
+              <select id="recrutementSort" class="input" aria-label="Tri Recrutement">
+                <option value="score">Score décroissant</option>
+                <option value="global-power">Puissance globale croissante</option>
+                <option value="hero-power">Puissance héros croissante</option>
+                <option value="alpha">Ordre alphabétique</option>
+              </select>
+            </label>
+          </div>
           <div id="recrutementList" class="stack-list"></div>
           <p id="recrutementEmpty" class="empty-state hidden">Aucun joueur à proposer pour le moment.</p>
         </section>
@@ -885,6 +896,13 @@
             <option value="">Non renseignée</option>
           </select>
         </label>
+        <label class="field" id="playerGlobalPowerField">
+          <span>Puissance globale</span>
+          <select id="playerGlobalPower" class="input" aria-label="Puissance globale">
+            <option value="">Non renseignée</option>
+          </select>
+          <small class="field-hint" id="playerGlobalPowerHint">Modifiable uniquement par le R5</small>
+        </label>
         <label class="field checkbox-field" id="playerPreferredVolantField">
           <span class="checkbox-line">
             <input type="checkbox" id="playerPreferredVolant" />
@@ -1201,20 +1219,20 @@
   <script src="js/supabase-client.js?v=20260804-4"></script>
   <script src="js/profiles.js?v=20260804-6"></script>
   <script src="js/supabase-sync.js?v=20260804-4"></script>
-  <script src="js/models.js?v=20260806-rec1"></script>
+  <script src="js/models.js?v=20260806-gp1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
   <script src="js/player-identity.js?v=20260802-4"></script>
   <script src="js/storage.js?v=20260806-warops1"></script>
   <script src="js/ui-helpers.js?v=20260802-4"></script>
   <script src="js/insights.js?v=20260806-cmd1"></script>
   <script src="js/player-stats.js?v=20260802-4"></script>
-  <script src="js/players.js?v=20260806-rec1"></script>
+  <script src="js/players.js?v=20260806-gp1"></script>
   <script src="js/command.js?v=20260806-cmd1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260805-vs1"></script>
   <script src="js/archives.js?v=20260802-4"></script>
   <script src="js/train.js?v=20260806-train2"></script>
-  <script src="js/recrutement.js?v=20260806-rec4"></script>
+  <script src="js/recrutement.js?v=20260806-gp1"></script>
   <script src="js/ruche.js?v=20260806-prop1"></script>
   <script src="js/tempete.js?v=20260806-assign1"></script>
   <script src="js/backups.js?v=20260806-warops1"></script>

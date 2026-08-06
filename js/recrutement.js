@@ -1,17 +1,16 @@
 /**
- * Module Recrutement — score de remplacement sur les 8 dernières semaines archivées,
- * avec pondération récente + bonus Inactif / Coaching.
+ * Module Recrutement — historique pondéré (8 semaines) + groupes de puissance globale.
  */
 (function (global) {
   const POINTS = {
     inactive: 40,
     coaching: 10,
+    powerStrong: 0,
+    powerMid: 10,
+    powerWeak: 20,
   };
 
-  /** Fenêtre glissante (semaines archivées les plus récentes). */
   const WINDOW_SIZE = 8;
-
-  /** Pondération par rang (1 = semaine archivée la plus récente). */
   const WEIGHT_BY_RANK = {
     1: 1,
     2: 1,
@@ -24,7 +23,25 @@
   };
 
   /** Score réel minimum pour apparaître dans la liste. */
-  const MIN_SCORE = 30;
+  const MIN_SCORE = 15;
+
+  const POWER_GROUPS = {
+    strong: {
+      id: 'strong',
+      label: '30 % les plus forts',
+      points: POINTS.powerStrong,
+    },
+    mid: {
+      id: 'mid',
+      label: '40 % intermédiaires',
+      points: POINTS.powerMid,
+    },
+    weak: {
+      id: 'weak',
+      label: '30 % les plus faibles',
+      points: POINTS.powerWeak,
+    },
+  };
 
   const RECRUITMENT_CRITERIA = [
     {
@@ -46,11 +63,13 @@
   ];
 
   const els = {};
+  let currentSort = 'score';
 
   function cacheDom() {
     els.root = document.getElementById('panel-recrutement');
     els.list = document.getElementById('recrutementList');
     els.empty = document.getElementById('recrutementEmpty');
+    els.sort = document.getElementById('recrutementSort');
   }
 
   function escapeHtml(value) {
@@ -61,7 +80,6 @@
       .replace(/"/g, '&quot;');
   }
 
-  /** Exclusions : Absents, R4, R5, Parti / désactivés. */
   function isExcludedFromRecruitment(player) {
     if (!player) return true;
     if (player.status !== 'Actif') return true;
@@ -75,8 +93,7 @@
   }
 
   function formatWeightPercent(weight) {
-    const pct = Math.round(Number(weight) * 100);
-    return `${pct} %`;
+    return `${Math.round(Number(weight) * 100)} %`;
   }
 
   function formatScoreReal(value) {
@@ -85,10 +102,6 @@
     return String(n).replace('.', ',');
   }
 
-  /**
-   * 8 dernières semaines archivées (hors semaine courante), plus récentes d’abord.
-   * Les archives plus anciennes restent en base mais sortent du calcul.
-   */
   function getScoringWeeks(state) {
     const seen = new Set();
     const weeks = [];
@@ -107,7 +120,6 @@
     return weeks.slice(0, WINDOW_SIZE);
   }
 
-  /** Alias conservé pour les tests / API. */
   function getArchivedWeeks(state) {
     return getScoringWeeks(state);
   }
@@ -116,15 +128,78 @@
     if (realScore >= 50) {
       return { level: 'high', label: 'Priorité élevée', icon: '🔴' };
     }
-    if (realScore >= MIN_SCORE) {
+    if (realScore >= 30) {
       return { level: 'medium', label: 'Priorité moyenne', icon: '🟠' };
+    }
+    if (realScore >= MIN_SCORE) {
+      return { level: 'watch', label: 'À surveiller', icon: '🟡' };
     }
     return { level: 'none', label: '', icon: '' };
   }
 
   /**
-   * Agrège les totaux Archives (computeTotal) sur la fenêtre pondérée.
+   * Population classée : actifs, hors R4/R5/archivés, puissance globale renseignée.
    */
+  function getPowerRankingPopulation(state) {
+    return (state.players || []).filter((player) => {
+      if (!player || player.status !== 'Actif') return false;
+      if (player.absent) return false;
+      if (player.role === 'R4' || player.role === 'R5') return false;
+      if (!ROSModels.normalizeGlobalPowerTierId(player.globalPowerTierId)) return false;
+      return true;
+    });
+  }
+
+  /**
+   * Groupes 30/40/30 sans séparer une même tranche.
+   * Retourne Map(playerId → { group, points, label }).
+   */
+  function buildPowerGroupAssignments(state) {
+    const population = getPowerRankingPopulation(state);
+    const assignments = new Map();
+    if (!population.length) return assignments;
+
+    const sorted = population.slice().sort((a, b) => {
+      const diff =
+        ROSModels.getPlayerGlobalPowerSortValue(b) - ROSModels.getPlayerGlobalPowerSortValue(a);
+      if (diff !== 0) return diff;
+      return a.pseudo.localeCompare(b.pseudo, 'fr', { sensitivity: 'base' });
+    });
+
+    const buckets = [];
+    sorted.forEach((player) => {
+      const tierId = player.globalPowerTierId;
+      const last = buckets[buckets.length - 1];
+      if (last && last.tierId === tierId) {
+        last.players.push(player);
+      } else {
+        buckets.push({ tierId, players: [player] });
+      }
+    });
+
+    const n = sorted.length;
+    const strongCutoff = n * 0.3;
+    const midCutoff = n * 0.7;
+    let index = 0;
+
+    buckets.forEach((bucket) => {
+      let groupKey = 'weak';
+      if (index < strongCutoff) groupKey = 'strong';
+      else if (index < midCutoff) groupKey = 'mid';
+      const group = POWER_GROUPS[groupKey];
+      bucket.players.forEach((player) => {
+        assignments.set(player.id, {
+          group: group.id,
+          points: group.points,
+          label: group.label,
+        });
+      });
+      index += bucket.players.length;
+    });
+
+    return assignments;
+  }
+
   function aggregateHistoryScore(player, state) {
     const scoringWeeks = getScoringWeeks(state);
     const weekDetails = [];
@@ -160,7 +235,7 @@
     };
   }
 
-  function scorePlayer(player, state) {
+  function scorePlayer(player, state, powerAssignments = null) {
     const history = aggregateHistoryScore(player, state);
     let inactivePoints = 0;
     let coachingPoints = 0;
@@ -178,37 +253,70 @@
       }
     });
 
-    const realScore = history.weightedVs + inactivePoints + coachingPoints;
+    const map = powerAssignments || buildPowerGroupAssignments(state);
+    const powerInfo = map.get(player.id) || null;
+    const hasGlobalPower = Boolean(ROSModels.normalizeGlobalPowerTierId(player.globalPowerTierId));
+    const powerPoints = powerInfo ? powerInfo.points : 0;
+
+    const realScore =
+      history.weightedVs + inactivePoints + coachingPoints + powerPoints;
     const displayedScore = Math.round(realScore);
-    const priority = getPriority(realScore);
 
     return {
       player,
-      /** Score réel (tri). */
       score: realScore,
       realScore,
       displayedScore,
       vsPoints: history.weightedVs,
-      donationPoints: 0,
+      historyPoints: history.weightedVs,
       inactivePoints,
       coachingPoints,
+      powerPoints,
+      powerGroup: powerInfo,
+      hasGlobalPower,
+      globalPowerLabel: ROSModels.getPlayerGlobalPowerLabel(player),
+      heroPowerLabel: ROSModels.getPlayerPowerLabel(player, state),
+      globalPowerSort: ROSModels.getPlayerGlobalPowerSortValue(player),
+      heroPowerSort: ROSModels.getPlayerPowerSortValue(player, state),
       weeksCounted: history.weeksCounted,
       windowSize: history.windowSize,
       weekDetails: history.weekDetails,
-      priority,
+      priority: getPriority(realScore),
       flags,
     };
   }
 
-  function getReplacementCandidates(state = ROSStorage.getState()) {
-    return (state.players || [])
-      .filter((p) => !isExcludedFromRecruitment(p))
-      .map((p) => scorePlayer(p, state))
-      .filter((row) => row.realScore >= MIN_SCORE)
-      .sort((a, b) => {
-        if (b.realScore !== a.realScore) return b.realScore - a.realScore;
+  function sortCandidates(rows, sortKey) {
+    const list = rows.slice();
+    list.sort((a, b) => {
+      if (sortKey === 'global-power') {
+        const ag = a.hasGlobalPower ? a.globalPowerSort : Number.POSITIVE_INFINITY;
+        const bg = b.hasGlobalPower ? b.globalPowerSort : Number.POSITIVE_INFINITY;
+        if (ag !== bg) return ag - bg;
         return a.player.pseudo.localeCompare(b.player.pseudo, 'fr', { sensitivity: 'base' });
-      });
+      }
+      if (sortKey === 'hero-power') {
+        const ah = a.heroPowerSort >= 0 ? a.heroPowerSort : Number.POSITIVE_INFINITY;
+        const bh = b.heroPowerSort >= 0 ? b.heroPowerSort : Number.POSITIVE_INFINITY;
+        if (ah !== bh) return ah - bh;
+        return a.player.pseudo.localeCompare(b.player.pseudo, 'fr', { sensitivity: 'base' });
+      }
+      if (sortKey === 'alpha') {
+        return a.player.pseudo.localeCompare(b.player.pseudo, 'fr', { sensitivity: 'base' });
+      }
+      if (b.realScore !== a.realScore) return b.realScore - a.realScore;
+      return a.player.pseudo.localeCompare(b.player.pseudo, 'fr', { sensitivity: 'base' });
+    });
+    return list;
+  }
+
+  function getReplacementCandidates(state = ROSStorage.getState(), sortKey = currentSort) {
+    const powerAssignments = buildPowerGroupAssignments(state);
+    const rows = (state.players || [])
+      .filter((p) => !isExcludedFromRecruitment(p))
+      .map((p) => scorePlayer(p, state, powerAssignments))
+      .filter((row) => row.realScore >= MIN_SCORE);
+    return sortCandidates(rows, sortKey);
   }
 
   function renderWeekDetailLines(weekDetails) {
@@ -227,18 +335,32 @@
 
   function renderPlayerCard(row) {
     const priority = row.priority || getPriority(row.realScore);
+    const powerBlock = row.hasGlobalPower
+      ? `<div>Puissance globale : <strong>${escapeHtml(row.globalPowerLabel)}</strong></div>
+         <div>Groupe : ${escapeHtml(row.powerGroup?.label || '—')} → <strong>+${
+           row.powerPoints
+         }</strong></div>`
+      : `<div>Puissance globale : <strong>Puissance à renseigner</strong></div>
+         <div>Groupe puissance : 0</div>`;
+
     return `
       <article class="stack-item recrutement-card" data-player-id="${escapeHtml(row.player.id)}">
         <div class="stack-item-main">
           <div class="recrutement-card-head">
-            <h4 class="stack-item-title">${escapeHtml(row.player.pseudo)}</h4>
+            <h4 class="stack-item-title">${escapeHtml(row.player.pseudo)} — ${
+              row.displayedScore
+            } points</h4>
             <span class="recrutement-priority recrutement-priority-${priority.level}">
               ${priority.icon} ${escapeHtml(priority.label)}
             </span>
           </div>
           <div class="recrutement-breakdown">
             <div class="recrutement-block">
-              <strong>VS :</strong>
+              ${powerBlock}
+              <div>Puissance héros : ${escapeHtml(row.heroPowerLabel)}</div>
+            </div>
+            <div class="recrutement-block">
+              <strong>Historique pondéré : +${escapeHtml(formatScoreReal(row.historyPoints))}</strong>
               <ul>${renderWeekDetailLines(row.weekDetails)}</ul>
             </div>
             <div class="recrutement-block">
@@ -248,14 +370,13 @@
               <div>Inactif : ${
                 row.inactivePoints > 0 ? `<strong>+${row.inactivePoints}</strong>` : '0'
               }</div>
-            </div>
-            <div class="recrutement-block recrutement-scores">
               <div>Score réel : <strong>${escapeHtml(formatScoreReal(row.realScore))}</strong></div>
-              <div>Score affiché : <strong>${row.displayedScore}</strong></div>
             </div>
           </div>
         </div>
-        <button type="button" class="btn btn-ghost btn-sm" data-recrutement-open="${escapeHtml(row.player.id)}">
+        <button type="button" class="btn btn-ghost btn-sm" data-recrutement-open="${escapeHtml(
+          row.player.id
+        )}">
           Fiche
         </button>
       </article>
@@ -264,6 +385,7 @@
 
   function render() {
     if (!els.list) return;
+    if (els.sort) currentSort = els.sort.value || 'score';
     const rows = getReplacementCandidates();
     if (!rows.length) {
       els.list.innerHTML = '';
@@ -284,6 +406,10 @@
   function init() {
     cacheDom();
     els.root?.addEventListener('click', onClick);
+    els.sort?.addEventListener('change', () => {
+      currentSort = els.sort.value || 'score';
+      render();
+    });
   }
 
   global.RecrutementModule = {
@@ -295,6 +421,8 @@
     getArchivedWeeks,
     getScoringWeeks,
     aggregateHistoryScore,
+    buildPowerGroupAssignments,
+    getPowerRankingPopulation,
     getPriority,
     weightForRank,
     RECRUITMENT_CRITERIA,
@@ -302,5 +430,6 @@
     MIN_SCORE,
     WINDOW_SIZE,
     WEIGHT_BY_RANK,
+    POWER_GROUPS,
   };
 })(window);

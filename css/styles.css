@@ -1631,8 +1631,8 @@ tbody tr:hover {
 
 .member-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(150px, 0.75fr) minmax(150px, 0.85fr) auto;
-  gap: 1rem;
+  grid-template-columns: minmax(0, 1.1fr) minmax(140px, 0.7fr) minmax(140px, 0.7fr) minmax(140px, 0.8fr) auto;
+  gap: 0.85rem;
   align-items: center;
   background: var(--bg-elevated);
   border: 1px solid var(--border-soft);
@@ -2681,12 +2681,21 @@ tbody tr:hover {
   white-space: nowrap;
 }
 
+.recrutement-priority-watch {
+  color: #b8860b;
+}
+
 .recrutement-priority-medium {
   color: #c47b1a;
 }
 
 .recrutement-priority-high {
   color: #c0392b;
+}
+
+.member-power-select:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
 }
 
 .recrutement-breakdown {
