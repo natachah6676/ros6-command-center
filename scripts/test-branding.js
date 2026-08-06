@@ -1,5 +1,5 @@
 /**
- * Vérifie l’intégration du logo WarOps.
+ * Verifie l'integration du logo WarOps.
  * node scripts/test-branding.js
  */
 const fs = require('fs');
@@ -13,10 +13,10 @@ let ko = 0;
 function assert(cond, msg) {
   if (cond) {
     ok += 1;
-    console.log('  ✓', msg);
+    console.log('  OK', msg);
   } else {
     ko += 1;
-    console.error('  ✗', msg);
+    console.error('  KO', msg);
   }
 }
 
@@ -25,9 +25,9 @@ const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'css/styles.css'), 'utf8');
 
 console.log('\n=== Branding ===');
-assert(fs.existsSync(logoPath), 'warops-logo.png présent');
+assert(fs.existsSync(logoPath), 'warops-logo.png present');
 const logoBuf = fs.readFileSync(logoPath);
-assert(logoBuf.length > 1000, `taille logo (${logoBuf.length})`);
+assert(logoBuf.length > 1000, 'taille logo (' + logoBuf.length + ')');
 assert(
   logoBuf[0] === 0x89 && logoBuf[1] === 0x50 && logoBuf[2] === 0x4e && logoBuf[3] === 0x47,
   'signature PNG'
@@ -73,33 +73,41 @@ function serveOnce() {
       });
     });
     server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      const base = `http://127.0.0.1:${port}`;
-      Promise.all([fetch(`${base}/assets/branding/warops-logo.png`), fetch(`${base}/`)])
-        .then(async ([logoRes, pageRes]) => {
+      const port = server.address().port;
+      const base = 'http://127.0.0.1:' + port;
+      Promise.all([fetch(base + '/assets/branding/warops-logo.png'), fetch(base + '/')])
+        .then(async (results) => {
+          const logoRes = results[0];
+          const pageRes = results[1];
           const bytes = (await logoRes.arrayBuffer()).byteLength;
           const pageHtml = await pageRes.text();
-          assert(logoRes.status === 200, `HTTP logo 200 (got ${logoRes.status})`);
-          assert(logoRes.headers.get('content-type')?.includes('png'), 'content-type png');
+          assert(logoRes.status === 200, 'HTTP logo 200 (got ' + logoRes.status + ')');
+          assert(
+            String(logoRes.headers.get('content-type') || '').includes('png'),
+            'content-type png'
+          );
           assert(bytes === logoBuf.length, 'HTTP bytes = fichier');
           assert(pageRes.status === 200, 'HTTP page 200');
           assert(pageHtml.includes('brand-logo--login'), 'page sert le markup logo');
-          server.close(() => resolve());
+          server.close(function () {
+            resolve();
+          });
         })
-        .catch((error) => {
-          server.close(() => reject(error));
+        .catch(function (error) {
+          server.close(function () {
+            reject(error);
+          });
         });
     });
   });
 }
 
 serveOnce()
-  .then(() => {
-    console.log(`\n=== Résultat ===\n${ok} OK · ${ko} KO`);
+  .then(function () {
+    console.log('\n=== Resultat ===\n' + ok + ' OK · ' + ko + ' KO');
     process.exit(ko ? 1 : 0);
   })
-  .catch((error) => {
+  .catch(function (error) {
     console.error(error);
     process.exit(1);
   });
-}

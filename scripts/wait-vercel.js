@@ -35,7 +35,7 @@ async function main() {
     'assets/branding/warops-logo.png',
     'brand-logo--login',
     'brand-logo--nav',
-    'css/styles.css?v=20260806-brand3',
+    'css/styles.css?v=20260806-brand4',
   ]) {
     console.log(`${html.includes(c) ? 'FOUND' : 'MISSING'}: ${c}`);
   }
