@@ -159,6 +159,7 @@
       })
       .join('');
     renderCoachingThresholdSettings(state);
+    renderAllianceSettings(state);
   }
 
   function renderCoachingThresholdSettings(state = ROSStorage.getState()) {
@@ -187,6 +188,68 @@
     renderCoachingThresholdSettings();
     if (global.PlayersModule) PlayersModule.render();
     toast('Seuil coaching enregistré.');
+  }
+
+  function renderAllianceSettings(state = ROSStorage.getState()) {
+    const alliance = ROSModels.getAllianceSettings(state);
+    const nameEl = document.getElementById('allianceName');
+    const tagEl = document.getElementById('allianceTag');
+    const serverEl = document.getElementById('allianceServer');
+    const langEl = document.getElementById('allianceLanguage');
+    if (nameEl) nameEl.value = alliance.name;
+    if (tagEl) tagEl.value = alliance.tag;
+    if (serverEl) serverEl.value = alliance.server;
+    if (langEl) langEl.value = alliance.language;
+  }
+
+  function applyBrandIdentity(state = ROSStorage.getState()) {
+    const alliance = ROSModels.getAllianceSettings(state);
+    const allianceLine = `Alliance : ${alliance.name}`;
+    const serverLine = `Serveur : ${alliance.server}`;
+    const setText = (id, text) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = text;
+    };
+    setText('brandAllianceLine', allianceLine);
+    setText('brandServerLine', serverLine);
+    setText('authBrandAlliance', allianceLine);
+    setText('authBrandServer', serverLine);
+    setText(
+      'rucheSubtitle',
+      `Plan de ruche ${alliance.tag} — 101 cases (10 × 10 + bas) · Maréchal au centre`
+    );
+    setText(
+      'trainCategoriesHint',
+      `Désignent les conducteurs — liste livrée avec ${alliance.name}, entièrement modifiable`
+    );
+    document.title = `WAROPS — ${alliance.tag}`;
+    document.documentElement.lang = alliance.language === 'en' ? 'en' : 'fr';
+  }
+
+  function saveAllianceSettings() {
+    const name = String(document.getElementById('allianceName')?.value || '').trim();
+    const tag = String(document.getElementById('allianceTag')?.value || '').trim();
+    const server = String(document.getElementById('allianceServer')?.value || '').trim();
+    const language = String(document.getElementById('allianceLanguage')?.value || 'fr').trim();
+    if (!name) {
+      toast('Le nom de l’alliance est obligatoire.');
+      return;
+    }
+    if (!tag) {
+      toast('Le tag est obligatoire.');
+      return;
+    }
+    if (!server) {
+      toast('Le serveur est obligatoire.');
+      return;
+    }
+    ROSStorage.update((state) => {
+      state.alliance = ROSModels.normalizeAllianceSettings({ name, tag, server, language });
+      return state;
+    });
+    renderAllianceSettings();
+    applyBrandIdentity();
+    toast('Alliance enregistrée.');
   }
 
   function openPowerTierModal(tier = null) {
@@ -372,7 +435,7 @@
     const a = document.createElement('a');
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     a.href = url;
-    a.download = `ros6-command-center-${stamp}.json`;
+    a.download = `warops-${ROSModels.getAllianceTag(ROSStorage.getState())}-${stamp}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -432,7 +495,7 @@
     const second = await confirm({
       title: 'Confirmation définitive',
       message:
-        'Deuxième confirmation : confirmez-vous la réinitialisation complète de ROS6 Command Center ?',
+        'Deuxième confirmation : confirmez-vous la réinitialisation complète de WAROPS ?',
       confirmLabel: 'Réinitialiser définitivement',
     });
     if (!second) return;
@@ -465,6 +528,10 @@
     const btnSaveCoaching = document.getElementById('btnSaveCoachingThreshold');
     if (btnSaveCoaching) {
       btnSaveCoaching.addEventListener('click', saveCoachingThreshold);
+    }
+    const btnSaveAlliance = document.getElementById('btnSaveAlliance');
+    if (btnSaveAlliance) {
+      btnSaveAlliance.addEventListener('click', saveAllianceSettings);
     }
     if (ui.powerTierForm) {
       ui.powerTierForm.addEventListener('submit', savePowerTier);
@@ -519,6 +586,7 @@
 
     ROSStorage.subscribe(() => {
       applyRolePermissions();
+      applyBrandIdentity();
       CommandModule.render();
       PlayersModule.render();
       VSModule.render();
@@ -539,6 +607,7 @@
     });
 
     applyRolePermissions();
+    applyBrandIdentity();
     switchTab('command');
     NotificationsModule.render();
 
@@ -589,6 +658,18 @@
     // Avant ROSSync : la migration « Importer vers Supabase » utilise AppUI.confirm
     // et doit pouvoir cliquer #confirmOk immédiatement.
     bindEvents();
+
+    // Identité alliance sur l’écran de connexion (état local si déjà présent)
+    try {
+      const raw = localStorage.getItem('ros6_command_center_v1');
+      if (raw) {
+        applyBrandIdentity(ROSModels.normalizeState(JSON.parse(raw)));
+      } else {
+        applyBrandIdentity({ alliance: ROSModels.createDefaultAllianceSettings() });
+      }
+    } catch {
+      applyBrandIdentity({ alliance: ROSModels.createDefaultAllianceSettings() });
+    }
 
     if (!globalThis.ROSSync || !globalThis.ROSSupabase) {
       toast('Client Supabase indisponible — démarrage local uniquement.');

@@ -117,7 +117,7 @@
       if (raw != null) stores[key] = parseStoreValue(raw);
     });
     return {
-      appName: 'ROS6 Command Center',
+      appName: 'WAROPS',
       stores,
       collectedAt: new Date().toISOString(),
     };
@@ -180,7 +180,7 @@
     const a = document.createElement('a');
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     a.href = url;
-    a.download = `ros6-securite-avant-migration-${stamp}.json`;
+    a.download = `warops-securite-avant-migration-${stamp}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();

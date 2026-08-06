@@ -83,7 +83,7 @@
 
     const data = captureSnapshot();
     const payload = JSON.stringify({
-      appName: 'ROS6 Command Center',
+      appName: 'WAROPS',
       backupVersion: 1,
       kind,
       createdAt,

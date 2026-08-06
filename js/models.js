@@ -606,6 +606,39 @@
     };
   }
 
+  function createDefaultAllianceSettings() {
+    return {
+      name: 'ROS6',
+      tag: 'ROS6',
+      server: '602',
+      language: 'fr',
+    };
+  }
+
+  function normalizeAllianceSettings(raw) {
+    const defaults = createDefaultAllianceSettings();
+    const language = String(raw?.language || '').trim().toLowerCase();
+    const allowedLang = language === 'en' ? 'en' : 'fr';
+    const name = String(raw?.name || '').trim() || defaults.name;
+    const tag = String(raw?.tag || '').trim() || name || defaults.tag;
+    const server = String(raw?.server ?? '').trim() || defaults.server;
+    return { name, tag, server, language: allowedLang };
+  }
+
+  function getAllianceSettings(state) {
+    return normalizeAllianceSettings(state?.alliance);
+  }
+
+  /** Nom affiché de l’alliance (paramètres). */
+  function getAllianceName(state) {
+    return getAllianceSettings(state).name;
+  }
+
+  /** Tag alliance (paramètres). */
+  function getAllianceTag(state) {
+    return getAllianceSettings(state).tag;
+  }
+
   function createBlankState() {
     const week = createWeek(new Date(), { number: 1, archived: false });
     return {
@@ -619,6 +652,7 @@
       powerTiers: createDefaultPowerTiers(),
       vsSettings: createDefaultVsSettings(),
       coachingThreshold: createDefaultCoachingThreshold(),
+      alliance: createDefaultAllianceSettings(),
     };
   }
 
@@ -864,6 +898,7 @@
       raw.playerWeekNotes && typeof raw.playerWeekNotes === 'object' ? raw.playerWeekNotes : {};
 
     const coachingThreshold = normalizeCoachingThreshold(raw.coachingThreshold);
+    const alliance = normalizeAllianceSettings(raw.alliance);
 
     const normalized = {
       version: DATA_VERSION,
@@ -881,6 +916,7 @@
       powerTiers,
       vsSettings,
       coachingThreshold,
+      alliance,
     };
 
     // Compatibilité : anciennes clés « pseudo » → identifiant interne
@@ -986,6 +1022,11 @@
     isPlayerInCoachingList,
     formatCoachingDateTime,
     getCoachingContact,
+    createDefaultAllianceSettings,
+    normalizeAllianceSettings,
+    getAllianceSettings,
+    getAllianceName,
+    getAllianceTag,
     createBlankState,
     createBlankUiState,
     createInitialState,

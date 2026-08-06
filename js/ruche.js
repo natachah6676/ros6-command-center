@@ -1000,7 +1000,11 @@
     ctx.font = 'bold 28px Segoe UI, Candara, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText('ROS6 — Plan de ruche', canvas.width / 2, 38);
+    const allianceTag =
+      global.ROSModels && typeof ROSModels.getAllianceTag === 'function'
+        ? ROSModels.getAllianceTag(ROSStorage.getState())
+        : 'Alliance';
+    ctx.fillText(`${allianceTag} — Plan de ruche`, canvas.width / 2, 38);
 
     for (let r = 0; r < GRID_SIZE; r += 1) {
       for (let c = 0; c < GRID_SIZE; c += 1) {
@@ -1057,7 +1061,11 @@
       const a = document.createElement('a');
       const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
       a.href = url;
-      a.download = `ros6-ruche-${stamp}.png`;
+      const tag =
+        global.ROSModels && typeof ROSModels.getAllianceTag === 'function'
+          ? ROSModels.getAllianceTag(ROSStorage.getState())
+          : 'alliance';
+      a.download = `warops-ruche-${tag}-${stamp}.png`;
       document.body.appendChild(a);
       a.click();
       a.remove();

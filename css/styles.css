@@ -1,21 +1,21 @@
 :root {
-  --bg: #2a2f36;
-  --bg-elevated: #313844;
-  --bg-panel: #353b44;
-  --bg-hover: #46505f;
-  --bg-row-odd: #353b44;
-  --bg-row-even: #3b424c;
-  --bg-row-hover: #485260;
-  --border: #4a5360;
-  --border-soft: #4a5360;
-  --steel: #9aa5b4;
-  --steel-light: #c4cbd4;
-  --text: #f5f7fa;
-  --text-muted: #c4cbd4;
-  --red: #b3262e;
-  --red-deep: #8e1c24;
-  --red-bright: #d64a52;
-  --red-glow: rgba(179, 38, 46, 0.28);
+  --bg: #1e2228;
+  --bg-elevated: #282e36;
+  --bg-panel: #2a3038;
+  --bg-hover: #3a424e;
+  --bg-row-odd: #2c323b;
+  --bg-row-even: #323942;
+  --bg-row-hover: #3d4652;
+  --border: #3d4652;
+  --border-soft: #454f5c;
+  --steel: #8b95a5;
+  --steel-light: #c5ccd6;
+  --text: #f4f6f8;
+  --text-muted: #a8b0bd;
+  --red: #a61f28;
+  --red-deep: #7a161d;
+  --red-bright: #c73a43;
+  --red-glow: rgba(166, 31, 40, 0.22);
   --green: #2f8f5b;
   --green-bg: rgba(47, 143, 91, 0.18);
   --green-btn: #2f9e61;
@@ -28,11 +28,12 @@
   --orange-btn-hover: #e0983a;
   --red-score: #c43b4e;
   --red-score-bg: rgba(196, 59, 78, 0.18);
-  --shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
-  --shadow-soft: 0 4px 12px rgba(0, 0, 0, 0.18);
-  --radius: 12px;
-  --radius-sm: 8px;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  --shadow-soft: 0 4px 14px rgba(0, 0, 0, 0.2);
+  --radius: 10px;
+  --radius-sm: 7px;
   --font: "Segoe UI", "Candara", "Gill Sans", sans-serif;
+  --accent-line: rgba(197, 58, 67, 0.45);
 }
 
 *,
@@ -51,9 +52,9 @@ body {
   font-family: var(--font);
   color: var(--text);
   background:
-    radial-gradient(1200px 500px at 10% -10%, rgba(179, 38, 46, 0.16), transparent 55%),
-    radial-gradient(900px 400px at 90% 0%, rgba(70, 80, 95, 0.22), transparent 50%),
-    linear-gradient(180deg, #31363e 0%, var(--bg) 42%, #262b32 100%);
+    radial-gradient(1000px 420px at 8% -8%, rgba(166, 31, 40, 0.12), transparent 55%),
+    radial-gradient(800px 360px at 92% 0%, rgba(80, 90, 105, 0.16), transparent 52%),
+    linear-gradient(180deg, #252a31 0%, var(--bg) 40%, #181c21 100%);
 }
 
 button,
@@ -74,43 +75,62 @@ select {
   gap: 1rem;
   justify-content: space-between;
   align-items: center;
-  padding: 1rem 1.25rem;
-  background: linear-gradient(135deg, rgba(179, 38, 46, 0.35), rgba(49, 56, 68, 0.96));
+  padding: 1.05rem 1.35rem;
+  background: linear-gradient(135deg, rgba(40, 46, 54, 0.98), rgba(32, 37, 44, 0.98));
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+  border-top: 2px solid var(--accent-line);
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 0.9rem;
+  gap: 0.95rem;
 }
 
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 3.2rem;
-  height: 3.2rem;
-  border-radius: 10px;
-  background: linear-gradient(145deg, var(--red-bright), var(--red-deep));
-  color: #fff;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 8px;
+  background: linear-gradient(160deg, #3a424e 0%, #2a3038 55%, #1e232a 100%);
+  color: #f4f6f8;
+  font-size: 1.15rem;
   font-weight: 800;
-  letter-spacing: 0.04em;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 20px var(--red-glow);
+  letter-spacing: 0.02em;
+  border: 1px solid var(--border-soft);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 0 1px rgba(199, 58, 67, 0.25);
 }
 
 .brand-text h1 {
   margin: 0;
-  font-size: 1.35rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  font-size: 1.4rem;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
-.brand-text p {
-  margin: 0.15rem 0 0;
+.brand-tagline {
+  margin: 0.12rem 0 0;
   color: var(--steel-light);
-  font-size: 0.85rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+}
+
+.brand-meta {
+  margin: 0.28rem 0 0;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.brand-meta--muted {
+  margin-top: 0.08rem;
+  color: var(--steel);
+  font-weight: 500;
 }
 
 .topbar-actions {
@@ -171,7 +191,7 @@ select {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1.25rem;
+  padding: 1.35rem;
   box-shadow: var(--shadow);
 }
 
@@ -185,12 +205,16 @@ select {
   gap: 1rem;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 1rem;
+  margin-bottom: 1.15rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid rgba(61, 70, 82, 0.65);
 }
 
 .panel-header h2 {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: 1.22rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .panel-subtitle {
@@ -255,20 +279,20 @@ select.input,
   transform: none;
 }
 
-/* Générer / Créer — accent ROS6 */
+/* Action principale — rouge discret WAROPS */
 .btn-primary {
   background: linear-gradient(180deg, var(--red-bright), var(--red));
   color: #fff;
-  border-color: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 .btn-primary:hover:not(:disabled) {
-  filter: brightness(1.08);
+  filter: brightness(1.06);
 }
 
 /* Action secondaire — gris acier */
 .btn-ghost {
-  background: #3a424c;
+  background: #323942;
   color: var(--text);
   border-color: var(--border);
 }
@@ -1775,26 +1799,29 @@ tbody tr:hover {
 /* Conservé pour compatibilité ; le poste utilise .command-layout */
 
 .block {
-  background: var(--bg-panel);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1rem;
+  padding: 1.05rem 1.1rem;
   box-shadow: var(--shadow-soft);
 }
 
 .block-header {
-  margin-bottom: 0.85rem;
+  margin-bottom: 0.9rem;
 }
 
 .block-header h3 {
   margin: 0;
-  font-size: 1.05rem;
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .block-header p {
-  margin: 0.25rem 0 0;
+  margin: 0.28rem 0 0;
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: 0.84rem;
+  line-height: 1.35;
 }
 
 .stack-list {
@@ -2330,18 +2357,23 @@ tbody tr:hover {
 
 .auth-card {
   width: min(100%, 26rem);
-  background: var(--bg-panel);
+  background: linear-gradient(180deg, #2e343d 0%, var(--bg-panel) 100%);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 1.4rem 1.35rem 1.5rem;
+  padding: 1.5rem 1.4rem 1.55rem;
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
+  border-top: 2px solid var(--accent-line);
 }
 
 .auth-brand {
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.45rem;
+}
+
+.auth-brand .brand {
+  align-items: flex-start;
 }
 
 .auth-error {

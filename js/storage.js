@@ -68,7 +68,7 @@
       {
         ...data,
         exportedAt: new Date().toISOString(),
-        appName: 'ROS6 Command Center',
+        appName: 'WAROPS',
       },
       null,
       2
