@@ -1,7 +1,6 @@
 /**
  * Poste de Commandement — consultation seule
  * + checklist hebdo Puissance héros MAJ
- * + Coaching prioritaire (tranches 25–30 / 30–35)
  */
 (function (global) {
   const WEEKLY_ACTION_ID = 'hero_power_maj';
@@ -21,9 +20,6 @@
     els.decisionsEmpty = document.getElementById('commandDecisionsEmpty');
     els.alerts = document.getElementById('commandAlerts');
     els.alertsEmpty = document.getElementById('commandAlertsEmpty');
-    els.coachingList = document.getElementById('commandCoachingList');
-    els.coachingEmpty = document.getElementById('commandCoachingEmpty');
-    els.coachingCount = document.getElementById('commandCoachingCount');
     els.absentsList = document.getElementById('commandAbsentsList');
     els.absentsEmpty = document.getElementById('commandAbsentsEmpty');
   }
@@ -91,18 +87,6 @@
     });
   }
 
-  /** Priorité coaching : 1 = 25–30, 2 = 30–35 ; sinon null. */
-  function getCoachingPriority(player, state) {
-    if (!player || player.status !== 'Actif') return null;
-    const tier = ROSModels.getPlayerPowerTier(player, state);
-    if (!tier) return null;
-    const min = Number(tier.min);
-    const max = Number(tier.max);
-    if (min === 25 && max === 30) return 1;
-    if (min === 30 && max === 35) return 2;
-    return null;
-  }
-
   function getWeeklyCheck(state, weekKey = currentWeekKey()) {
     const ui = state.ui || {};
     const map = ui.heroPowerWeeklyChecks || {};
@@ -144,80 +128,6 @@
       };
     }
     return weekKey;
-  }
-
-  function getCoachingRows(state) {
-    const contacts = (state.ui && state.ui.coachingContacts) || {};
-    const rows = (state.players || [])
-      .filter((p) => p.status === 'Actif')
-      .map((player) => {
-        const priority = getCoachingPriority(player, state);
-        if (!priority) return null;
-        const tier = ROSModels.getPlayerPowerTier(player, state);
-        const stored = contacts[player.id];
-        const sameTier = stored && stored.tierId === (tier?.id || '');
-        const contacted = Boolean(sameTier && stored.contacted);
-        return {
-          player,
-          priority,
-          tier,
-          contacted,
-          contactedBy: contacted ? String(stored.contactedBy || '') : '',
-          contactedAt: contacted ? String(stored.contactedAt || '') : '',
-          actorUserId: contacted ? String(stored.actorUserId || '') : '',
-          actorPlayerId: contacted ? stored.actorPlayerId || null : null,
-          actorLabel: contacted ? String(stored.actorLabel || '') : '',
-        };
-      })
-      .filter(Boolean);
-
-    rows.sort((a, b) => {
-      if (a.priority !== b.priority) return a.priority - b.priority;
-      return String(a.player.pseudo || '').localeCompare(String(b.player.pseudo || ''), 'fr', {
-        sensitivity: 'base',
-      });
-    });
-    return rows;
-  }
-
-  /** Réinitialise le contact si la tranche a changé ; purge les joueurs hors coaching. */
-  function syncCoachingContacts(state) {
-    const ui = ensureUi(state);
-    const validIds = new Set();
-    (state.players || []).forEach((player) => {
-      const priority = getCoachingPriority(player, state);
-      if (!priority) return;
-      const tier = ROSModels.getPlayerPowerTier(player, state);
-      const tierId = tier?.id || '';
-      validIds.add(player.id);
-      const prev = ui.coachingContacts[player.id];
-      if (!prev || typeof prev !== 'object') {
-        ui.coachingContacts[player.id] = {
-          tierId,
-          priority,
-          contacted: false,
-          contactedBy: '',
-          contactedAt: '',
-        };
-        return;
-      }
-      if (prev.tierId !== tierId) {
-        ui.coachingContacts[player.id] = {
-          tierId,
-          priority,
-          contacted: false,
-          contactedBy: '',
-          contactedAt: '',
-        };
-        return;
-      }
-      prev.priority = priority;
-      prev.tierId = tierId;
-    });
-
-    Object.keys(ui.coachingContacts).forEach((id) => {
-      if (!validIds.has(id)) delete ui.coachingContacts[id];
-    });
   }
 
   function renderKpis(counts) {
@@ -352,52 +262,6 @@
     els.alertsEmpty.classList.toggle('hidden', alerts.length > 0);
   }
 
-  function renderCoaching(state) {
-    if (!els.coachingList) return;
-    const rows = getCoachingRows(state);
-    const canManage = canManageCommand();
-    const toContact = rows.filter((r) => !r.contacted).length;
-
-    if (els.coachingCount) {
-      els.coachingCount.textContent = `Coaching à contacter : ${toContact}`;
-    }
-
-    els.coachingList.innerHTML = rows
-      .map((row) => {
-        const meta = row.contacted
-          ? `Contacté par ${ROSUI.escapeHtml(actorName(row) || '—')} · ${ROSUI.escapeHtml(formatDateTime(row.contactedAt))}`
-          : 'Pas encore contacté';
-        return `
-          <article class="stack-item coaching-item priority-${row.priority}">
-            <div class="stack-item-top">
-              <div>
-                <h4 class="stack-item-title">${ROSUI.escapeHtml(row.player.pseudo)}</h4>
-                <div class="player-meta" style="margin-top:0.3rem">
-                  <span class="badge">${ROSUI.escapeHtml(row.tier?.label || '—')}</span>
-                  <span class="badge badge-role">Priorité ${row.priority}</span>
-                </div>
-              </div>
-            </div>
-            <label class="decision-item level-${row.priority === 1 ? 'warn' : 'info'}" style="margin-top:0.55rem">
-              <input
-                type="checkbox"
-                data-coaching-player="${ROSUI.escapeHtml(row.player.id)}"
-                ${row.contacted ? 'checked' : ''}
-                ${canManage ? '' : 'disabled'}
-              />
-              <span class="decision-content">
-                <strong>Prendre contact pour coaching</strong>
-                <small>${meta}</small>
-              </span>
-            </label>
-          </article>
-        `;
-      })
-      .join('');
-
-    els.coachingEmpty.classList.toggle('hidden', rows.length > 0);
-  }
-
   function renderAbsents(absents) {
     els.absentsList.innerHTML = absents
       .map(
@@ -463,64 +327,12 @@
     });
   }
 
-  function setCoachingContact(playerId, contacted) {
-    ROSStorage.update((state) => {
-      if (!canManageCommand()) return state;
-      ensureUi(state);
-      syncCoachingContacts(state);
-      const player = (state.players || []).find((p) => p.id === playerId);
-      if (!player) return state;
-      const priority = getCoachingPriority(player, state);
-      if (!priority) return state;
-      const tier = ROSModels.getPlayerPowerTier(player, state);
-      const tierId = tier?.id || '';
-      if (contacted) {
-        const actor = actorStamp();
-        state.ui.coachingContacts[playerId] = {
-          tierId,
-          priority,
-          contacted: true,
-          contactedBy: actor.actorLabel,
-          contactedAt: new Date().toISOString(),
-          actorUserId: actor.actorUserId,
-          actorPlayerId: actor.actorPlayerId,
-          actorLabel: actor.actorLabel,
-        };
-      } else {
-        state.ui.coachingContacts[playerId] = {
-          tierId,
-          priority,
-          contacted: false,
-          contactedBy: '',
-          contactedAt: '',
-          actorUserId: '',
-          actorPlayerId: null,
-          actorLabel: '',
-        };
-      }
-      return state;
-    });
-  }
-
   function ensureCommandUiSynced() {
     const snapshot = ROSStorage.getState();
     const weekKey = currentWeekKey();
     const ui = snapshot.ui || {};
     const needsWeekEntry = !(ui.heroPowerWeeklyChecks || {})[weekKey];
-
-    // Clone léger pour détecter si la sync coaching modifierait l’état
-    const probeState = {
-      players: snapshot.players,
-      powerTiers: snapshot.powerTiers,
-      ui: {
-        coachingContacts: JSON.parse(JSON.stringify(ui.coachingContacts || {})),
-      },
-    };
-    const beforeContacts = JSON.stringify(probeState.ui.coachingContacts);
-    syncCoachingContacts(probeState);
-    const contactsChanged = JSON.stringify(probeState.ui.coachingContacts) !== beforeContacts;
-
-    if (!needsWeekEntry && !contactsChanged) return;
+    if (!needsWeekEntry) return;
 
     ROSStorage.update((state) => {
       const stateUi = ensureUi(state);
@@ -532,7 +344,6 @@
           checkedAt: '',
         };
       }
-      syncCoachingContacts(state);
       return state;
     });
   }
@@ -554,7 +365,6 @@
     renderContact(ROSInsights.getContactList(rows));
     renderDecisions(ROSInsights.getPendingDecisions(state, rows));
     renderAlerts(ROSInsights.buildAlerts(state, rows));
-    renderCoaching(state);
     renderAbsents(ROSInsights.getAbsentPlayers(state));
   }
 
@@ -563,8 +373,7 @@
     if (
       playerTarget &&
       !event.target.closest('[data-decision-id]') &&
-      !event.target.closest('[data-weekly-action]') &&
-      !event.target.closest('[data-coaching-player]')
+      !event.target.closest('[data-weekly-action]')
     ) {
       PlayersModule.openDetail(playerTarget.dataset.openPlayer, { allowEdit: false });
     }
@@ -587,19 +396,12 @@
     completeWeeklyHeroPower();
   }
 
-  function onCoachingChange(event) {
-    const checkbox = event.target.closest('[data-coaching-player]');
-    if (!checkbox) return;
-    setCoachingContact(checkbox.dataset.coachingPlayer, checkbox.checked);
-  }
-
   function init() {
     cacheDom();
     const panel = document.getElementById('panel-command');
     panel.addEventListener('click', onRootClick);
     if (els.decisions) els.decisions.addEventListener('change', onDecisionChange);
     if (els.weeklyChecklist) els.weeklyChecklist.addEventListener('change', onWeeklyChange);
-    if (els.coachingList) els.coachingList.addEventListener('change', onCoachingChange);
   }
 
   global.CommandModule = { init, render };

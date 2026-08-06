@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ROS6 Command Center</title>
-  <link rel="stylesheet" href="css/styles.css?v=20260806-ux2" />
+  <link rel="stylesheet" href="css/styles.css?v=20260806-coach1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -111,15 +111,6 @@
           </section>
         </div>
 
-        <section class="block" style="margin-top:1rem">
-          <header class="block-header">
-            <h3>Coaching prioritaire</h3>
-            <p id="commandCoachingCount">Coaching à contacter : 0</p>
-          </header>
-          <div id="commandCoachingList" class="stack-list"></div>
-          <p id="commandCoachingEmpty" class="empty-state hidden">Aucun joueur en Priorité 1 ou 2 pour le moment.</p>
-        </section>
-
         <section class="block block-absents" style="margin-top:1rem">
           <header class="block-header">
             <h3>Absents</h3>
@@ -162,6 +153,9 @@
 
         <p id="playersPowerCounter" class="members-power-counter" aria-live="polite">
           Puissances renseignées : 0 / 0 joueurs actifs
+        </p>
+        <p id="playersCoachingCounter" class="members-power-counter" aria-live="polite">
+          Coaching : 0 à contacter · 0 concernés
         </p>
 
         <div id="playersList" class="member-list"></div>
@@ -729,6 +723,29 @@
 
           <section class="block settings-block-wide">
             <header class="block-header">
+              <h3>Seuil coaching</h3>
+              <p>Plage de puissance utilisée pour la liste de coaching (Gestion des membres)</p>
+            </header>
+            <div class="vs-settings-grid">
+              <label class="field">
+                <span>Minimum (M)</span>
+                <input type="number" id="coachingThresholdMin" class="input" min="0" step="1" required />
+              </label>
+              <label class="field">
+                <span>Maximum (M)</span>
+                <input type="number" id="coachingThresholdMax" class="input" min="0" step="1" required />
+              </label>
+            </div>
+            <p id="coachingThresholdPreview" class="panel-subtitle" style="margin-top:0.65rem">Seuil actuel : 25 M à 30 M</p>
+            <div class="settings-actions" style="margin-top:0.85rem">
+              <button type="button" id="btnSaveCoachingThreshold" class="btn btn-primary">
+                Enregistrer le seuil coaching
+              </button>
+            </div>
+          </section>
+
+          <section class="block settings-block-wide">
+            <header class="block-header">
               <h3>Gestion des tranches de puissance</h3>
               <p>Liste centrale réutilisée par les fiches joueurs et la Tempête du Désert</p>
             </header>
@@ -796,6 +813,18 @@
             <span>Volant préféré</span>
           </span>
         </label>
+        <fieldset class="field" id="playerCoachingExceptionField">
+          <legend>Exception coaching</legend>
+          <label class="checkbox-line" style="margin-top:0.35rem">
+            <input type="radio" name="playerCoachingException" id="playerCoachingAlways" value="always" checked />
+            <span>✅ Toujours inclure (si seuil)</span>
+          </label>
+          <label class="checkbox-line" style="margin-top:0.35rem">
+            <input type="radio" name="playerCoachingException" id="playerCoachingNever" value="never" />
+            <span>🚫 Ne jamais inclure</span>
+          </label>
+          <small class="field-hint">Par défaut : apparaît dans le coaching s’il est dans le seuil défini en Paramètres</small>
+        </fieldset>
         <label class="field checkbox-field" id="playerAbsentField">
           <span class="checkbox-line">
             <input type="checkbox" id="playerAbsent" />
@@ -1063,15 +1092,15 @@
   <script src="js/supabase-client.js?v=20260804-4"></script>
   <script src="js/profiles.js?v=20260804-6"></script>
   <script src="js/supabase-sync.js?v=20260804-4"></script>
-  <script src="js/models.js?v=20260805-vs1"></script>
+  <script src="js/models.js?v=20260806-coach1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
   <script src="js/player-identity.js?v=20260802-4"></script>
   <script src="js/storage.js?v=20260803-7"></script>
   <script src="js/ui-helpers.js?v=20260802-4"></script>
   <script src="js/insights.js?v=20260802-4"></script>
   <script src="js/player-stats.js?v=20260802-4"></script>
-  <script src="js/players.js?v=20260802-4"></script>
-  <script src="js/command.js?v=20260804-3"></script>
+  <script src="js/players.js?v=20260806-coach1"></script>
+  <script src="js/command.js?v=20260806-coach1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260805-vs1"></script>
   <script src="js/archives.js?v=20260802-4"></script>
@@ -1079,6 +1108,6 @@
   <script src="js/ruche.js?v=20260804-8"></script>
   <script src="js/tempete.js?v=20260806-ux2"></script>
   <script src="js/backups.js?v=20260803-7"></script>
-  <script src="js/app.js?v=20260804-7"></script>
+  <script src="js/app.js?v=20260806-coach1"></script>
 </body>
 </html>

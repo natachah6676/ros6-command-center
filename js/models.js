@@ -437,6 +437,7 @@
     absent = false,
     heroPowerTierId = null,
     preferredVolant = false,
+    coachingException = 'always',
   }) {
     return {
       id: uid('player'),
@@ -446,6 +447,7 @@
       absent: Boolean(absent),
       heroPowerTierId: heroPowerTierId ? String(heroPowerTierId) : null,
       preferredVolant: Boolean(preferredVolant),
+      coachingException: coachingException === 'never' ? 'never' : 'always',
       stormAbsencesUnexcused: 0,
       stormAbsencesExcused: 0,
       createdAt: new Date().toISOString(),
@@ -616,7 +618,98 @@
       playerWeekNotes: {},
       powerTiers: createDefaultPowerTiers(),
       vsSettings: createDefaultVsSettings(),
+      coachingThreshold: createDefaultCoachingThreshold(),
     };
+  }
+
+  function createDefaultCoachingThreshold() {
+    return { min: 25, max: 30 };
+  }
+
+  function normalizeCoachingThreshold(raw) {
+    const defaults = createDefaultCoachingThreshold();
+    const min = Number(raw?.min);
+    const max = Number(raw?.max);
+    const safeMin = Number.isFinite(min) ? min : defaults.min;
+    const safeMax = Number.isFinite(max) ? max : defaults.max;
+    return {
+      min: Math.min(safeMin, safeMax),
+      max: Math.max(safeMin, safeMax),
+    };
+  }
+
+  function getCoachingThreshold(state) {
+    return normalizeCoachingThreshold(state?.coachingThreshold);
+  }
+
+  function formatCoachingThresholdLabel(threshold) {
+    const th = normalizeCoachingThreshold(threshold);
+    const fmt = (n) => {
+      const v = Number(n);
+      if (!Number.isFinite(v)) return '—';
+      return Number.isInteger(v) ? String(v) : String(Math.round(v * 10) / 10).replace('.', ',');
+    };
+    return `${fmt(th.min)} M à ${fmt(th.max)} M`;
+  }
+
+  function normalizeCoachingException(value) {
+    return value === 'never' ? 'never' : 'always';
+  }
+
+  function normalizeCoachingContacts(raw) {
+    const out = {};
+    if (!raw || typeof raw !== 'object') return out;
+    Object.keys(raw).forEach((id) => {
+      const c = raw[id];
+      if (!c || typeof c !== 'object') return;
+      out[id] = {
+        contacted: Boolean(c.contacted),
+        contactedBy: String(c.contactedBy || c.actorLabel || ''),
+        contactedAt: String(c.contactedAt || ''),
+        actorUserId: String(c.actorUserId || ''),
+        actorPlayerId: c.actorPlayerId || null,
+        actorLabel: String(c.actorLabel || c.contactedBy || ''),
+        tierId: String(c.tierId || ''),
+      };
+    });
+    return out;
+  }
+
+  /** Joueur éligible au coaching : Actif, pas « Ne jamais inclure », tranche dans le seuil. */
+  function isPlayerInCoachingList(player, state) {
+    if (!player || player.status !== 'Actif') return false;
+    if (normalizeCoachingException(player.coachingException) === 'never') return false;
+    const tier = getPlayerPowerTier(player, state);
+    if (!tier) return false;
+    const th = getCoachingThreshold(state);
+    const min = Number(tier.min);
+    const max = Number(tier.max);
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return false;
+    return min >= th.min && max <= th.max;
+  }
+
+  function formatCoachingDateTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const date = d.toLocaleDateString('fr-FR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    });
+    const time = d.toLocaleTimeString('fr-FR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    return `${date} - ${time}`;
+  }
+
+  function getCoachingContact(state, playerId) {
+    const contacts = state?.ui?.coachingContacts;
+    if (!contacts || typeof contacts !== 'object') return null;
+    const row = contacts[playerId];
+    if (!row || typeof row !== 'object') return null;
+    return row;
   }
 
   /** État de premier lancement (ou reset) : roster ROS6 prérempli, tous Actifs. */
@@ -652,6 +745,7 @@
             absent: Boolean(p.absent),
             heroPowerTierId,
             preferredVolant: Boolean(p.preferredVolant),
+            coachingException: normalizeCoachingException(p.coachingException),
             stormAbsencesUnexcused: Math.max(0, Number(p.stormAbsencesUnexcused) || 0),
             stormAbsencesExcused: Math.max(0, Number(p.stormAbsencesExcused) || 0),
             createdAt: p.createdAt || new Date().toISOString(),
@@ -764,13 +858,12 @@
     const heroPowerWeeklyHistory = Array.isArray(rawUi.heroPowerWeeklyHistory)
       ? rawUi.heroPowerWeeklyHistory
       : [];
-    const coachingContacts =
-      rawUi.coachingContacts && typeof rawUi.coachingContacts === 'object'
-        ? rawUi.coachingContacts
-        : {};
+    const coachingContacts = normalizeCoachingContacts(rawUi.coachingContacts);
 
     const playerWeekNotes =
       raw.playerWeekNotes && typeof raw.playerWeekNotes === 'object' ? raw.playerWeekNotes : {};
+
+    const coachingThreshold = normalizeCoachingThreshold(raw.coachingThreshold);
 
     const normalized = {
       version: DATA_VERSION,
@@ -787,6 +880,7 @@
       playerWeekNotes,
       powerTiers,
       vsSettings,
+      coachingThreshold,
     };
 
     // Compatibilité : anciennes clés « pseudo » → identifiant interne
@@ -883,6 +977,15 @@
     getPlayerPowerLabel,
     countPlayersUsingPowerTier,
     buildPowerTierSelectOptions,
+    createDefaultCoachingThreshold,
+    normalizeCoachingThreshold,
+    getCoachingThreshold,
+    formatCoachingThresholdLabel,
+    normalizeCoachingException,
+    normalizeCoachingContacts,
+    isPlayerInCoachingList,
+    formatCoachingDateTime,
+    getCoachingContact,
     createBlankState,
     createBlankUiState,
     createInitialState,

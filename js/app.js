@@ -158,6 +158,35 @@
         `;
       })
       .join('');
+    renderCoachingThresholdSettings(state);
+  }
+
+  function renderCoachingThresholdSettings(state = ROSStorage.getState()) {
+    const th = ROSModels.getCoachingThreshold(state);
+    const minEl = document.getElementById('coachingThresholdMin');
+    const maxEl = document.getElementById('coachingThresholdMax');
+    const preview = document.getElementById('coachingThresholdPreview');
+    if (minEl) minEl.value = String(th.min);
+    if (maxEl) maxEl.value = String(th.max);
+    if (preview) {
+      preview.textContent = `Seuil actuel : ${ROSModels.formatCoachingThresholdLabel(th)}`;
+    }
+  }
+
+  function saveCoachingThreshold() {
+    const min = Number(document.getElementById('coachingThresholdMin')?.value);
+    const max = Number(document.getElementById('coachingThresholdMax')?.value);
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      toast('Le seuil coaching doit être numérique.');
+      return;
+    }
+    ROSStorage.update((state) => {
+      state.coachingThreshold = ROSModels.normalizeCoachingThreshold({ min, max });
+      return state;
+    });
+    renderCoachingThresholdSettings();
+    if (global.PlayersModule) PlayersModule.render();
+    toast('Seuil coaching enregistré.');
   }
 
   function openPowerTierModal(tier = null) {
@@ -432,6 +461,10 @@
 
     if (ui.btnAddPowerTier) {
       ui.btnAddPowerTier.addEventListener('click', () => openPowerTierModal(null));
+    }
+    const btnSaveCoaching = document.getElementById('btnSaveCoachingThreshold');
+    if (btnSaveCoaching) {
+      btnSaveCoaching.addEventListener('click', saveCoachingThreshold);
     }
     if (ui.powerTierForm) {
       ui.powerTierForm.addEventListener('submit', savePowerTier);

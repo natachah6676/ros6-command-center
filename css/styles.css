@@ -1504,14 +1504,6 @@ tbody tr:hover {
   gap: 0.25rem;
 }
 
-.coaching-item.priority-1 {
-  border-left: 3px solid var(--orange);
-}
-
-.coaching-item.priority-2 {
-  border-left: 3px solid var(--steel);
-}
-
 .member-list {
   display: flex;
   flex-direction: column;
@@ -1520,7 +1512,7 @@ tbody tr:hover {
 
 .member-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(180px, 0.9fr) auto;
+  grid-template-columns: minmax(0, 1.2fr) minmax(150px, 0.75fr) minmax(150px, 0.85fr) auto;
   gap: 1rem;
   align-items: center;
   background: var(--bg-elevated);
@@ -1537,6 +1529,49 @@ tbody tr:hover {
 .member-row--power-missing {
   border-color: rgba(212, 160, 23, 0.55);
   background: linear-gradient(90deg, rgba(212, 160, 23, 0.08), transparent 55%);
+}
+
+.member-row--coaching {
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.member-coaching-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  cursor: default;
+  position: relative;
+  z-index: 1;
+}
+
+.coaching-contact-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+}
+
+.coaching-contact-meta {
+  color: var(--steel);
+  white-space: pre-line;
+  line-height: 1.35;
+}
+
+.member-coaching-empty .member-power-value {
+  color: var(--steel);
+}
+
+.coaching-exception-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+@media (max-width: 900px) {
+  .member-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
 }
 
 .member-row-main {
