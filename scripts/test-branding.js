@@ -32,7 +32,7 @@ assert(
   logoBuf[0] === 0x89 && logoBuf[1] === 0x50 && logoBuf[2] === 0x4e && logoBuf[3] === 0x47,
   'signature PNG'
 );
-assert(html.includes('public/assets/branding/warops-logo.png'), 'chemin HTML');
+assert(html.includes('assets/branding/warops-logo.png'), 'chemin HTML');
 assert(html.includes('rel="icon"'), 'favicon');
 assert(html.includes('brand-logo--login'), 'classe login');
 assert(html.includes('brand-logo--nav'), 'classe nav');
@@ -47,7 +47,9 @@ function serveOnce() {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
       const url = decodeURIComponent((req.url || '/').split('?')[0]);
-      const rel = url === '/' ? 'index.html' : url.replace(/^\//, '');
+      // Comme Vercel : le contenu de /public est servi à la racine.
+      let rel = url === '/' ? 'index.html' : url.replace(/^\//, '');
+      if (rel.startsWith('assets/')) rel = path.join('public', rel);
       const file = path.normalize(path.join(root, rel));
       if (!file.startsWith(root)) {
         res.writeHead(403);
@@ -75,7 +77,7 @@ function serveOnce() {
       const { port } = server.address();
       const base = `http://127.0.0.1:${port}`;
       Promise.all([
-        fetch(`${base}/public/assets/branding/warops-logo.png`),
+        fetch(`${base}/assets/branding/warops-logo.png`),
         fetch(`${base}/`),
       ])
         .then(async ([logoRes, pageRes]) => {
