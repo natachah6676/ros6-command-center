@@ -36,6 +36,8 @@ assert(html.includes('id="rucheProposalValidate"'), 'Bouton valider proposition'
 assert(html.includes('id="rucheProposalMode"'), 'Sélecteur de mode');
 assert(html.includes('Optimisation douce'), 'Mode douce');
 assert(html.includes('Nouveau plan complet'), 'Mode complet');
+assert(html.includes('id="rucheAllowOfficerMoves"'), 'Case déplacement R4/R5');
+assert(html.includes('Autoriser le déplacement des R4/R5'), 'Libellé option R4/R5');
 assert(html.includes('Valider cette proposition comme nouvelle ruche'), 'Libellé validation');
 assert(html.includes('ne change jamais automatiquement'), 'Mention non-auto actuelle');
 
@@ -51,6 +53,8 @@ assert(rucheCode.includes('Aucune archive ne sera créée'), 'Validation sans ar
 assert(rucheCode.includes('swapProposalSlots'), 'swap / DnD proposition');
 assert(rucheCode.includes('proposal: null'), 'Champ proposal en état');
 assert(rucheCode.includes("mode === 'full'"), 'Mode full');
+assert(rucheCode.includes('allowOfficerMoves'), 'Flag allowOfficerMoves');
+assert(rucheCode.includes('getAllowOfficerMoves'), 'Lecture option R4/R5');
 
 const store = { data: null };
 const players = [
@@ -231,6 +235,43 @@ const stats4 = Ruche.computeProposalStats(grid4, FREE, prop4.grid, prop4.bottomI
 assert(stats4.moved < 20, `Pas de reorg massive (got ${stats4.moved} moves)`);
 assert(stats4.moved < stats4.total * 0.35, 'Moins de 35 % des joueurs déplacés');
 assert(stats4.moved <= 10, `Quelques joueurs seulement (got ${stats4.moved})`);
+
+console.log('\n=== Soft : R4/R5 verrouillés même mal placés ===');
+const gridSoft = emptyGrid();
+gridSoft[MR][MC] = 'm1';
+// Officiers volontairement mal placés (loin) — ne doivent pas bouger
+gridSoft[9][0] = 'r5';
+gridSoft[9][1] = 'r4a';
+gridSoft[9][2] = 'r4b';
+gridSoft[MR][MC + 1] = 'pWeak';
+gridSoft[8][0] = 'pStrong';
+gridSoft[7][0] = 'pMid';
+const propSoft = Ruche.buildOptimizedProposal(gridSoft, FREE, { mode: 'soft' });
+assert(propSoft.grid[9][0] === 'r5', 'Soft : R5 inchangé');
+assert(propSoft.grid[9][1] === 'r4a', 'Soft : R4a inchangé');
+assert(propSoft.grid[9][2] === 'r4b', 'Soft : R4b inchangé');
+assert(propSoft.allowOfficerMoves !== true, 'Soft : allowOfficerMoves faux');
+
+console.log('\n=== Full sans option : R4/R5 conservés ===');
+const propFullKeep = Ruche.buildOptimizedProposal(gridSoft, FREE, {
+  mode: 'full',
+  allowOfficerMoves: false,
+});
+assert(propFullKeep.grid[9][0] === 'r5', 'Full défaut : R5 inchangé');
+assert(propFullKeep.grid[9][1] === 'r4a', 'Full défaut : R4a inchangé');
+assert(propFullKeep.grid[9][2] === 'r4b', 'Full défaut : R4b inchangé');
+
+console.log('\n=== Full + option : R4/R5 peuvent bouger ===');
+const propFullMove = Ruche.buildOptimizedProposal(gridSoft, FREE, {
+  mode: 'full',
+  allowOfficerMoves: true,
+});
+const officersMoved =
+  propFullMove.grid[9][0] !== 'r5' ||
+  propFullMove.grid[9][1] !== 'r4a' ||
+  propFullMove.grid[9][2] !== 'r4b';
+assert(propFullMove.allowOfficerMoves === true, 'Full+option : flag true');
+assert(officersMoved, 'Full+option : au moins un officier repositionné');
 
 console.log('\n=== Résultat ===');
 console.log(`${passed} OK · ${failed} KO`);

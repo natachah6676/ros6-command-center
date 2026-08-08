@@ -436,11 +436,11 @@
   function isLockedSlotOnHive(hive, slot, options = {}) {
     if (!slot) return true;
     if (slot.type === 'grid' && isMarshalCell(slot.row, slot.col)) return true;
-    // Nouveau plan complet : R4/R5 repositionnables (hors Maréchal)
-    if (options.mode === 'full') return false;
     const value = getCellValueFromHive(hive, slot);
     const player = getPlayerById(value);
-    return isOfficerPlayer(player);
+    // R4/R5 : toujours verrouillés sauf autorisation explicite (plan complet + case cochée)
+    if (isOfficerPlayer(player)) return options.allowOfficerMoves !== true;
+    return false;
   }
 
   function buildRuchePowerScoreMap(mainState) {
@@ -566,19 +566,34 @@
     return el?.value === 'full' ? 'full' : 'soft';
   }
 
+  /** Déplacement auto R4/R5 : uniquement en plan complet + case cochée (off par défaut). */
+  function getAllowOfficerMoves() {
+    if (getProposalMode() !== 'full') return false;
+    const el = document.getElementById('rucheAllowOfficerMoves');
+    return Boolean(el?.checked);
+  }
+
+  function syncOfficerMovesOptionVisibility() {
+    const wrap = document.getElementById('rucheAllowOfficerMovesWrap');
+    if (!wrap) return;
+    wrap.hidden = getProposalMode() !== 'full';
+  }
+
   /**
-   * soft — optimisation douce (peu de déplacements, R4/R5 conservés)
-   * full — nouveau plan complet (reorganisation libre hors Maréchal)
+   * soft — optimisation douce (peu de déplacements, R4/R5 toujours verrouillés)
+   * full — nouveau plan complet ; R4/R5 conservés sauf allowOfficerMoves
    */
   function buildOptimizedProposal(sourceGrid, sourceBottom, options = {}) {
     const mode = options.mode === 'full' ? 'full' : 'soft';
+    // Soft : jamais. Full : seulement si option explicite.
+    const allowOfficerMoves = mode === 'full' && options.allowOfficerMoves === true;
     const hive = {
       grid: cloneGrid(sourceGrid),
       bottomId: normalizeCellValue(sourceBottom, { allowFree: true }),
     };
     const mainState = ROSStorage.getState();
     const scoreMap = buildRuchePowerScoreMap(mainState);
-    const lockOpts = { mode };
+    const lockOpts = { mode, allowOfficerMoves };
     const unlockedSlots = [];
     const movableIds = [];
 
@@ -604,17 +619,23 @@
     const seen = new Set();
     movableIds.forEach((id) => {
       if (seen.has(id)) return;
+      // Sécurité : les officiers ne sont jamais dans le pool d’optimisation
+      // sauf autorisation explicite (plan complet + case cochée).
+      if (!allowOfficerMoves && isOfficerPlayer(getPlayerById(id))) return;
       seen.add(id);
       uniqueMovable.push(id);
     });
 
+    const baseResult = () => ({
+      grid: cloneGrid(sourceGrid),
+      bottomId: normalizeCellValue(sourceBottom, { allowFree: true }),
+      generatedAt: new Date().toISOString(),
+      mode,
+      allowOfficerMoves,
+    });
+
     if (uniqueMovable.length < 2) {
-      return {
-        grid: cloneGrid(sourceGrid),
-        bottomId: normalizeCellValue(sourceBottom, { allowFree: true }),
-        generatedAt: new Date().toISOString(),
-        mode,
-      };
+      return baseResult();
     }
 
     const maxQ = maxPlacementQuality(uniqueMovable.length);
@@ -631,12 +652,7 @@
 
     let quality = placementQuality(posMap(), uniqueMovable, mainState, scoreMap);
     if (mode === 'soft' && quality / maxQ >= TARGET_RATIO) {
-      return {
-        grid: cloneGrid(sourceGrid),
-        bottomId: normalizeCellValue(sourceBottom, { allowFree: true }),
-        generatedAt: new Date().toISOString(),
-        mode,
-      };
+      return baseResult();
     }
 
     const maxPasses =
@@ -741,6 +757,7 @@
       bottomId: hive.bottomId,
       generatedAt: new Date().toISOString(),
       mode,
+      allowOfficerMoves,
     };
   }
 
@@ -787,18 +804,25 @@
     const s = getState();
     if (!force && s.proposal && Array.isArray(s.proposal.grid)) return s.proposal;
     const mode = options.mode || getProposalMode();
-    s.proposal = buildOptimizedProposal(s.grid, s.bottomId, { mode });
+    const allowOfficerMoves =
+      mode === 'full' &&
+      (options.allowOfficerMoves === true ||
+        (options.allowOfficerMoves == null && getAllowOfficerMoves()));
+    s.proposal = buildOptimizedProposal(s.grid, s.bottomId, { mode, allowOfficerMoves });
     persist();
     return s.proposal;
   }
 
   function regenerateProposal() {
     const mode = getProposalMode();
-    ensureProposal(true, { mode });
+    const allowOfficerMoves = getAllowOfficerMoves();
+    ensureProposal(true, { mode, allowOfficerMoves });
     render();
     AppUI.toast(
       mode === 'full'
-        ? 'Nouveau plan complet généré.'
+        ? allowOfficerMoves
+          ? 'Nouveau plan complet généré (R4/R5 déplaçables).'
+          : 'Nouveau plan complet généré (R4/R5 conservés).'
         : 'Optimisation douce recalculée.'
     );
   }
@@ -810,12 +834,16 @@
       grid: cloneGrid(s.proposal.grid),
       bottomId: s.proposal.bottomId,
       generatedAt: s.proposal.generatedAt || '',
+      mode: s.proposal.mode,
+      allowOfficerMoves: s.proposal.allowOfficerMoves === true,
     };
     const next = mutator(draft) || draft;
     s.proposal = {
       grid: normalizeGrid(next.grid),
       bottomId: normalizeCellValue(next.bottomId, { allowFree: true }),
       generatedAt: next.generatedAt || s.proposal.generatedAt || '',
+      mode: next.mode || s.proposal.mode || getProposalMode(),
+      allowOfficerMoves: next.allowOfficerMoves === true,
     };
     persist();
     render();
@@ -834,7 +862,11 @@
 
   function proposalLockOptions(hive) {
     const mode = hive?.mode || getProposalMode();
-    return mode === 'full' ? { mode: 'full' } : { mode: 'soft' };
+    const allowOfficerMoves =
+      mode === 'full' &&
+      (hive?.allowOfficerMoves === true ||
+        (hive?.allowOfficerMoves == null && getAllowOfficerMoves()));
+    return { mode: mode === 'full' ? 'full' : 'soft', allowOfficerMoves };
   }
 
   function setProposalSlot(slot, value) {
@@ -906,7 +938,10 @@
     // Remplace la ruche actuelle sans archivage ni historique
     s.grid = cloneGrid(proposal.grid);
     s.bottomId = normalizeCellValue(proposal.bottomId, { allowFree: true });
-    s.proposal = buildOptimizedProposal(s.grid, s.bottomId, { mode: 'soft' });
+    s.proposal = buildOptimizedProposal(s.grid, s.bottomId, {
+      mode: 'soft',
+      allowOfficerMoves: false,
+    });
     persist();
     lastCheck = null;
     render();
@@ -1129,6 +1164,8 @@
     els.proposalStats = document.getElementById('rucheProposalStats');
     els.btnProposalOptimize = document.getElementById('rucheProposalOptimize');
     els.btnProposalValidate = document.getElementById('rucheProposalValidate');
+    els.proposalMode = document.getElementById('rucheProposalMode');
+    els.allowOfficerMoves = document.getElementById('rucheAllowOfficerMoves');
   }
 
   function buildOptions(currentValue, except, { allowFree = true, emptyLabel = '—' } = {}) {
@@ -1894,6 +1931,14 @@
     if (els.btnProposalValidate) {
       els.btnProposalValidate.addEventListener('click', validateProposal);
     }
+    if (els.proposalMode) {
+      els.proposalMode.addEventListener('change', syncOfficerMovesOptionVisibility);
+    }
+    if (els.allowOfficerMoves) {
+      // Décoché par défaut — le responsable doit cocher explicitement
+      els.allowOfficerMoves.checked = false;
+    }
+    syncOfficerMovesOptionVisibility();
 
     [els.colorMarshal, els.colorR4, els.colorFree].forEach((input) => {
       if (input) input.addEventListener('change', onColorChange);
