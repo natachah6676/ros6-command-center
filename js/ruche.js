@@ -1152,6 +1152,7 @@
     els.btnVerify = document.getElementById('rucheVerify');
     els.btnValidate = document.getElementById('rucheValidate');
     els.btnExportPng = document.getElementById('rucheExportPng');
+    els.btnExportExcel = document.getElementById('rucheExportExcel');
     els.btnClear = document.getElementById('rucheClear');
     els.archivesList = document.getElementById('rucheArchivesList');
     els.archivesEmpty = document.getElementById('rucheArchivesEmpty');
@@ -1917,6 +1918,58 @@
     }, 'image/png');
   }
 
+  function xmlEscape(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function exportExcel() {
+    const grid = getState().grid;
+    const bottomId = getBottomId();
+    const rows = grid
+      .map((row) => {
+        const cells = row
+          .map((value) => {
+            const label = labelForValue(value) || '';
+            return `<Cell><Data ss:Type="String">${xmlEscape(label)}</Data></Cell>`;
+          })
+          .join('');
+        return `<Row>${cells}</Row>`;
+      })
+      .join('');
+
+    const bottomLabel = labelForValue(bottomId) || '';
+    const bottomRow = `<Row><Cell><Data ss:Type="String">Bas</Data></Cell><Cell><Data ss:Type="String">${xmlEscape(bottomLabel)}</Data></Cell></Row>`;
+
+    const xml = `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+ <Worksheet ss:Name="Ruche">
+  <Table>${rows}${bottomRow}</Table>
+ </Worksheet>
+</Workbook>`;
+
+    const blob = new Blob([xml], { type: 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    a.href = url;
+    const tag =
+      global.ROSModels && typeof ROSModels.getAllianceTag === 'function'
+        ? ROSModels.getAllianceTag(ROSStorage.getState())
+        : 'alliance';
+    a.download = `warops-ruche-${tag}-${stamp}.xls`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    AppUI.toast('Fichier Excel téléchargé.');
+  }
+
   function init() {
     cacheDom();
     loadState();
@@ -1924,6 +1977,7 @@
     if (els.btnVerify) els.btnVerify.addEventListener('click', verifyHive);
     if (els.btnValidate) els.btnValidate.addEventListener('click', validateHive);
     if (els.btnExportPng) els.btnExportPng.addEventListener('click', exportPng);
+    if (els.btnExportExcel) els.btnExportExcel.addEventListener('click', exportExcel);
     if (els.btnClear) els.btnClear.addEventListener('click', clearGrid);
     if (els.btnProposalOptimize) {
       els.btnProposalOptimize.addEventListener('click', regenerateProposal);
