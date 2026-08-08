@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20260808-train-arch1" />
+  <link rel="stylesheet" href="css/styles.css?v=20260808-train-hist1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -411,24 +411,40 @@
           <section class="block train-history-block">
             <header class="block-header">
               <h3>Historique</h3>
-              <p>Semaines archivées — correction manuelle Conducteur / VIP (R4/R5)</p>
+              <p id="trainHistorySince">Aucun historique officiel pour le moment.</p>
             </header>
+            <p class="panel-subtitle" style="margin-bottom:0.75rem">
+              Consultation et tableau d’équité. L’initialisation / gestion administrative se fait dans Paramètres → Train (R5).
+            </p>
+            <div id="trainHistoryBody" class="train-official-history-list"></div>
+            <p id="trainHistoryEmpty" class="empty-state hidden">Aucun historique Train pour le moment.</p>
+
+            <header class="block-header" style="margin-top:1.25rem">
+              <h3>Tableau d’équité</h3>
+              <p>Occurrences depuis le début de l’historique WarOps (calculées, jamais remises à zéro chaque mois)</p>
+            </header>
+            <label class="field" style="max-width:16rem;margin-bottom:0.65rem">
+              <span>Trier</span>
+              <select id="trainEquitySort" class="input" aria-label="Tri tableau d’équité Train">
+                <option value="alpha">Ordre alphabétique</option>
+                <option value="conductor-asc">Conducteur croissant</option>
+                <option value="conductor-desc">Conducteur décroissant</option>
+                <option value="vip-asc">VIP croissant</option>
+                <option value="vip-desc">VIP décroissant</option>
+              </select>
+            </label>
             <div class="table-wrap">
               <table class="archive-table">
                 <thead>
                   <tr>
-                    <th>Semaine</th>
-                    <th>Jour</th>
+                    <th>Joueur</th>
                     <th>Conducteur</th>
                     <th>VIP</th>
-                    <th>Catégorie</th>
-                    <th>Mode</th>
                   </tr>
                 </thead>
-                <tbody id="trainHistoryBody"></tbody>
+                <tbody id="trainEquityBody"></tbody>
               </table>
             </div>
-            <p id="trainHistoryEmpty" class="empty-state hidden">Aucun historique Train pour le moment.</p>
           </section>
         </div>
       </section>
@@ -710,13 +726,48 @@
             <header class="block-header">
               <h3>Catégories</h3>
               <p id="trainCategoriesHint">
-                Désignent les conducteurs — liste livrée avec l’alliance, entièrement modifiable (R4/R5)
+                Désignent les conducteurs — liste livrée avec l’alliance, entièrement modifiable
               </p>
             </header>
             <div class="settings-actions" style="margin-bottom:0.85rem">
               <button type="button" id="trainAddCategory" class="btn btn-primary">+ Ajouter une catégorie</button>
             </div>
             <div id="trainCategoriesList" class="train-cat-grid"></div>
+          </section>
+
+          <section class="block settings-block-wide" id="settingsTrainHistoryBlock">
+            <header class="block-header">
+              <h3 id="settingsTrainHistoryTitle">Initialiser l’historique Train</h3>
+              <p id="settingsTrainHistoryHint">
+                Aucun historique antérieur n’est disponible. Choisissez une semaine connue, corrigez si besoin, puis
+                enregistrez-la comme point de départ.
+              </p>
+            </header>
+            <label class="field" style="max-width:28rem;margin-bottom:0.75rem">
+              <span>Semaine à enregistrer / corriger</span>
+              <select id="trainHistorySourceWeek" class="input" aria-label="Semaine source historique Train"></select>
+            </label>
+            <div class="vs-settings-grid" style="margin-bottom:0.85rem">
+              <label class="field">
+                <span>Libellé de la semaine</span>
+                <input type="text" id="trainInitWeekLabel" class="input" maxlength="80" />
+              </label>
+              <label class="field">
+                <span>Date de début</span>
+                <input type="date" id="trainInitWeekStart" class="input" />
+              </label>
+              <label class="field">
+                <span>Date de fin</span>
+                <input type="date" id="trainInitWeekEnd" class="input" />
+              </label>
+            </div>
+            <div id="trainInitDays" class="train-init-days"></div>
+            <div class="settings-actions" style="margin-top:0.85rem">
+              <button type="button" id="trainSaveHistoryWeek" class="btn btn-primary">
+                Enregistrer cette semaine dans l’historique
+              </button>
+            </div>
+            <p id="settingsTrainHistoryNote" class="panel-subtitle" style="margin-top:0.75rem"></p>
           </section>
         </div>
 
@@ -1268,7 +1319,7 @@
     })();
   </script>
   <script src="js/supabase-client.js?v=20260804-4"></script>
-  <script src="js/profiles.js?v=20260808-train-cat1"></script>
+  <script src="js/profiles.js?v=20260808-train-hist2"></script>
   <script src="js/supabase-sync.js?v=20260804-4"></script>
   <script src="js/models.js?v=20260808-pw1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
@@ -1282,11 +1333,11 @@
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260805-vs1"></script>
   <script src="js/archives.js?v=20260802-4"></script>
-  <script src="js/train.js?v=20260808-train-cat1"></script>
+  <script src="js/train.js?v=20260808-train-hist2"></script>
   <script src="js/recrutement.js?v=20260808-pw1"></script>
   <script src="js/ruche.js?v=20260808-r45lock"></script>
   <script src="js/tempete.js?v=20260806-assign1"></script>
   <script src="js/backups.js?v=20260806-warops1"></script>
-  <script src="js/app.js?v=20260808-train-cat1"></script>
+  <script src="js/app.js?v=20260808-train-hist2"></script>
 </body>
 </html>

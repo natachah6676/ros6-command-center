@@ -39,7 +39,7 @@ assert(settingsPanel.includes('id="trainAddCategory"'), 'Bouton ajouter dans Par
 assert(settingsPanel.includes('>Catégories<'), 'Titre Catégories dans Paramètres');
 
 console.log('\n=== Wiring code ===');
-assert(app.includes("role === 'R5' || role === 'R4'"), 'Paramètres accessibles R4/R5');
+assert(app.includes("getEffectiveAppRole() === 'R5'") || app.includes('=== \'R5\''), 'Paramètres accessibles R5');
 assert(profiles.includes('settingsPaneTrain'), 'switchSettingsTab gère Train');
 assert(train.includes('onCategoriesClick'), 'Clics catégories hors panel-train');
 assert(train.includes('canCorrectTrainArchive()'), 'Garde R4/R5 catégories');

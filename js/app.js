@@ -84,14 +84,13 @@
   }
 
   function canAccessSettings() {
-    const role = getEffectiveAppRole();
-    return role === 'R5' || role === 'R4';
+    return getEffectiveAppRole() === 'R5';
   }
 
   function switchTab(tabName) {
-    // Paramètres réservés R4/R5 — bloque aussi un accès forcé (hash / appel JS)
+    // Paramètres réservés au R5 — bloque aussi un accès forcé (hash / appel JS)
     if (tabName === 'settings' && !canAccessSettings()) {
-      toast('Paramètres réservés aux rôles R4 et R5.');
+      toast('Paramètres réservés au rôle R5.');
       tabName = 'command';
     }
 
@@ -107,7 +106,7 @@
       panel.hidden = !active;
     });
 
-    // Sécurité : panneau Paramètres jamais visible hors R4/R5
+    // Sécurité : panneau Paramètres jamais visible hors R5
     const settingsPanel = document.getElementById('panel-settings');
     if (settingsPanel && !canAccessSettings()) {
       settingsPanel.hidden = true;
@@ -413,14 +412,13 @@
       ? 'Réinitialiser toutes les données (R5)'
       : 'Réservé au rôle R5 — suppression d’historique interdite pour R4';
 
-    // Menu Paramètres : visible pour R4 et R5 (accès / reset restent protégés R5)
-    const canSettings = role === 'R5' || role === 'R4';
+    // Menu Paramètres : visible uniquement pour app_role = R5
     const settingsTab = document.querySelector('.tab[data-tab="settings"]');
     if (settingsTab) {
-      settingsTab.classList.toggle('hidden', !canSettings);
-      settingsTab.hidden = !canSettings;
-      settingsTab.setAttribute('aria-hidden', canSettings ? 'false' : 'true');
-      if (!canSettings) {
+      settingsTab.classList.toggle('hidden', !isR5);
+      settingsTab.hidden = !isR5;
+      settingsTab.setAttribute('aria-hidden', isR5 ? 'false' : 'true');
+      if (!isR5) {
         settingsTab.setAttribute('tabindex', '-1');
       } else {
         settingsTab.removeAttribute('tabindex');
@@ -428,7 +426,7 @@
     }
 
     const settingsPanel = document.getElementById('panel-settings');
-    if (!canSettings && settingsPanel && !settingsPanel.hidden) {
+    if (!isR5 && settingsPanel && !settingsPanel.hidden) {
       switchTab('command');
     }
 

@@ -58,10 +58,13 @@
   let skipPersist = false;
   /** Tirage VIP : { dayKey, playerId } ou null */
   let vipDrawProposal = null;
+  /** Tri tableau d’équité (mémoire UI uniquement). */
+  let equitySort = 'alpha';
   /**
    * Remplacement manuel :
    * - semaine courante : { source:'week', dayKey, field }
-   * - archive : { source:'history', historyId, field }
+   * - archive plate : { source:'history', historyId, field }
+   * - historique officiel : { source:'official', weekId, dayKey, field }
    */
   let replaceContext = null;
 
@@ -127,9 +130,11 @@
 
   function createBlankState() {
     return {
-      version: 2,
+      version: 3,
       categories: defaultCategories(),
       history: [],
+      /** Historique officiel Train (source de vérité des stats depuis le début WarOps). */
+      officialWeeks: [],
       monthlyCounts: {},
       appliedPlans: {},
       weekArchives: [],
@@ -154,9 +159,10 @@
         categories = defaultCategories();
       }
       state = {
-        version: 2,
+        version: 3,
         categories,
         history: Array.isArray(parsed.history) ? parsed.history : [],
+        officialWeeks: normalizeOfficialWeeks(parsed.officialWeeks),
         monthlyCounts:
           parsed.monthlyCounts && typeof parsed.monthlyCounts === 'object' ? parsed.monthlyCounts : {},
         appliedPlans:
@@ -467,6 +473,393 @@
         };
       });
     });
+  }
+
+  /* ---------- Historique officiel (source de vérité stats depuis le début) ---------- */
+
+  function getSupabaseClient() {
+    return global.ROSSupabase && typeof ROSSupabase.getClient === 'function'
+      ? ROSSupabase.getClient()
+      : null;
+  }
+
+  function getSessionUserId() {
+    const session =
+      global.ROSSync && typeof ROSSync.getSession === 'function' ? ROSSync.getSession() : null;
+    return session?.user?.id || null;
+  }
+
+  function emptyOfficialDays() {
+    const days = {};
+    WEEK_DAYS.forEach((d) => {
+      days[d.key] = {
+        conductorId: null,
+        conductorPseudo: null,
+        vipId: null,
+        vipPseudo: null,
+      };
+    });
+    return days;
+  }
+
+  function normalizeOfficialDay(raw) {
+    const src = raw && typeof raw === 'object' ? raw : {};
+    return {
+      conductorId: src.conductorId || src.conductor_player_id || null,
+      conductorPseudo: src.conductorPseudo || src.conductor_pseudo || null,
+      vipId: src.vipId || src.vip_player_id || null,
+      vipPseudo: src.vipPseudo || src.vip_pseudo || null,
+    };
+  }
+
+  function normalizeOfficialWeek(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const days = emptyOfficialDays();
+    WEEK_DAYS.forEach((d) => {
+      days[d.key] = normalizeOfficialDay(raw.days?.[d.key]);
+    });
+    return {
+      id: raw.id || uid('thw'),
+      weekKey: String(raw.weekKey || raw.week_key || raw.id || ''),
+      weekLabel: String(raw.weekLabel || raw.week_label || 'Semaine'),
+      weekStartDate: raw.weekStartDate || raw.week_start_date || null,
+      weekEndDate: raw.weekEndDate || raw.week_end_date || null,
+      source: ['close', 'init', 'correction'].includes(raw.source) ? raw.source : 'close',
+      createdAt: raw.createdAt || raw.created_at || new Date().toISOString(),
+      updatedAt: raw.updatedAt || raw.updated_at || new Date().toISOString(),
+      days,
+    };
+  }
+
+  function normalizeOfficialWeeks(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw.map(normalizeOfficialWeek).filter((w) => w && w.weekKey);
+  }
+
+  function getOfficialWeeks() {
+    const s = getState();
+    if (!Array.isArray(s.officialWeeks)) s.officialWeeks = [];
+    return s.officialWeeks;
+  }
+
+  /** Compteurs historiques calculés (jamais stockés comme source de vérité). */
+  function getHistoricalCounts(playerId) {
+    if (!playerId) return { conductor: 0, vip: 0 };
+    let conductor = 0;
+    let vip = 0;
+    getOfficialWeeks().forEach((week) => {
+      WEEK_DAYS.forEach((d) => {
+        const slot = week.days?.[d.key];
+        if (!slot) return;
+        if (slot.conductorId === playerId) conductor += 1;
+        if (slot.vipId === playerId) vip += 1;
+      });
+    });
+    return { conductor, vip };
+  }
+
+  function getHistoryAvailableSinceLabel() {
+    const weeks = getOfficialWeeks();
+    if (!weeks.length) return null;
+    let best = null;
+    weeks.forEach((w) => {
+      const candidate = w.weekStartDate || (w.createdAt ? w.createdAt.slice(0, 10) : null);
+      if (!candidate) return;
+      if (!best || candidate < best) best = candidate;
+    });
+    if (!best) return null;
+    try {
+      return new Date(`${best}T12:00:00`).toLocaleDateString('fr-FR');
+    } catch (error) {
+      return best;
+    }
+  }
+
+  function formatHistoricalShort(playerId) {
+    const c = getHistoricalCounts(playerId);
+    return `Conducteur : ${c.conductor} · VIP : ${c.vip}`;
+  }
+
+  function formatPlayerWithHistorical(player) {
+    if (!player) return '';
+    return `${player.pseudo} — ${formatHistoricalShort(player.id)}`;
+  }
+
+  /**
+   * Parmi les éligibles, ne tire que ceux au minimum historique (VIP ou Conducteur).
+   * Ne s’applique qu’aux vrais tirages — jamais au mérite manuel.
+   */
+  function pickFairByHistorical(eligiblePlayers, role) {
+    const list = (eligiblePlayers || []).filter(Boolean);
+    if (!list.length) return null;
+    const field = role === 'conductor' ? 'conductor' : 'vip';
+    let min = Infinity;
+    list.forEach((p) => {
+      const n = getHistoricalCounts(p.id)[field];
+      if (n < min) min = n;
+    });
+    const pool = list.filter((p) => getHistoricalCounts(p.id)[field] === min);
+    const index = Math.floor(Math.random() * pool.length);
+    return pool[index] || null;
+  }
+
+  function buildOfficialWeekPayload({ weekKey, weekLabel, weekStartDate, weekEndDate, source, days }) {
+    const now = new Date().toISOString();
+    const existing = getOfficialWeeks().find((w) => w.weekKey === weekKey);
+    const normalizedDays = emptyOfficialDays();
+    WEEK_DAYS.forEach((d) => {
+      const src = days?.[d.key] || {};
+      const conductorId = src.conductorId || null;
+      const vipId = src.vipId || null;
+      normalizedDays[d.key] = {
+        conductorId,
+        conductorPseudo: conductorId
+          ? getPlayerById(conductorId)?.pseudo || src.conductorPseudo || null
+          : src.conductorPseudo || null,
+        vipId,
+        vipPseudo: vipId
+          ? getPlayerById(vipId)?.pseudo || src.vipPseudo || null
+          : src.vipPseudo || null,
+      };
+    });
+    return {
+      id: existing?.id || uid('thw'),
+      weekKey,
+      weekLabel: weekLabel || existing?.weekLabel || 'Semaine',
+      weekStartDate: weekStartDate || existing?.weekStartDate || null,
+      weekEndDate: weekEndDate || existing?.weekEndDate || null,
+      source: source || existing?.source || 'close',
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      days: normalizedDays,
+    };
+  }
+
+  async function pushOfficialWeekToSupabase(week) {
+    const client = getSupabaseClient();
+    if (!client || !week) return { ok: false, reason: 'no-client' };
+    const userId = getSessionUserId();
+    try {
+      const { error: weekError } = await client.from('train_history_weeks').upsert(
+        {
+          id: week.id,
+          week_key: week.weekKey,
+          week_label: week.weekLabel,
+          week_start_date: week.weekStartDate,
+          week_end_date: week.weekEndDate,
+          source: week.source === 'init' ? 'init' : week.source === 'correction' ? 'correction' : 'close',
+          updated_at: week.updatedAt,
+          updated_by: userId,
+          created_at: week.createdAt,
+        },
+        { onConflict: 'id' }
+      );
+      if (weekError) throw weekError;
+
+      const dayRows = WEEK_DAYS.map((d) => {
+        const slot = week.days[d.key] || {};
+        return {
+          id: `${week.id}_${d.key}`,
+          week_id: week.id,
+          day_key: d.key,
+          day_label: d.label,
+          day_date: null,
+          conductor_player_id: slot.conductorId,
+          conductor_pseudo: slot.conductorPseudo,
+          vip_player_id: slot.vipId,
+          vip_pseudo: slot.vipPseudo,
+        };
+      });
+      const { error: daysError } = await client
+        .from('train_history_days')
+        .upsert(dayRows, { onConflict: 'week_id,day_key' });
+      if (daysError) throw daysError;
+      return { ok: true };
+    } catch (error) {
+      console.error('Train historique Supabase', error);
+      return { ok: false, error };
+    }
+  }
+
+  async function pullOfficialWeeksFromSupabase() {
+    const client = getSupabaseClient();
+    if (!client) return false;
+    try {
+      const { data: weeks, error } = await client
+        .from('train_history_weeks')
+        .select('*, train_history_days(*)')
+        .order('week_start_date', { ascending: true, nullsFirst: false });
+      if (error) throw error;
+      if (!Array.isArray(weeks) || !weeks.length) return false;
+      const mapped = weeks.map((row) => {
+        const days = emptyOfficialDays();
+        (row.train_history_days || []).forEach((day) => {
+          if (!day?.day_key || !days[day.day_key]) return;
+          days[day.day_key] = normalizeOfficialDay({
+            conductorId: day.conductor_player_id,
+            conductorPseudo: day.conductor_pseudo,
+            vipId: day.vip_player_id,
+            vipPseudo: day.vip_pseudo,
+          });
+        });
+        return normalizeOfficialWeek({
+          id: row.id,
+          weekKey: row.week_key,
+          weekLabel: row.week_label,
+          weekStartDate: row.week_start_date,
+          weekEndDate: row.week_end_date,
+          source: row.source,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+          days,
+        });
+      });
+      update((s) => {
+        const byKey = new Map();
+        (s.officialWeeks || []).forEach((w) => byKey.set(w.weekKey, w));
+        mapped.forEach((remote) => {
+          const local = byKey.get(remote.weekKey);
+          if (!local || String(remote.updatedAt || '') >= String(local.updatedAt || '')) {
+            byKey.set(remote.weekKey, remote);
+          }
+        });
+        s.officialWeeks = Array.from(byKey.values()).sort((a, b) => {
+          const da = a.weekStartDate || a.createdAt || '';
+          const db = b.weekStartDate || b.createdAt || '';
+          return db.localeCompare(da);
+        });
+        return s;
+      });
+      return true;
+    } catch (error) {
+      console.error('Train pull historique', error);
+      return false;
+    }
+  }
+
+  function saveOfficialWeekLocal(week) {
+    update((s) => {
+      if (!Array.isArray(s.officialWeeks)) s.officialWeeks = [];
+      const idx = s.officialWeeks.findIndex((w) => w.weekKey === week.weekKey || w.id === week.id);
+      if (idx >= 0) s.officialWeeks[idx] = week;
+      else s.officialWeeks.unshift(week);
+      s.officialWeeks.sort((a, b) => {
+        const da = a.weekStartDate || a.createdAt || '';
+        const db = b.weekStartDate || b.createdAt || '';
+        return db.localeCompare(da);
+      });
+      return s;
+    });
+    void pushOfficialWeekToSupabase(week);
+    return week;
+  }
+
+  function upsertOfficialWeekFromClosedPlan(trainState, plan, meta = {}) {
+    const week = getCurrentWeek();
+    const weekKey =
+      plan.weekId || week?.id || meta.weekKey || `plan_${currentMonthKey()}_${Date.now()}`;
+    const days = {};
+    WEEK_DAYS.forEach((d) => {
+      const slot = plan.days?.[d.key] || {};
+      days[d.key] = {
+        conductorId: slot.conductorId || null,
+        conductorPseudo: getPlayerById(slot.conductorId)?.pseudo || null,
+        vipId: slot.vipId || null,
+        vipPseudo: getPlayerById(slot.vipId)?.pseudo || null,
+      };
+    });
+    const payload = buildOfficialWeekPayload({
+      weekKey,
+      weekLabel: week?.label || meta.weekLabel || 'Semaine',
+      weekStartDate: week?.startDate || meta.weekStartDate || null,
+      weekEndDate: week?.endDate || meta.weekEndDate || null,
+      source: 'close',
+      days,
+    });
+    if (!Array.isArray(trainState.officialWeeks)) trainState.officialWeeks = [];
+    const idx = trainState.officialWeeks.findIndex(
+      (w) => w.weekKey === payload.weekKey || w.id === payload.id
+    );
+    if (idx >= 0) trainState.officialWeeks[idx] = payload;
+    else trainState.officialWeeks.unshift(payload);
+    trainState.officialWeeks.sort((a, b) => {
+      const da = a.weekStartDate || a.createdAt || '';
+      const db = b.weekStartDate || b.createdAt || '';
+      return db.localeCompare(da);
+    });
+    void pushOfficialWeekToSupabase(payload);
+    return payload;
+  }
+
+  function correctOfficialDay(weekId, dayKey, field, nextPlayerId) {
+    if (!canCorrectTrainArchive()) {
+      return { ok: false, error: 'Seuls les R4 et R5 peuvent corriger l’historique Train.' };
+    }
+    if (field !== 'conductorId' && field !== 'vipId') {
+      return { ok: false, error: 'Champ invalide.' };
+    }
+    const nextId = String(nextPlayerId || '').trim();
+    if (!nextId) return { ok: false, error: 'Sélectionnez un joueur.' };
+    const nextPlayer = getPlayerById(nextId);
+    if (!nextPlayer) return { ok: false, error: 'Joueur introuvable.' };
+
+    const weeks = getOfficialWeeks();
+    const week = weeks.find((w) => w.id === weekId || w.weekKey === weekId);
+    if (!week) return { ok: false, error: 'Semaine historique introuvable.' };
+    const slot = week.days?.[dayKey];
+    if (!slot) return { ok: false, error: 'Jour introuvable.' };
+
+    const oldId = slot[field] || null;
+    if (oldId === nextId) return { ok: false, error: 'Choisissez un joueur différent.' };
+    const otherField = field === 'conductorId' ? 'vipId' : 'conductorId';
+    if (slot[otherField] && slot[otherField] === nextId) {
+      return { ok: false, error: 'Un joueur ne peut pas être Conducteur et VIP le même jour.' };
+    }
+
+    const roleLabel = field === 'conductorId' ? 'Conducteur' : 'VIP';
+
+    update((s) => {
+      const target = (s.officialWeeks || []).find((w) => w.id === week.id);
+      if (!target?.days?.[dayKey]) return s;
+      const day = target.days[dayKey];
+      day[field] = nextId;
+      if (field === 'conductorId') day.conductorPseudo = nextPlayer.pseudo;
+      else day.vipPseudo = nextPlayer.pseudo;
+      target.updatedAt = new Date().toISOString();
+      if (target.source !== 'init') target.source = 'correction';
+
+      // Aligner l’historique plat + compteurs mensuels si la semaine avait été clôturée
+      const flat = (s.history || []).find(
+        (h) => h && (h.weekId === target.weekKey || h.weekId === target.id) && h.day === dayKey
+      );
+      if (flat) {
+        const monthKey = historyMonthKey(flat) || currentMonthKey();
+        const applied = s.appliedPlans?.[target.weekKey];
+        const oldDeltas = Array.isArray(applied?.deltas) ? applied.deltas : [];
+        flat[field] = nextId;
+        if (field === 'conductorId') flat.conductorPseudo = nextPlayer.pseudo;
+        else {
+          flat.vipPseudo = nextPlayer.pseudo;
+          flat.mode = 'Correction';
+        }
+        flat.correctedAt = new Date().toISOString();
+        if (oldDeltas.length) {
+          applyDeltas(s, applied.monthKey || monthKey, oldDeltas, 'reverse');
+          const weekEntries = (s.history || []).filter(
+            (h) => h && (h.weekId === target.weekKey || h.weekId === target.id)
+          );
+          const newDeltas = deltasFromHistoryEntries(weekEntries);
+          applyDeltas(s, applied.monthKey || monthKey, newDeltas, 'apply');
+          applied.deltas = newDeltas;
+        }
+        refreshHistoryCounterLabels(s, monthKey);
+      }
+
+      void pushOfficialWeekToSupabase(target);
+      return s;
+    });
+
+    return { ok: true, roleLabel, oldId, nextId };
   }
 
   function getArchiveCorrectionCandidates(entry, field) {
@@ -849,9 +1242,8 @@
 
   function pickRandomEligibleVip(dayKey) {
     const eligible = getEligibleWeekVipPlayers(dayKey);
-    if (!eligible.length) return null;
-    const index = Math.floor(Math.random() * eligible.length);
-    return eligible[index];
+    // Tirage équitable : uniquement parmi les éligibles au minimum historique VIP
+    return pickFairByHistorical(eligible, 'vip');
   }
 
   function runVipDraw(dayKey) {
@@ -1130,6 +1522,10 @@
         previous.closedByPlayerId = actor.actorPlayerId || null;
         previous.closedBy = actor.actorLabel || '';
         s.appliedPlans[weekId] = previous;
+        upsertOfficialWeekFromClosedPlan(s, s.weeklyPlan, {
+          weekKey: weekId,
+          weekLabel,
+        });
         result = 'unchanged';
         return s;
       }
@@ -1201,6 +1597,12 @@
         closedByPlayerId: actor.actorPlayerId || null,
         closedBy: actor.actorLabel || '',
       };
+
+      // Historique officiel : upsert (pas de doublon pour la même semaine)
+      upsertOfficialWeekFromClosedPlan(s, s.weeklyPlan, {
+        weekKey: weekId,
+        weekLabel,
+      });
       return s;
     });
 
@@ -1470,6 +1872,19 @@
     els.copyFeedback = document.getElementById('trainCopyFeedback');
     els.historyBody = document.getElementById('trainHistoryBody');
     els.historyEmpty = document.getElementById('trainHistoryEmpty');
+    els.historySince = document.getElementById('trainHistorySince');
+    els.equityBody = document.getElementById('trainEquityBody');
+    els.equitySort = document.getElementById('trainEquitySort');
+    els.settingsHistoryBlock = document.getElementById('settingsTrainHistoryBlock');
+    els.settingsHistoryTitle = document.getElementById('settingsTrainHistoryTitle');
+    els.settingsHistoryHint = document.getElementById('settingsTrainHistoryHint');
+    els.settingsHistoryNote = document.getElementById('settingsTrainHistoryNote');
+    els.historySourceWeek = document.getElementById('trainHistorySourceWeek');
+    els.initLabel = document.getElementById('trainInitWeekLabel');
+    els.initStart = document.getElementById('trainInitWeekStart');
+    els.initEnd = document.getElementById('trainInitWeekEnd');
+    els.initDays = document.getElementById('trainInitDays');
+    els.btnSaveHistoryWeek = document.getElementById('trainSaveHistoryWeek');
     els.replaceModal = document.getElementById('trainReplaceModal');
     els.replaceForm = document.getElementById('trainReplaceForm');
     els.replaceTitle = document.getElementById('trainReplaceTitle');
@@ -1720,12 +2135,51 @@
     eligible.forEach((p) => {
       if (p.id === currentId) return;
       opts.push(
-        `<option value="${p.id}">${escapeHtml(formatPlayerCounters(p))}</option>`
+        `<option value="${p.id}">${escapeHtml(formatPlayerWithHistorical(p))} · mois ${getPlayerMonthCounts(p.id).conductor}/${getPlayerMonthCounts(p.id).vip}</option>`
       );
     });
     els.replaceSelect.innerHTML = opts.join('');
     if (!eligible.filter((p) => p.id !== currentId).length) {
       AppUI.toast(`Aucun ${roleLabel.toLowerCase()} éligible disponible.`);
+      return;
+    }
+    if (typeof els.replaceModal.showModal === 'function') els.replaceModal.showModal();
+  }
+
+  function openOfficialReplaceModal(weekId, dayKey, field) {
+    if (!canCorrectTrainArchive()) {
+      AppUI.toast('Seuls les R4 et R5 peuvent corriger l’historique Train.');
+      return;
+    }
+    if (!els.replaceModal || !els.replaceSelect) return;
+    const week = getOfficialWeeks().find((w) => w.id === weekId || w.weekKey === weekId);
+    if (!week) {
+      AppUI.toast('Semaine historique introuvable.');
+      return;
+    }
+    const slot = week.days?.[dayKey] || {};
+    const roleLabel = field === 'conductorId' ? 'Conducteur' : 'VIP';
+    const currentId = slot[field] || null;
+    const otherId = field === 'conductorId' ? slot.vipId : slot.conductorId;
+    const candidates = getActivePlayers().filter((p) => p.id !== otherId && p.id !== currentId);
+    const day = WEEK_DAYS.find((d) => d.key === dayKey);
+
+    replaceContext = { source: 'official', weekId: week.id, dayKey, field };
+    if (els.replaceTitle) {
+      els.replaceTitle.textContent = `Corriger — ${roleLabel} (${day?.label || dayKey})`;
+    }
+    if (els.replaceHint) {
+      els.replaceHint.textContent = currentId
+        ? `Historique officiel · ${week.weekLabel} · Actuel : ${playerName(currentId)}. Enregistrez qui a réellement pris la place.`
+        : `Historique officiel · ${week.weekLabel}. Choisissez le ${roleLabel.toLowerCase()} réel.`;
+    }
+    const opts = ['<option value="">— Choisir —</option>'];
+    candidates.forEach((p) => {
+      opts.push(`<option value="${p.id}">${escapeHtml(formatPlayerWithHistorical(p))}</option>`);
+    });
+    els.replaceSelect.innerHTML = opts.join('');
+    if (!candidates.length) {
+      AppUI.toast('Aucun joueur disponible pour cette correction.');
       return;
     }
     if (typeof els.replaceModal.showModal === 'function') els.replaceModal.showModal();
@@ -1760,7 +2214,7 @@
     const opts = ['<option value="">— Choisir —</option>'];
     candidates.forEach((p) => {
       opts.push(
-        `<option value="${p.id}">${escapeHtml(formatPlayerCounters(p, monthKey))}</option>`
+        `<option value="${p.id}">${escapeHtml(formatPlayerWithHistorical(p))}</option>`
       );
     });
     els.replaceSelect.innerHTML = opts.join('');
@@ -1782,6 +2236,27 @@
     const nextId = (els.replaceSelect?.value || '').trim();
     if (!nextId) {
       AppUI.toast('Sélectionnez un joueur.');
+      return;
+    }
+
+    if (replaceContext.source === 'official') {
+      const { weekId, dayKey, field } = replaceContext;
+      const week = getOfficialWeeks().find((w) => w.id === weekId);
+      const roleLabel = field === 'conductorId' ? 'Conducteur' : 'VIP';
+      const day = WEEK_DAYS.find((d) => d.key === dayKey);
+      const ok = await AppUI.confirm({
+        title: `Corriger le ${roleLabel} historique`,
+        message: `${week?.weekLabel || 'Semaine'} · ${day?.label || dayKey} — ${roleLabel} : ${playerName(nextId)} ?\n\nCorrection administrative uniquement.`,
+        confirmLabel: 'Valider la correction',
+      });
+      if (!ok) return;
+      const result = correctOfficialDay(weekId, dayKey, field, nextId);
+      closeReplaceModal();
+      if (!result.ok) {
+        AppUI.toast(result.error || 'Correction impossible.');
+        return;
+      }
+      AppUI.toast(`${result.roleLabel} historique corrigé.`);
       return;
     }
 
@@ -1836,7 +2311,8 @@
 
     els.weekCandidates.innerHTML = candidates
       .map((c) => {
-        const counts = getPlayerMonthCounts(c.playerId);
+        const monthCounts = getPlayerMonthCounts(c.playerId);
+        const hist = getHistoricalCounts(c.playerId);
         const already = taken.has(c.playerId);
         const disabled = locked || already;
         return `
@@ -1845,8 +2321,15 @@
               <h4 class="stack-item-title">${escapeHtml(c.player.pseudo)}</h4>
               <div class="player-meta" style="margin-top:0.35rem">
                 <span class="badge badge-saison">${escapeHtml(c.categoryName)}</span>
-                <span class="chip muted">Conducteur ${counts.conductor} ce mois</span>
+                <span class="chip muted">Mérite — choix manuel</span>
               </div>
+              <p class="panel-subtitle" style="margin:0.4rem 0 0">
+                Conducteur depuis le début : <strong>${hist.conductor}</strong>
+                · VIP depuis le début : <strong>${hist.vip}</strong>
+              </p>
+              <p class="panel-subtitle" style="margin:0.2rem 0 0">
+                Ce mois — Conducteur ${monthCounts.conductor} | VIP ${monthCounts.vip}
+              </p>
             </div>
             <div class="train-assign-controls">
               <select class="input" data-assign-day ${disabled ? 'disabled' : ''}>
@@ -2127,53 +2610,393 @@
     refreshActionButtons();
   }
 
-  function renderHistoryRoleCell(h, field, monthKey, canEdit) {
+  function renderOfficialRoleLine(week, dayKey, field, canEdit) {
+    const slot = week.days?.[dayKey] || {};
     const isConductor = field === 'conductorId';
-    const playerId = isConductor ? h.conductorId : h.vipId;
-    const fallback = isConductor ? h.conductorPseudo || '—' : h.vipPseudo || '—';
+    const playerId = isConductor ? slot.conductorId : slot.vipId;
+    const fallback = isConductor ? slot.conductorPseudo || '—' : slot.vipPseudo || '—';
     const name = playerId
       ? ROSModels.getPlayerDisplayName(getAllianceState(), playerId, fallback)
       : fallback;
-    const label = playerId ? `${name} — ${formatCountersShort(playerId, monthKey)}` : name;
+    const roleLabel = isConductor ? 'Conducteur' : 'VIP';
     const btn = canEdit
-      ? `<button type="button" class="btn btn-ghost btn-sm train-history-edit-btn" data-train-action="replace-history-role" data-history-id="${escapeHtml(h.id)}" data-field="${field}">Modifier</button>`
+      ? `<button type="button" class="btn btn-ghost btn-sm train-history-edit-btn" data-train-action="replace-official-role" data-week-id="${escapeHtml(week.id)}" data-day="${dayKey}" data-field="${field}">Modifier</button>`
       : '';
     return `
       <div class="train-history-role">
-        <span>${escapeHtml(label)}</span>
+        <span>${roleLabel} : <strong>${escapeHtml(name)}</strong></span>
         ${btn}
       </div>
     `;
   }
 
+  function getEquityRows() {
+    const alliancePlayers = getAllianceState().players || [];
+    const rows = alliancePlayers
+      .filter((p) => p && (p.status === 'Actif' || p.status === 'Parti'))
+      .map((p) => {
+        const hist = getHistoricalCounts(p.id);
+        return {
+          id: p.id,
+          pseudo: p.pseudo,
+          status: p.status,
+          conductor: hist.conductor,
+          vip: hist.vip,
+        };
+      });
+    // Inclure aussi les IDs présents dans l’historique mais absents de la liste joueurs
+    const seen = new Set(rows.map((r) => r.id));
+    getOfficialWeeks().forEach((week) => {
+      WEEK_DAYS.forEach((d) => {
+        const slot = week.days?.[d.key];
+        if (!slot) return;
+        [slot.conductorId, slot.vipId].forEach((id) => {
+          if (!id || seen.has(id)) return;
+          seen.add(id);
+          const hist = getHistoricalCounts(id);
+          rows.push({
+            id,
+            pseudo: slot.conductorId === id ? slot.conductorPseudo : slot.vipPseudo || id,
+            status: 'Archivé',
+            conductor: hist.conductor,
+            vip: hist.vip,
+          });
+        });
+      });
+    });
+    rows.sort((a, b) => {
+      if (equitySort === 'conductor-asc') return a.conductor - b.conductor || a.pseudo.localeCompare(b.pseudo, 'fr');
+      if (equitySort === 'conductor-desc') return b.conductor - a.conductor || a.pseudo.localeCompare(b.pseudo, 'fr');
+      if (equitySort === 'vip-asc') return a.vip - b.vip || a.pseudo.localeCompare(b.pseudo, 'fr');
+      if (equitySort === 'vip-desc') return b.vip - a.vip || a.pseudo.localeCompare(b.pseudo, 'fr');
+      return a.pseudo.localeCompare(b.pseudo, 'fr', { sensitivity: 'base' });
+    });
+    return rows;
+  }
+
+  function renderEquityTable() {
+    if (!els.equityBody) return;
+    if (els.equitySort && els.equitySort.value !== equitySort) {
+      els.equitySort.value = equitySort;
+    }
+    // Tous les actifs (y compris 0) + anciens joueurs ayant des occurrences
+    const finalRows = getEquityRows().filter(
+      (r) => r.status === 'Actif' || r.conductor > 0 || r.vip > 0
+    );
+    els.equityBody.innerHTML = finalRows
+      .map(
+        (r) => `
+        <tr>
+          <td>${escapeHtml(r.pseudo)}${r.status !== 'Actif' ? ` <span class="chip muted">${escapeHtml(r.status)}</span>` : ''}</td>
+          <td>${r.conductor}</td>
+          <td>${r.vip}</td>
+        </tr>
+      `
+      )
+      .join('');
+  }
+
   function renderHistory() {
-    const history = getState().history;
-    if (!history.length) {
+    if (els.historySince) {
+      const since = getHistoryAvailableSinceLabel();
+      els.historySince.textContent = since
+        ? `Historique disponible depuis le ${since}`
+        : 'Aucun historique officiel pour le moment.';
+    }
+    if (!els.historyBody) return;
+    const weeks = getOfficialWeeks();
+    const canEdit = canCorrectTrainArchive();
+
+    if (!weeks.length) {
       els.historyBody.innerHTML = '';
-      els.historyEmpty.classList.remove('hidden');
+      if (els.historyEmpty) {
+        els.historyEmpty.classList.remove('hidden');
+        els.historyEmpty.textContent =
+          'Aucun historique Train officiel. Initialisez la semaine dernière ou clôturez une semaine.';
+      }
+      renderEquityTable();
       return;
     }
-    els.historyEmpty.classList.add('hidden');
-    const canEdit = canCorrectTrainArchive();
-    els.historyBody.innerHTML = history
-      .map((h) => {
-        const monthKey = historyMonthKey(h) || currentMonthKey();
+    if (els.historyEmpty) els.historyEmpty.classList.add('hidden');
+
+    els.historyBody.innerHTML = weeks
+      .map((week) => {
+        const daysHtml = WEEK_DAYS.map((d) => {
+          const slot = week.days?.[d.key];
+          if (!slot?.conductorId && !slot?.vipId) return '';
+          return `
+            <article class="train-official-day">
+              <strong>${escapeHtml(d.label)}</strong>
+              ${renderOfficialRoleLine(week, d.key, 'conductorId', canEdit)}
+              ${renderOfficialRoleLine(week, d.key, 'vipId', canEdit)}
+            </article>
+          `;
+        }).join('');
         return `
-        <tr>
-          <td>
-            ${escapeHtml(h.weekLabel)}
-            <div class="panel-subtitle">${escapeHtml(monthKey)}</div>
-            <span class="chip muted train-history-archived-chip">Archivée</span>
-          </td>
-          <td>${escapeHtml(h.dayLabel || h.day || '—')}</td>
-          <td>${renderHistoryRoleCell(h, 'conductorId', monthKey, canEdit)}</td>
-          <td>${renderHistoryRoleCell(h, 'vipId', monthKey, canEdit)}</td>
-          <td>${escapeHtml(h.categoryName || '—')}</td>
-          <td>${escapeHtml(h.mode || '—')}</td>
-        </tr>
-      `;
+          <article class="train-official-week">
+            <header class="train-official-week-header">
+              <div>
+                <strong>${escapeHtml(week.weekLabel)}</strong>
+                <div class="panel-subtitle">
+                  ${escapeHtml(week.weekStartDate || '—')} → ${escapeHtml(week.weekEndDate || '—')}
+                  · <span class="chip muted">${escapeHtml(week.source === 'init' ? 'Initialisation' : week.source === 'correction' ? 'Corrigée' : 'Clôturée')}</span>
+                </div>
+              </div>
+            </header>
+            <div class="train-official-days">${daysHtml || '<p class="panel-subtitle">Aucune affectation</p>'}</div>
+          </article>
+        `;
       })
       .join('');
+
+    renderEquityTable();
+  }
+
+  function canManageTrainHistorySettings() {
+    // Paramètres → Train : réservé R5 (pas seulement masquage UI)
+    if (global.ROSProfiles && typeof ROSProfiles.isActiveR5 === 'function') {
+      return Boolean(ROSProfiles.isActiveR5());
+    }
+    return isR5();
+  }
+
+  function collectHistoryWeekSources() {
+    const sources = [];
+    const plan = getWeeklyPlan();
+    const currentWeek = getCurrentWeek();
+    sources.push({
+      id: 'current',
+      label: `Planning courant — ${currentWeek?.label || plan.weekId || 'semaine en cours'}`,
+      weekKey: plan.weekId || currentWeek?.id || `current_${currentMonthKey()}`,
+      weekLabel: currentWeek?.label || 'Planning courant',
+      weekStartDate: currentWeek?.startDate || null,
+      weekEndDate: currentWeek?.endDate || null,
+      days: WEEK_DAYS.reduce((acc, d) => {
+        const slot = plan.days?.[d.key] || {};
+        acc[d.key] = {
+          conductorId: slot.conductorId || null,
+          vipId: slot.vipId || null,
+        };
+        return acc;
+      }, {}),
+    });
+
+    (getState().weekArchives || []).forEach((arch) => {
+      if (!arch?.id) return;
+      const days = {};
+      WEEK_DAYS.forEach((d) => {
+        const slot = arch.days?.[d.key] || {};
+        days[d.key] = {
+          conductorId: slot.conductorId || null,
+          vipId: slot.vipId || null,
+        };
+      });
+      sources.push({
+        id: `archive:${arch.id}`,
+        label: `Archive — ${arch.weekLabel || arch.weekId || arch.id}`,
+        weekKey: arch.weekId || `archive_${arch.id}`,
+        weekLabel: arch.weekLabel || 'Semaine archivée',
+        weekStartDate: arch.weekDate?.split?.('→')?.[0]?.trim?.() || arch.monthKey || null,
+        weekEndDate: null,
+        days,
+      });
+    });
+
+    getOfficialWeeks().forEach((week) => {
+      sources.push({
+        id: `official:${week.id}`,
+        label: `Historique — ${week.weekLabel}`,
+        weekKey: week.weekKey,
+        weekLabel: week.weekLabel,
+        weekStartDate: week.weekStartDate,
+        weekEndDate: week.weekEndDate,
+        days: WEEK_DAYS.reduce((acc, d) => {
+          const slot = week.days?.[d.key] || {};
+          acc[d.key] = {
+            conductorId: slot.conductorId || null,
+            vipId: slot.vipId || null,
+          };
+          return acc;
+        }, {}),
+        officialId: week.id,
+      });
+    });
+
+    sources.push({
+      id: 'blank',
+      label: 'Saisie manuelle (vide)',
+      weekKey: `init_${new Date().toISOString().slice(0, 10)}`,
+      weekLabel: 'Semaine précédente',
+      weekStartDate: null,
+      weekEndDate: null,
+      days: WEEK_DAYS.reduce((acc, d) => {
+        acc[d.key] = { conductorId: null, vipId: null };
+        return acc;
+      }, {}),
+    });
+
+    return sources;
+  }
+
+  function buildHistoryPlayerOptions(selectedId) {
+    const opts = ['<option value="">—</option>'];
+    getActivePlayers().forEach((p) => {
+      const selected = p.id === selectedId ? ' selected' : '';
+      opts.push(
+        `<option value="${p.id}"${selected}>${escapeHtml(formatPlayerWithHistorical(p))}</option>`
+      );
+    });
+    if (selectedId && !getPlayerById(selectedId)) {
+      opts.push(
+        `<option value="${escapeHtml(selectedId)}" selected>${escapeHtml(selectedId)} (inconnu)</option>`
+      );
+    }
+    return opts.join('');
+  }
+
+  function fillSettingsHistoryDays(daysMap) {
+    if (!els.initDays) return;
+    els.initDays.innerHTML = WEEK_DAYS.map((d) => {
+      const slot = daysMap?.[d.key] || {};
+      return `
+        <div class="train-init-day" data-init-day="${d.key}">
+          <strong>${escapeHtml(d.label)}</strong>
+          <label class="field">
+            <span>Conducteur</span>
+            <select class="input" data-init-field="conductorId">
+              ${buildHistoryPlayerOptions(slot.conductorId || null)}
+            </select>
+          </label>
+          <label class="field">
+            <span>VIP</span>
+            <select class="input" data-init-field="vipId">
+              ${buildHistoryPlayerOptions(slot.vipId || null)}
+            </select>
+          </label>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function applyHistorySourceToForm(sourceId) {
+    const sources = collectHistoryWeekSources();
+    const source = sources.find((s) => s.id === sourceId) || sources[0];
+    if (!source) return;
+    if (els.historySourceWeek) els.historySourceWeek.value = source.id;
+    if (els.initLabel) els.initLabel.value = source.weekLabel || '';
+    if (els.initStart) els.initStart.value = source.weekStartDate || '';
+    if (els.initEnd) els.initEnd.value = source.weekEndDate || '';
+    fillSettingsHistoryDays(source.days);
+    if (els.settingsHistoryNote) {
+      els.settingsHistoryNote.textContent = source.id.startsWith('official:')
+        ? 'Semaine déjà dans l’historique — les modifications mettront à jour l’enregistrement (pas de doublon).'
+        : 'Les valeurs affichées sont des propositions. Corrigez-les avant enregistrement si la réalité était différente.';
+    }
+  }
+
+  function renderSettingsHistoryAdmin() {
+    if (!els.settingsHistoryBlock) return;
+    const allowed = canManageTrainHistorySettings();
+    els.settingsHistoryBlock.classList.toggle('hidden', !allowed);
+    if (!allowed) return;
+
+    const hasOfficial = getOfficialWeeks().length > 0;
+    if (els.settingsHistoryTitle) {
+      els.settingsHistoryTitle.textContent = hasOfficial
+        ? 'Gérer l’historique Train'
+        : 'Initialiser l’historique Train';
+    }
+    if (els.settingsHistoryHint) {
+      els.settingsHistoryHint.textContent = hasOfficial
+        ? 'Corrigez une semaine déjà enregistrée ou ajoutez une autre semaine connue. Les compteurs historiques se recalculent automatiquement.'
+        : 'Aucun historique antérieur n’est disponible. Choisissez une semaine connue, corrigez si besoin, puis enregistrez-la comme point de départ.';
+    }
+
+    const sources = collectHistoryWeekSources();
+    const previous = els.historySourceWeek?.value || '';
+    if (els.historySourceWeek) {
+      els.historySourceWeek.innerHTML = sources
+        .map(
+          (s) =>
+            `<option value="${escapeHtml(s.id)}">${escapeHtml(s.label)}</option>`
+        )
+        .join('');
+      const keep = sources.some((s) => s.id === previous)
+        ? previous
+        : sources.find((s) => s.id.startsWith('official:'))?.id || sources[0]?.id;
+      if (keep) els.historySourceWeek.value = keep;
+      applyHistorySourceToForm(els.historySourceWeek.value);
+    }
+  }
+
+  function readSettingsHistoryFormDays() {
+    const days = {};
+    WEEK_DAYS.forEach((d) => {
+      const row = els.initDays?.querySelector(`[data-init-day="${d.key}"]`);
+      const conductorId = (row?.querySelector('[data-init-field="conductorId"]')?.value || '').trim() || null;
+      const vipId = (row?.querySelector('[data-init-field="vipId"]')?.value || '').trim() || null;
+      days[d.key] = { conductorId, vipId };
+    });
+    return days;
+  }
+
+  function formatHistoryRecap(days, label) {
+    const lines = [`Semaine : ${label}`, ''];
+    WEEK_DAYS.forEach((d) => {
+      const slot = days[d.key] || {};
+      if (!slot.conductorId && !slot.vipId) return;
+      lines.push(
+        `${d.label} — Conducteur : ${playerName(slot.conductorId)} · VIP : ${playerName(slot.vipId)}`
+      );
+    });
+    return lines.join('\n');
+  }
+
+  async function submitSettingsHistoryWeek() {
+    if (!canManageTrainHistorySettings()) {
+      AppUI.toast('Seul le R5 peut gérer l’historique Train depuis Paramètres.');
+      return;
+    }
+    const sources = collectHistoryWeekSources();
+    const source = sources.find((s) => s.id === els.historySourceWeek?.value) || sources[0];
+    const label = (els.initLabel?.value || '').trim() || source?.weekLabel || 'Semaine';
+    const start = els.initStart?.value || null;
+    const end = els.initEnd?.value || null;
+    const days = readSettingsHistoryFormDays();
+    const hasAny = WEEK_DAYS.some((d) => days[d.key].conductorId || days[d.key].vipId);
+    if (!hasAny) {
+      AppUI.toast('Renseignez au moins un Conducteur ou VIP.');
+      return;
+    }
+
+    let weekKey = source?.weekKey || `init_${start || end || new Date().toISOString().slice(0, 10)}`;
+    if (source?.id === 'blank') {
+      weekKey = `init_${start || end || new Date().toISOString().slice(0, 10)}`;
+    }
+
+    const recap = formatHistoryRecap(days, label);
+    const ok = await AppUI.confirm({
+      title: 'Enregistrer cette semaine dans l’historique',
+      message: `${recap}\n\nCes valeurs corrigées seront la réalité historique (mise à jour sans doublon si la semaine existe déjà).`,
+      confirmLabel: 'Enregistrer dans l’historique',
+    });
+    if (!ok) return;
+
+    const existing = getOfficialWeeks().find(
+      (w) => w.weekKey === weekKey || (source?.officialId && w.id === source.officialId)
+    );
+    const payload = buildOfficialWeekPayload({
+      weekKey: existing?.weekKey || weekKey,
+      weekLabel: label,
+      weekStartDate: start,
+      weekEndDate: end,
+      source: existing ? 'correction' : 'init',
+      days,
+    });
+    if (existing) payload.id = existing.id;
+    saveOfficialWeekLocal(payload);
+    AppUI.toast('Semaine enregistrée dans l’historique officiel.');
+    renderSettingsHistoryAdmin();
   }
 
   function migratePlayerIdentity(players, options = {}) {
@@ -2201,6 +3024,7 @@
     renderConductors();
     renderWeeklyScreen();
     renderHistory();
+    renderSettingsHistoryAdmin();
     refreshActionButtons();
   }
 
@@ -2430,6 +3254,9 @@
     if (trainAction === 'replace-history-role') {
       openHistoryReplaceModal(btn.dataset.historyId, btn.dataset.field);
     }
+    if (trainAction === 'replace-official-role') {
+      openOfficialReplaceModal(btn.dataset.weekId, btn.dataset.day, btn.dataset.field);
+    }
     if (trainAction === 'vip-redraw') {
       runVipDraw(vipDrawProposal?.dayKey || els.vipDrawDay?.value);
     }
@@ -2495,6 +3322,22 @@
     if (els.btnCopyNotification) {
       els.btnCopyNotification.addEventListener('click', copyNotification);
     }
+    if (els.equitySort) {
+      els.equitySort.addEventListener('change', () => {
+        equitySort = els.equitySort.value || 'alpha';
+        renderEquityTable();
+      });
+    }
+    if (els.historySourceWeek) {
+      els.historySourceWeek.addEventListener('change', () => {
+        applyHistorySourceToForm(els.historySourceWeek.value);
+      });
+    }
+    if (els.btnSaveHistoryWeek) {
+      els.btnSaveHistoryWeek.addEventListener('click', () => {
+        void submitSettingsHistoryWeek();
+      });
+    }
 
     els.root.addEventListener('click', onRootClick);
     els.root.addEventListener('change', onRootChange);
@@ -2511,6 +3354,9 @@
         closeReplaceModal();
       });
     }
+
+    // Aligner le cache local avec les tables Supabase si disponibles
+    void pullOfficialWeeksFromSupabase();
   }
 
   global.TrainModule = {
@@ -2519,15 +3365,25 @@
     hydrateFromStorage,
     STORAGE_KEY,
     getPlayerMonthCounts,
+    getHistoricalCounts,
     formatPlayerCounters,
     formatCountersShort,
+    formatPlayerWithHistorical,
     currentMonthKey,
     migratePlayerIdentity,
     getVipDrawExclusionStats,
     isEligibleForWeekVip,
     isEligibleForWeekConductor,
     correctArchivedHistoryRole,
+    correctOfficialDay,
     canCorrectTrainArchive,
     getVipIdsThisMonth,
+    pickFairByHistorical,
+    getOfficialWeeks,
+    saveOfficialWeekLocal,
+    buildOfficialWeekPayload,
+    pullOfficialWeeksFromSupabase,
+    renderSettingsHistoryAdmin,
+    canManageTrainHistorySettings,
   };
 })(window);

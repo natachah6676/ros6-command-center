@@ -514,8 +514,12 @@
     if (generalPane) generalPane.classList.toggle('hidden', tabName !== 'general');
     if (trainPane) trainPane.classList.toggle('hidden', tabName !== 'train');
     if (accessPane) accessPane.classList.toggle('hidden', tabName !== 'access');
-    if (tabName === 'train' && global.TrainModule && typeof TrainModule.render === 'function') {
-      TrainModule.render();
+    if (tabName === 'train' && global.TrainModule) {
+      if (typeof TrainModule.renderSettingsHistoryAdmin === 'function') {
+        TrainModule.renderSettingsHistoryAdmin();
+      } else if (typeof TrainModule.render === 'function') {
+        TrainModule.render();
+      }
     }
   }
 
