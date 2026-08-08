@@ -13,6 +13,7 @@
     els.filterStatus = document.getElementById('filterStatus');
     els.filterRole = document.getElementById('filterRoleAdmin');
     els.filterPower = document.getElementById('filterPowerAdmin');
+    els.filterGlobalPower = document.getElementById('filterGlobalPowerAdmin');
     els.powerCounter = document.getElementById('playersPowerCounter');
     els.coachingCounter = document.getElementById('playersCoachingCounter');
     els.btnAdd = document.getElementById('btnAddPlayer');
@@ -48,11 +49,16 @@
     return Boolean(player?.heroPowerTierId);
   }
 
+  function hasGlobalPowerTier(player) {
+    return Boolean(ROSModels.normalizeGlobalPowerTierId(player?.globalPowerTierId));
+  }
+
   function filteredPlayers() {
     const search = (els.search.value || '').trim().toLowerCase();
     const status = els.filterStatus.value;
     const role = els.filterRole?.value || '';
     const powerFilter = els.filterPower?.value || '';
+    const globalPowerFilter = els.filterGlobalPower?.value || '';
 
     return ROSStorage.getState()
       .players.filter((player) => {
@@ -64,6 +70,8 @@
         if (role && player.role !== role) return false;
         if (search && !player.pseudo.toLowerCase().includes(search)) return false;
         if (powerFilter === 'missing' && hasHeroPowerTier(player)) return false;
+        // Filtre Puissance globale « Non renseignée » (ce n’est pas une tranche)
+        if (globalPowerFilter === 'missing' && hasGlobalPowerTier(player)) return false;
         return true;
       })
       .sort((a, b) => a.pseudo.localeCompare(b.pseudo, 'fr', { sensitivity: 'base' }));
@@ -883,6 +891,7 @@
     els.filterStatus.addEventListener('change', render);
     els.filterRole.addEventListener('change', render);
     if (els.filterPower) els.filterPower.addEventListener('change', render);
+    if (els.filterGlobalPower) els.filterGlobalPower.addEventListener('change', render);
 
     els.modal.querySelectorAll('[data-close-modal]').forEach((btn) => {
       btn.addEventListener('click', closeModal);
