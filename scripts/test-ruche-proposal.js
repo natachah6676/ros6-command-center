@@ -30,6 +30,7 @@ assert(html.includes('id="rucheProposalGrid"'), 'Grille proposition');
 assert(html.includes('id="rucheProposalStats"'), 'Stats proposition');
 assert(html.includes('Gain estimé'), 'Libellé Gain estimé');
 assert(html.includes('Déplacements'), 'Libellé Déplacements');
+assert(html.includes('Effectif — Retirés'), 'Résumé effectif proposition');
 assert(!html.includes('Joueurs déplacés :'), 'Ancien libellé déplacés retiré');
 assert(html.includes('id="rucheProposalOptimize"'), 'Bouton générer');
 assert(html.includes('id="rucheProposalValidate"'), 'Bouton valider proposition');
@@ -44,6 +45,10 @@ assert(html.includes('ne change jamais automatiquement'), 'Mention non-auto actu
 console.log('\n=== Module expose ===');
 assert(rucheCode.includes('buildOptimizedProposal'), 'buildOptimizedProposal');
 assert(rucheCode.includes('computeProposalStats'), 'computeProposalStats');
+assert(rucheCode.includes('computeRosterDiff'), 'computeRosterDiff');
+assert(rucheCode.includes('stripIneligibleFromHive'), 'stripIneligibleFromHive');
+assert(rucheCode.includes('placeMissingPlayers'), 'placeMissingPlayers');
+assert(rucheCode.includes('isEligibleHivePlayer'), 'isEligibleHivePlayer');
 assert(rucheCode.includes('isWellPlaced'), 'isWellPlaced');
 assert(rucheCode.includes('MOVE_PENALTY'), 'Pénalité de déplacement');
 assert(rucheCode.includes('TARGET_RATIO'), 'Seuil ~95 %');
@@ -55,6 +60,7 @@ assert(rucheCode.includes('proposal: null'), 'Champ proposal en état');
 assert(rucheCode.includes("mode === 'full'"), 'Mode full');
 assert(rucheCode.includes('allowOfficerMoves'), 'Flag allowOfficerMoves');
 assert(rucheCode.includes('getAllowOfficerMoves'), 'Lecture option R4/R5');
+assert(rucheCode.includes('Source de vérité : Gestion des membres'), 'Commentaire source effectif');
 
 const store = { data: null };
 const players = [
@@ -65,10 +71,18 @@ const players = [
   { id: 'pStrong', pseudo: 'Strong', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_50_55', globalPowerTierId: 'gp_90_95' },
   { id: 'pMid', pseudo: 'Mid', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_35_40', globalPowerTierId: 'gp_60_65' },
   { id: 'pWeak', pseudo: 'Weak', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_25_30', globalPowerTierId: 'gp_lt_45' },
-  { id: 'pOk1', pseudo: 'Willow', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_45_50', globalPowerTierId: 'gp_80_85' },
-  { id: 'pOk2', pseudo: 'Mertz', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_40_45', globalPowerTierId: 'gp_70_75' },
-  { id: 'pOk3', pseudo: 'XalAtath', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_40_45', globalPowerTierId: 'gp_70_75' },
 ];
+
+function setPlayerStatus(id, status, extra = {}) {
+  const p = players.find((x) => x.id === id);
+  if (!p) return;
+  p.status = status;
+  Object.assign(p, extra);
+}
+
+function playerOnProposal(proposal, playerId) {
+  return Boolean(findPos(proposal.grid, proposal.bottomId, playerId));
+}
 
 const sandbox = {
   window: {},
@@ -170,6 +184,20 @@ assert(stats2.kept === stats2.total, 'Tous conservés si cohérent');
 assert(stats2.estimatedGainPct === 100, 'Gain 100 % si déjà optimal');
 
 console.log('\n=== Joueurs bien placés non déplacés ===');
+['pOk1', 'pOk2', 'pOk3'].forEach((id, i) => {
+  if (!players.find((p) => p.id === id)) {
+    players.push({
+      id,
+      pseudo: id === 'pOk1' ? 'Willow' : id === 'pOk2' ? 'Mertz' : 'XalAtath',
+      role: 'Membre',
+      status: 'Actif',
+      heroPowerTierId: i === 0 ? 'tier_45_50' : 'tier_40_45',
+      globalPowerTierId: i === 0 ? 'gp_80_85' : 'gp_70_75',
+    });
+  } else {
+    setPlayerStatus(id, 'Actif');
+  }
+});
 const grid3 = emptyGrid();
 grid3[MR][MC] = 'm1';
 grid3[0][0] = 'r5';
@@ -272,6 +300,101 @@ const officersMoved =
   propFullMove.grid[9][2] !== 'r4b';
 assert(propFullMove.allowOfficerMoves === true, 'Full+option : flag true');
 assert(officersMoved, 'Full+option : au moins un officier repositionné');
+
+console.log('\n=== Sync effectif : retrait / ajout / rôle ===');
+// Isole un sous-effectif pour ces scénarios (pas les fill_*)
+players.forEach((p) => {
+  if (String(p.id).startsWith('fill_') || String(p.id).startsWith('pOk')) {
+    p.status = 'Parti';
+    p.inactive = false;
+  }
+});
+setPlayerStatus('pStrong', 'Actif', { inactive: false, role: 'Membre' });
+setPlayerStatus('pMid', 'Actif', { inactive: false, role: 'Membre' });
+setPlayerStatus('pWeak', 'Actif', { inactive: false, role: 'Membre' });
+setPlayerStatus('m1', 'Actif');
+setPlayerStatus('r5', 'Actif');
+setPlayerStatus('r4a', 'Actif');
+setPlayerStatus('r4b', 'Actif');
+
+const gridRoster = emptyGrid();
+gridRoster[MR][MC] = 'm1';
+gridRoster[0][0] = 'r5';
+gridRoster[0][1] = 'r4a';
+gridRoster[9][9] = 'r4b';
+gridRoster[MR][MC + 1] = 'pStrong';
+gridRoster[MR + 1][MC] = 'pMid';
+gridRoster[9][0] = 'pWeak';
+gridRoster[8][0] = 'gone_old'; // ancien joueur absent de Gestion des membres
+players.push({
+  id: 'gone_old',
+  pseudo: 'Gone',
+  role: 'Membre',
+  status: 'Parti',
+  heroPowerTierId: 'tier_30_35',
+});
+
+const diffBefore = Ruche.computeRosterDiff(gridRoster, FREE);
+assert(diffBefore.removedCount >= 1, 'Diff : au moins 1 retiré (gone_old)');
+assert(diffBefore.keptCount >= 6, 'Diff : joueurs encore présents comptés');
+
+// Soft : retire le parti, conserve les positions restantes
+const propSoftRoster = Ruche.buildOptimizedProposal(gridRoster, FREE, { mode: 'soft' });
+assert(!playerOnProposal(propSoftRoster, 'gone_old'), 'Soft : parti retiré de la proposition');
+assert(propSoftRoster.grid[MR][MC + 1] === 'pStrong', 'Soft : Strong conserve sa case');
+assert(propSoftRoster.rosterDiff && propSoftRoster.rosterDiff.removedCount >= 1, 'Soft : meta retirés');
+
+// Inactif / désactivé exclu
+setPlayerStatus('pWeak', 'Actif', { inactive: true });
+const propInactive = Ruche.buildOptimizedProposal(gridRoster, FREE, { mode: 'soft' });
+assert(!playerOnProposal(propInactive, 'pWeak'), 'Inactif exclu de la proposition');
+setPlayerStatus('pWeak', 'Actif', { inactive: false });
+
+// Nouveau joueur intégré automatiquement
+players.push({
+  id: 'newbie',
+  pseudo: 'Newbie',
+  role: 'Membre',
+  status: 'Actif',
+  heroPowerTierId: 'tier_48_50',
+  globalPowerTierId: 'gp_85_90',
+});
+const propAddSoft = Ruche.buildOptimizedProposal(gridRoster, FREE, { mode: 'soft' });
+assert(playerOnProposal(propAddSoft, 'newbie'), 'Soft : nouveau joueur intégré');
+assert(propAddSoft.rosterDiff.addedCount >= 1, 'Soft : meta nouveaux ≥ 1');
+assert(propAddSoft.grid[0][0] === 'r5', 'Soft + nouveau : R5 non déplacé');
+
+// Changement de rôle R4 → Membre : case plus verrouillée en soft (peut bouger)
+setPlayerStatus('r4b', 'Actif', { role: 'Membre' });
+const propRole = Ruche.buildOptimizedProposal(
+  (() => {
+    const g = emptyGrid();
+    g[MR][MC] = 'm1';
+    g[0][0] = 'r5';
+    g[0][1] = 'r4a';
+    g[9][9] = 'r4b'; // ex-R4 loin
+    g[MR][MC + 1] = 'pStrong';
+    g[MR + 1][MC] = 'pMid';
+    g[9][0] = 'pWeak';
+    return g;
+  })(),
+  FREE,
+  { mode: 'soft' }
+);
+assert(playerOnProposal(propRole, 'r4b'), 'Ex-R4 toujours placé (toujours Actif)');
+// Remet R4 pour les tests full
+setPlayerStatus('r4b', 'Actif', { role: 'R4' });
+
+// Full : reconstruit depuis effectif actuel — pas de gone_old, oui newbie
+const propFullRoster = Ruche.buildOptimizedProposal(gridRoster, FREE, {
+  mode: 'full',
+  allowOfficerMoves: false,
+});
+assert(!playerOnProposal(propFullRoster, 'gone_old'), 'Full : ancien parti absent');
+assert(playerOnProposal(propFullRoster, 'newbie'), 'Full : nouveau inclus');
+assert(propFullRoster.grid[0][0] === 'r5', 'Full défaut : R5 conservé');
+assert(propFullRoster.rosterDiff.removedCount >= 1, 'Full : meta retirés');
+assert(propFullRoster.rosterDiff.addedCount >= 1, 'Full : meta nouveaux');
 
 console.log('\n=== Résultat ===');
 console.log(`${passed} OK · ${failed} KO`);

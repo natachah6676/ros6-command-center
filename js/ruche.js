@@ -101,10 +101,21 @@
 
   function normalizeProposal(raw) {
     if (!raw || typeof raw !== 'object') return null;
+    const rosterDiff =
+      raw.rosterDiff && typeof raw.rosterDiff === 'object'
+        ? {
+            removedCount: Number(raw.rosterDiff.removedCount) || 0,
+            addedCount: Number(raw.rosterDiff.addedCount) || 0,
+            keptCount: Number(raw.rosterDiff.keptCount) || 0,
+          }
+        : null;
     return {
       grid: normalizeGrid(raw.grid),
       bottomId: normalizeCellValue(raw.bottomId, { allowFree: true }),
       generatedAt: String(raw.generatedAt || ''),
+      mode: raw.mode === 'full' ? 'full' : raw.mode === 'soft' ? 'soft' : undefined,
+      allowOfficerMoves: raw.allowOfficerMoves === true,
+      rosterDiff,
     };
   }
 
@@ -196,10 +207,42 @@
     return ROSStorage.getState().players || [];
   }
 
+  function isEligibleHivePlayer(player) {
+    // Effectif Ruche = Actifs non désactivés (Gestion des membres / Supabase)
+    if (!player || player.status !== 'Actif') return false;
+    if (player.inactive) return false;
+    return true;
+  }
+
   function getActivePlayers() {
+    // Source de vérité : Gestion des membres (ROSStorage / Supabase), jamais un snapshot Ruche
     return getAlliancePlayers()
-      .filter((p) => p.status === 'Actif')
+      .filter(isEligibleHivePlayer)
       .sort((a, b) => a.pseudo.localeCompare(b.pseudo, 'fr', { sensitivity: 'base' }));
+  }
+
+  function collectHivePlayerIds(grid, bottomId) {
+    return new Set(collectPlayerPositions(grid, bottomId).keys());
+  }
+
+  /** Compare ruche (positions) vs effectif actuel alliance. */
+  function computeRosterDiff(grid, bottomId) {
+    const active = getActivePlayers();
+    const activeIds = new Set(active.map((p) => p.id));
+    const hiveIds = collectHivePlayerIds(grid, bottomId);
+    const removed = [...hiveIds].filter((id) => !activeIds.has(id));
+    const added = [...activeIds].filter((id) => !hiveIds.has(id));
+    const kept = [...hiveIds].filter((id) => activeIds.has(id));
+    return {
+      removed,
+      added,
+      kept,
+      removedCount: removed.length,
+      addedCount: added.length,
+      keptCount: kept.length,
+      activeIds,
+      active,
+    };
   }
 
   function getPlayerById(id) {
@@ -579,9 +622,99 @@
     wrap.hidden = getProposalMode() !== 'full';
   }
 
+  function listUnlockedEmptySlots(hive, lockOpts) {
+    const slots = [];
+    for (let r = 0; r < GRID_SIZE; r += 1) {
+      for (let c = 0; c < GRID_SIZE; c += 1) {
+        if (isMarshalCell(r, c)) continue;
+        const slot = { type: 'grid', row: r, col: c };
+        if (isLockedSlotOnHive(hive, slot, lockOpts)) continue;
+        const value = getCellValueFromHive(hive, slot);
+        if (!value || value === FREE) slots.push(slot);
+      }
+    }
+    const bottomSlot = { type: 'bottom' };
+    if (!isLockedSlotOnHive(hive, bottomSlot, lockOpts)) {
+      const value = getCellValueFromHive(hive, bottomSlot);
+      if (!value || value === FREE) slots.push(bottomSlot);
+    }
+    return slots;
+  }
+
+  function clearUnlockedOccupiedSlots(hive, lockOpts) {
+    for (let r = 0; r < GRID_SIZE; r += 1) {
+      for (let c = 0; c < GRID_SIZE; c += 1) {
+        if (isMarshalCell(r, c)) continue;
+        const slot = { type: 'grid', row: r, col: c };
+        if (isLockedSlotOnHive(hive, slot, lockOpts)) continue;
+        const value = getCellValueFromHive(hive, slot);
+        if (value && value !== FREE) setHiveSlot(hive, slot, FREE);
+      }
+    }
+    const bottomSlot = { type: 'bottom' };
+    if (!isLockedSlotOnHive(hive, bottomSlot, lockOpts)) {
+      const value = getCellValueFromHive(hive, bottomSlot);
+      if (value && value !== FREE) setHiveSlot(hive, bottomSlot, FREE);
+    }
+  }
+
+  /** Retire de la ruche tout joueur hors effectif actuel (Parti / inactif / inconnu). */
+  function stripIneligibleFromHive(hive) {
+    let removed = 0;
+    for (let r = 0; r < GRID_SIZE; r += 1) {
+      for (let c = 0; c < GRID_SIZE; c += 1) {
+        const slot = { type: 'grid', row: r, col: c };
+        const value = getCellValueFromHive(hive, slot);
+        if (!value || value === FREE) continue;
+        if (isEligibleHivePlayer(getPlayerById(value))) continue;
+        setHiveSlot(hive, slot, isMarshalCell(r, c) ? null : FREE);
+        removed += 1;
+      }
+    }
+    const bottomSlot = { type: 'bottom' };
+    const bottom = getCellValueFromHive(hive, bottomSlot);
+    if (bottom && bottom !== FREE && !isEligibleHivePlayer(getPlayerById(bottom))) {
+      setHiveSlot(hive, bottomSlot, FREE);
+      removed += 1;
+    }
+    return removed;
+  }
+
+  /**
+   * Place les joueurs absents de la grille dans les cases libres,
+   * plus fort → plus près du Maréchal (sans déplacer les déjà placés).
+   */
+  function placeMissingPlayers(hive, playerIds, mainState, scoreMap, lockOpts) {
+    const onHive = collectPlayerPositions(hive.grid, hive.bottomId);
+    const missing = playerIds.filter((id) => id && !onHive.has(id));
+    if (!missing.length) return 0;
+
+    const sorted = missing.slice().sort((a, b) => {
+      const pa = playerPowerValue(a, mainState, scoreMap);
+      const pb = playerPowerValue(b, mainState, scoreMap);
+      if (pa == null && pb == null) return 0;
+      if (pa == null) return 1;
+      if (pb == null) return -1;
+      return pb - pa;
+    });
+
+    const empties = listUnlockedEmptySlots(hive, lockOpts).sort(
+      (a, b) => chebyshevDist(a) - chebyshevDist(b) || slotKey(a).localeCompare(slotKey(b))
+    );
+
+    let placed = 0;
+    sorted.forEach((id) => {
+      if (placed >= empties.length) return;
+      setHiveSlot(hive, empties[placed], id);
+      placed += 1;
+    });
+    return placed;
+  }
+
   /**
    * soft — optimisation douce (peu de déplacements, R4/R5 toujours verrouillés)
    * full — nouveau plan complet ; R4/R5 conservés sauf allowOfficerMoves
+   * Effectif toujours relu depuis Gestion des membres (ROSStorage).
    */
   function buildOptimizedProposal(sourceGrid, sourceBottom, options = {}) {
     const mode = options.mode === 'full' ? 'full' : 'soft';
@@ -591,9 +724,24 @@
       grid: cloneGrid(sourceGrid),
       bottomId: normalizeCellValue(sourceBottom, { allowFree: true }),
     };
+    // Toujours la liste actuelle (pas un snapshot figé dans la Ruche)
     const mainState = ROSStorage.getState();
     const scoreMap = buildRuchePowerScoreMap(mainState);
     const lockOpts = { mode, allowOfficerMoves };
+    const rosterDiff = computeRosterDiff(sourceGrid, sourceBottom);
+
+    // 1) Libérer les joueurs partis / inéligibles
+    stripIneligibleFromHive(hive);
+
+    // 2) Soft : conserver les positions restantes. Full : vider les cases déplaçables.
+    if (mode === 'full') {
+      clearUnlockedOccupiedSlots(hive, lockOpts);
+    }
+
+    // 3) Intégrer tous les Actifs manquants (nouveaux + absents de la grille)
+    const activeIds = getActivePlayers().map((p) => p.id);
+    placeMissingPlayers(hive, activeIds, mainState, scoreMap, lockOpts);
+
     const unlockedSlots = [];
     const movableIds = [];
 
@@ -622,20 +770,31 @@
       // Sécurité : les officiers ne sont jamais dans le pool d’optimisation
       // sauf autorisation explicite (plan complet + case cochée).
       if (!allowOfficerMoves && isOfficerPlayer(getPlayerById(id))) return;
+      // Jamais optimiser un joueur hors effectif actuel
+      if (!rosterDiff.activeIds.has(id)) return;
       seen.add(id);
       uniqueMovable.push(id);
     });
 
-    const baseResult = () => ({
-      grid: cloneGrid(sourceGrid),
-      bottomId: normalizeCellValue(sourceBottom, { allowFree: true }),
+    const resultMeta = {
       generatedAt: new Date().toISOString(),
       mode,
       allowOfficerMoves,
+      rosterDiff: {
+        removedCount: rosterDiff.removedCount,
+        addedCount: rosterDiff.addedCount,
+        keptCount: rosterDiff.keptCount,
+      },
+    };
+
+    const syncedResult = () => ({
+      grid: hive.grid,
+      bottomId: hive.bottomId,
+      ...resultMeta,
     });
 
     if (uniqueMovable.length < 2) {
-      return baseResult();
+      return syncedResult();
     }
 
     const maxQ = maxPlacementQuality(uniqueMovable.length);
@@ -651,8 +810,9 @@
     const posMap = () => collectPlayerPositions(hive.grid, hive.bottomId);
 
     let quality = placementQuality(posMap(), uniqueMovable, mainState, scoreMap);
+    // Soft déjà cohérent : garder la grille synchronisée (pas l’ancienne source brute)
     if (mode === 'soft' && quality / maxQ >= TARGET_RATIO) {
-      return baseResult();
+      return syncedResult();
     }
 
     const maxPasses =
@@ -752,13 +912,7 @@
       setHiveSlot(hive, best.slotB, best.valA);
     }
 
-    return {
-      grid: hive.grid,
-      bottomId: hive.bottomId,
-      generatedAt: new Date().toISOString(),
-      mode,
-      allowOfficerMoves,
-    };
+    return syncedResult();
   }
 
   function computeIdealQuality(movableIds, mainState) {
@@ -816,14 +970,17 @@
   function regenerateProposal() {
     const mode = getProposalMode();
     const allowOfficerMoves = getAllowOfficerMoves();
+    const before = computeRosterDiff(getState().grid, getState().bottomId);
     ensureProposal(true, { mode, allowOfficerMoves });
     render();
+    const diff = getState().proposal?.rosterDiff || before;
+    const rosterMsg = `Retirés : ${diff.removedCount || 0} · Nouveaux : ${diff.addedCount || 0} · Conservés : ${diff.keptCount || 0}`;
     AppUI.toast(
       mode === 'full'
         ? allowOfficerMoves
-          ? 'Nouveau plan complet généré (R4/R5 déplaçables).'
-          : 'Nouveau plan complet généré (R4/R5 conservés).'
-        : 'Optimisation douce recalculée.'
+          ? `Nouveau plan complet généré (R4/R5 déplaçables). ${rosterMsg}`
+          : `Nouveau plan complet généré (R4/R5 conservés). ${rosterMsg}`
+        : `Optimisation douce recalculée. ${rosterMsg}`
     );
   }
 
@@ -836,6 +993,7 @@
       generatedAt: s.proposal.generatedAt || '',
       mode: s.proposal.mode,
       allowOfficerMoves: s.proposal.allowOfficerMoves === true,
+      rosterDiff: s.proposal.rosterDiff || null,
     };
     const next = mutator(draft) || draft;
     s.proposal = {
@@ -844,6 +1002,7 @@
       generatedAt: next.generatedAt || s.proposal.generatedAt || '',
       mode: next.mode || s.proposal.mode || getProposalMode(),
       allowOfficerMoves: next.allowOfficerMoves === true,
+      rosterDiff: next.rosterDiff || s.proposal.rosterDiff || null,
     };
     persist();
     render();
@@ -1243,7 +1402,8 @@
       return;
     }
     const stats = computeProposalStats(s.grid, s.bottomId, proposal.grid, proposal.bottomId);
-    els.proposalStats.innerHTML = `Gain estimé : <strong>${stats.estimatedGainPct} %</strong> · Déplacements : <strong>${stats.moved}</strong> joueurs`;
+    const diff = proposal.rosterDiff || computeRosterDiff(s.grid, s.bottomId);
+    els.proposalStats.innerHTML = `Gain estimé : <strong>${stats.estimatedGainPct} %</strong> · Déplacements : <strong>${stats.moved}</strong> joueurs<br><span class="panel-subtitle">Effectif — Retirés : <strong>${diff.removedCount || 0}</strong> · Nouveaux : <strong>${diff.addedCount || 0}</strong> · Conservés : <strong>${diff.keptCount || 0}</strong></span>`;
   }
 
   function renderProposalBottom(hive) {
@@ -2034,6 +2194,7 @@
     analyzeGrid,
     buildOptimizedProposal,
     computeProposalStats,
+    computeRosterDiff,
     ensureProposal,
   };
 })(window);
