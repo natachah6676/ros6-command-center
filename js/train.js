@@ -58,6 +58,8 @@
   let skipPersist = false;
   /** Tirage VIP : { dayKey, playerId } ou null */
   let vipDrawProposal = null;
+  /** Remplacement manuel : { dayKey, field: 'conductorId'|'vipId' } */
+  let replaceContext = null;
 
   function uid(prefix) {
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -1249,6 +1251,11 @@
     els.copyFeedback = document.getElementById('trainCopyFeedback');
     els.historyBody = document.getElementById('trainHistoryBody');
     els.historyEmpty = document.getElementById('trainHistoryEmpty');
+    els.replaceModal = document.getElementById('trainReplaceModal');
+    els.replaceForm = document.getElementById('trainReplaceForm');
+    els.replaceTitle = document.getElementById('trainReplaceTitle');
+    els.replaceHint = document.getElementById('trainReplaceHint');
+    els.replaceSelect = document.getElementById('trainReplaceSelect');
   }
 
   function vipDayOptions(selectedId, dayKey) {
@@ -1388,6 +1395,21 @@
     return p ? p.pseudo : '—';
   }
 
+  function renderWeekRoleLine(dayKey, field, playerId, locked) {
+    const roleLabel = field === 'conductorId' ? 'Conducteur' : 'VIP';
+    const name = playerId ? playerName(playerId) : '—';
+    const btn = locked
+      ? ''
+      : `<button type="button" class="btn btn-ghost btn-sm" data-train-action="replace-week-role" data-day="${dayKey}" data-field="${field}">Modifier</button>`;
+    return `
+      <div class="train-day-assign">
+        <span class="train-day-assign-label">${roleLabel} :</span>
+        <strong class="train-day-assign-name">${escapeHtml(name)}</strong>
+        ${btn}
+      </div>
+    `;
+  }
+
   function renderWeekPlan() {
     if (!els.weekPlan) return;
     const plan = getWeeklyPlan();
@@ -1404,7 +1426,6 @@
       const isSunday = day.key === 'dimanche';
       const conductorId = slot.conductorId || '';
       const vipId = slot.vipId || '';
-      const disabledAttr = locked ? ' disabled' : '';
 
       if (isSunday) {
         return `
@@ -1414,18 +1435,8 @@
               <span class="chip warn">Jeu en direct</span>
             </header>
             <p class="panel-subtitle">Facultatif pendant la préparation — à renseigner pour la clôture · modification manuelle possible</p>
-            <label class="field">
-              <span>Conducteur</span>
-              <select class="input" data-week-field="conductorId" data-day="${day.key}"${disabledAttr}>
-                ${conductorDayOptions(conductorId, day.key)}
-              </select>
-            </label>
-            <label class="field">
-              <span>VIP</span>
-              <select class="input" data-week-field="vipId" data-day="${day.key}"${disabledAttr}>
-                ${vipDayOptions(vipId, day.key)}
-              </select>
-            </label>
+            ${renderWeekRoleLine(day.key, 'conductorId', conductorId, locked)}
+            ${renderWeekRoleLine(day.key, 'vipId', vipId, locked)}
           </article>
         `;
       }
@@ -1436,24 +1447,83 @@
             <strong>${day.label}</strong>
           </header>
           <div class="train-day-slot">
-            <span class="section-label">Conducteur</span>
-            <label class="field" style="margin:0">
-              <select class="input" data-week-field="conductorId" data-day="${day.key}"${disabledAttr}>
-                ${conductorDayOptions(conductorId, day.key)}
-              </select>
-            </label>
+            ${renderWeekRoleLine(day.key, 'conductorId', conductorId, locked)}
           </div>
           <div class="train-day-slot">
-            <span class="section-label">VIP</span>
-            <label class="field" style="margin:0">
-              <select class="input" data-week-field="vipId" data-day="${day.key}"${disabledAttr}>
-                ${vipDayOptions(vipId, day.key)}
-              </select>
-            </label>
+            ${renderWeekRoleLine(day.key, 'vipId', vipId, locked)}
           </div>
         </article>
       `;
     }).join('');
+  }
+
+  function openReplaceModal(dayKey, field) {
+    if (isCurrentWeekLocked()) {
+      AppUI.toast('Semaine clôturée — déverrouillage R5 requis.');
+      return;
+    }
+    if (!els.replaceModal || !els.replaceSelect) return;
+    const day = WEEK_DAYS.find((d) => d.key === dayKey);
+    const roleLabel = field === 'conductorId' ? 'Conducteur' : 'VIP';
+    const currentId =
+      field === 'conductorId'
+        ? getWeeklyPlan().days[dayKey]?.conductorId
+        : getWeeklyPlan().days[dayKey]?.vipId;
+    const eligible =
+      field === 'conductorId'
+        ? getEligibleWeekConductorPlayers(dayKey)
+        : getEligibleWeekVipPlayers(dayKey);
+
+    replaceContext = { dayKey, field };
+    if (els.replaceTitle) {
+      els.replaceTitle.textContent = `Modifier — ${roleLabel} (${day?.label || dayKey})`;
+    }
+    if (els.replaceHint) {
+      els.replaceHint.textContent = currentId
+        ? `Actuel : ${playerName(currentId)}. Choisissez un remplaçant éligible (le tirage n’est pas relancé).`
+        : `Aucun ${roleLabel.toLowerCase()} actuellement. Choisissez un joueur éligible.`;
+    }
+
+    const opts = ['<option value="">— Choisir —</option>'];
+    eligible.forEach((p) => {
+      if (p.id === currentId) return;
+      opts.push(
+        `<option value="${p.id}">${escapeHtml(formatPlayerCounters(p))}</option>`
+      );
+    });
+    els.replaceSelect.innerHTML = opts.join('');
+    if (!eligible.filter((p) => p.id !== currentId).length) {
+      AppUI.toast(`Aucun ${roleLabel.toLowerCase()} éligible disponible.`);
+      return;
+    }
+    if (typeof els.replaceModal.showModal === 'function') els.replaceModal.showModal();
+  }
+
+  function closeReplaceModal() {
+    replaceContext = null;
+    if (els.replaceModal?.open) els.replaceModal.close();
+  }
+
+  async function submitReplaceModal(event) {
+    event.preventDefault();
+    if (!replaceContext) return;
+    const { dayKey, field } = replaceContext;
+    const nextId = (els.replaceSelect?.value || '').trim();
+    if (!nextId) {
+      AppUI.toast('Sélectionnez un joueur éligible.');
+      return;
+    }
+    const roleLabel = field === 'conductorId' ? 'Conducteur' : 'VIP';
+    const day = WEEK_DAYS.find((d) => d.key === dayKey);
+    const ok = await AppUI.confirm({
+      title: `Remplacer le ${roleLabel}`,
+      message: `${day?.label || dayKey} — ${roleLabel} : ${playerName(nextId)} ?\n\nSeule cette affectation sera modifiée.`,
+      confirmLabel: 'Valider',
+    });
+    if (!ok) return;
+    setWeekDayField(dayKey, field, nextId);
+    closeReplaceModal();
+    AppUI.toast(`${roleLabel} mis à jour — planning officiel de la semaine.`);
   }
 
   function renderWeekCandidates() {
@@ -2029,6 +2099,9 @@
     }
     if (trainAction === 'clear-week-conductor') clearWeekConductor(btn.dataset.day);
     if (trainAction === 'clear-week-vip') clearWeekVip(btn.dataset.day);
+    if (trainAction === 'replace-week-role') {
+      openReplaceModal(btn.dataset.day, btn.dataset.field);
+    }
     if (trainAction === 'vip-redraw') {
       runVipDraw(vipDrawProposal?.dayKey || els.vipDrawDay?.value);
     }
@@ -2094,6 +2167,19 @@
 
     els.root.addEventListener('click', onRootClick);
     els.root.addEventListener('change', onRootChange);
+
+    if (els.replaceForm) {
+      els.replaceForm.addEventListener('submit', submitReplaceModal);
+    }
+    if (els.replaceModal) {
+      els.replaceModal.querySelectorAll('[data-close-modal]').forEach((btn) => {
+        btn.addEventListener('click', closeReplaceModal);
+      });
+      els.replaceModal.addEventListener('cancel', (event) => {
+        event.preventDefault();
+        closeReplaceModal();
+      });
+    }
   }
 
   global.TrainModule = {

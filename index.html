@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20260806-navlogo1" />
+  <link rel="stylesheet" href="css/styles.css?v=20260808-pw1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -514,12 +514,19 @@
               <div id="rucheProposalStats" class="ruche-proposal-stats" aria-live="polite">
                 Gain estimé : 0 % · Déplacements : 0 joueurs
               </div>
-              <div class="ruche-toolbar settings-actions">
+              <div class="ruche-toolbar settings-actions ruche-proposal-actions">
+                <label class="field ruche-proposal-mode-field">
+                  <span>Mode de génération</span>
+                  <select id="rucheProposalMode" class="input" aria-label="Mode de génération de proposition">
+                    <option value="soft">Optimisation douce</option>
+                    <option value="full">Nouveau plan complet</option>
+                  </select>
+                </label>
                 <button type="button" id="rucheProposalOptimize" class="btn btn-ghost">
-                  Relancer l’optimisation
+                  Générer la proposition
                 </button>
                 <button type="button" id="rucheProposalValidate" class="btn btn-primary">
-                  Valider cette proposition
+                  Valider cette proposition comme nouvelle ruche
                 </button>
               </div>
               <div class="ruche-board" id="rucheProposalBoard">
@@ -1072,6 +1079,27 @@
     </form>
   </dialog>
 
+  <!-- Modal remplacement Train Conducteur / VIP -->
+  <dialog id="trainReplaceModal" class="modal">
+    <form method="dialog" id="trainReplaceForm" class="modal-card">
+      <header class="modal-header">
+        <h3 id="trainReplaceTitle">Modifier l’affectation</h3>
+        <button type="button" class="icon-btn" data-close-modal aria-label="Fermer">×</button>
+      </header>
+      <div class="modal-body">
+        <p id="trainReplaceHint" class="panel-subtitle"></p>
+        <label class="field">
+          <span>Joueur éligible</span>
+          <select id="trainReplaceSelect" class="input" required></select>
+        </label>
+      </div>
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-ghost" data-close-modal>Annuler</button>
+        <button type="submit" class="btn btn-primary">Valider le remplacement</button>
+      </footer>
+    </form>
+  </dialog>
+
   <!-- Modal confirmation -->
   <dialog id="confirmModal" class="modal">
     <div class="modal-card">
@@ -1221,7 +1249,7 @@
   <script src="js/supabase-client.js?v=20260804-4"></script>
   <script src="js/profiles.js?v=20260808-gp2"></script>
   <script src="js/supabase-sync.js?v=20260804-4"></script>
-  <script src="js/models.js?v=20260808-gp2"></script>
+  <script src="js/models.js?v=20260808-pw1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
   <script src="js/player-identity.js?v=20260802-4"></script>
   <script src="js/storage.js?v=20260806-warops1"></script>
@@ -1233,9 +1261,9 @@
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260805-vs1"></script>
   <script src="js/archives.js?v=20260802-4"></script>
-  <script src="js/train.js?v=20260806-train2"></script>
-  <script src="js/recrutement.js?v=20260806-gp1"></script>
-  <script src="js/ruche.js?v=20260806-prop1"></script>
+  <script src="js/train.js?v=20260808-train3"></script>
+  <script src="js/recrutement.js?v=20260808-pw1"></script>
+  <script src="js/ruche.js?v=20260808-pw1"></script>
   <script src="js/tempete.js?v=20260806-assign1"></script>
   <script src="js/backups.js?v=20260806-warops1"></script>
   <script src="js/app.js?v=20260806-rec1"></script>

@@ -433,32 +433,43 @@
     hive.grid[slot.row][slot.col] = next;
   }
 
-  function isLockedSlotOnHive(hive, slot) {
+  function isLockedSlotOnHive(hive, slot, options = {}) {
     if (!slot) return true;
     if (slot.type === 'grid' && isMarshalCell(slot.row, slot.col)) return true;
+    // Nouveau plan complet : R4/R5 repositionnables (hors Maréchal)
+    if (options.mode === 'full') return false;
     const value = getCellValueFromHive(hive, slot);
     const player = getPlayerById(value);
     return isOfficerPlayer(player);
   }
 
-  function playerPowerValue(playerId, mainState) {
-    return ROSModels.getPlayerPowerSortValue(getPlayerById(playerId), mainState);
+  function buildRuchePowerScoreMap(mainState) {
+    const players = (mainState?.players || []).filter((p) => p && p.status === 'Actif');
+    return ROSModels.buildCompositePowerScoreMap(players, mainState);
+  }
+
+  /** Score puissance 70/30 ; null = données incomplètes (neutre dans les comparaisons). */
+  function playerPowerValue(playerId, mainState, scoreMap) {
+    const map = scoreMap || buildRuchePowerScoreMap(mainState);
+    const score = ROSModels.getPlayerCompositePowerScore(getPlayerById(playerId), map);
+    return score == null ? null : score;
   }
 
   /**
    * Qualité d’une disposition : paires concordantes (plus fort plus près du Maréchal).
    * Max = n(n-1)/2 pour n joueurs déplaçables.
    */
-  function placementQuality(posMap, movableIds, mainState) {
+  function placementQuality(posMap, movableIds, mainState, scoreMap) {
     const ids = movableIds.filter((id) => posMap.has(id));
     let score = 0;
     for (let i = 0; i < ids.length; i += 1) {
       for (let j = i + 1; j < ids.length; j += 1) {
         const a = ids[i];
         const b = ids[j];
-        const pa = playerPowerValue(a, mainState);
-        const pb = playerPowerValue(b, mainState);
-        if (pa === pb) {
+        const pa = playerPowerValue(a, mainState, scoreMap);
+        const pb = playerPowerValue(b, mainState, scoreMap);
+        // Données incomplètes : neutre (ni avantage ni pénalité)
+        if (pa == null || pb == null || pa === pb) {
           score += 1;
           continue;
         }
@@ -472,16 +483,16 @@
     return score;
   }
 
-  function pairConcordant(idA, idB, distA, distB, mainState) {
-    const pa = playerPowerValue(idA, mainState);
-    const pb = playerPowerValue(idB, mainState);
-    if (pa === pb) return true;
+  function pairConcordant(idA, idB, distA, distB, mainState, scoreMap) {
+    const pa = playerPowerValue(idA, mainState, scoreMap);
+    const pb = playerPowerValue(idB, mainState, scoreMap);
+    if (pa == null || pb == null || pa === pb) return true;
     if (pa > pb) return distA <= distB;
     return distB <= distA;
   }
 
   /** Δ qualité après échange des positions de idA et idB (O(n)). */
-  function qualityDeltaForSwap(posMap, movableIds, idA, idB, mainState) {
+  function qualityDeltaForSwap(posMap, movableIds, idA, idB, mainState, scoreMap) {
     if (!idA || !idB || idA === idB) return 0;
     const slotA = posMap.get(idA);
     const slotB = posMap.get(idB);
@@ -489,26 +500,24 @@
     const distA = chebyshevDist(slotA);
     const distB = chebyshevDist(slotB);
     let delta = 0;
-    // Paire A-B
-    if (pairConcordant(idA, idB, distA, distB, mainState)) delta -= 1;
-    if (pairConcordant(idA, idB, distB, distA, mainState)) delta += 1;
-    // Paires avec les autres
+    if (pairConcordant(idA, idB, distA, distB, mainState, scoreMap)) delta -= 1;
+    if (pairConcordant(idA, idB, distB, distA, mainState, scoreMap)) delta += 1;
     for (let i = 0; i < movableIds.length; i += 1) {
       const other = movableIds[i];
       if (other === idA || other === idB) continue;
       const otherSlot = posMap.get(other);
       if (!otherSlot) continue;
       const distO = chebyshevDist(otherSlot);
-      if (pairConcordant(idA, other, distA, distO, mainState)) delta -= 1;
-      if (pairConcordant(idA, other, distB, distO, mainState)) delta += 1;
-      if (pairConcordant(idB, other, distB, distO, mainState)) delta -= 1;
-      if (pairConcordant(idB, other, distA, distO, mainState)) delta += 1;
+      if (pairConcordant(idA, other, distA, distO, mainState, scoreMap)) delta -= 1;
+      if (pairConcordant(idA, other, distB, distO, mainState, scoreMap)) delta += 1;
+      if (pairConcordant(idB, other, distB, distO, mainState, scoreMap)) delta -= 1;
+      if (pairConcordant(idB, other, distA, distO, mainState, scoreMap)) delta += 1;
     }
     return delta;
   }
 
   /** Δ qualité en déplaçant playerId vers toSlot (laisse FREE derrière) — O(n). */
-  function qualityDeltaForMoveToEmpty(posMap, movableIds, playerId, toSlot, mainState) {
+  function qualityDeltaForMoveToEmpty(posMap, movableIds, playerId, toSlot, mainState, scoreMap) {
     const fromSlot = posMap.get(playerId);
     if (!fromSlot || !toSlot) return 0;
     const distFrom = chebyshevDist(fromSlot);
@@ -520,8 +529,8 @@
       const otherSlot = posMap.get(other);
       if (!otherSlot) continue;
       const distO = chebyshevDist(otherSlot);
-      if (pairConcordant(playerId, other, distFrom, distO, mainState)) delta -= 1;
-      if (pairConcordant(playerId, other, distTo, distO, mainState)) delta += 1;
+      if (pairConcordant(playerId, other, distFrom, distO, mainState, scoreMap)) delta -= 1;
+      if (pairConcordant(playerId, other, distTo, distO, mainState, scoreMap)) delta += 1;
     }
     return delta;
   }
@@ -532,38 +541,44 @@
   }
 
   /** Joueur sans inversion vs les autres : déjà bien placé → ne jamais le déplacer. */
-  function isWellPlaced(playerId, posMap, movableIds, mainState) {
+  function isWellPlaced(playerId, posMap, movableIds, mainState, scoreMap) {
     const mySlot = posMap.get(playerId);
     if (!mySlot) return false;
-    const myPower = playerPowerValue(playerId, mainState);
+    const myPower = playerPowerValue(playerId, mainState, scoreMap);
+    if (myPower == null) return true;
     const myDist = chebyshevDist(mySlot);
     for (let i = 0; i < movableIds.length; i += 1) {
       const otherId = movableIds[i];
       if (otherId === playerId) continue;
       const otherSlot = posMap.get(otherId);
       if (!otherSlot) continue;
-      const otherPower = playerPowerValue(otherId, mainState);
+      const otherPower = playerPowerValue(otherId, mainState, scoreMap);
+      if (otherPower == null || myPower === otherPower) continue;
       const otherDist = chebyshevDist(otherSlot);
-      if (myPower === otherPower) continue;
       if (myPower > otherPower && myDist > otherDist) return false;
       if (myPower < otherPower && myDist < otherDist) return false;
     }
     return true;
   }
 
+  function getProposalMode() {
+    const el = document.getElementById('rucheProposalMode');
+    return el?.value === 'full' ? 'full' : 'soft';
+  }
+
   /**
-   * Optimisation parcimonieuse :
-   * - conserver la ruche actuelle
-   * - ne déplacer que des joueurs mal placés (inversions)
-   * - forte pénalité par déplacement (qualité d’abord sous contrainte de peu de moves)
-   * - s’arrêter dès qu’un bon niveau est atteint (~95 %)
+   * soft — optimisation douce (peu de déplacements, R4/R5 conservés)
+   * full — nouveau plan complet (reorganisation libre hors Maréchal)
    */
-  function buildOptimizedProposal(sourceGrid, sourceBottom) {
+  function buildOptimizedProposal(sourceGrid, sourceBottom, options = {}) {
+    const mode = options.mode === 'full' ? 'full' : 'soft';
     const hive = {
       grid: cloneGrid(sourceGrid),
       bottomId: normalizeCellValue(sourceBottom, { allowFree: true }),
     };
     const mainState = ROSStorage.getState();
+    const scoreMap = buildRuchePowerScoreMap(mainState);
+    const lockOpts = { mode };
     const unlockedSlots = [];
     const movableIds = [];
 
@@ -571,7 +586,7 @@
       for (let c = 0; c < GRID_SIZE; c += 1) {
         if (isMarshalCell(r, c)) continue;
         const slot = { type: 'grid', row: r, col: c };
-        if (isLockedSlotOnHive(hive, slot)) continue;
+        if (isLockedSlotOnHive(hive, slot, lockOpts)) continue;
         unlockedSlots.push(slot);
         const value = getCellValueFromHive(hive, slot);
         if (value && value !== FREE) movableIds.push(value);
@@ -579,7 +594,7 @@
     }
 
     const bottomSlot = { type: 'bottom' };
-    if (!isLockedSlotOnHive(hive, bottomSlot)) {
+    if (!isLockedSlotOnHive(hive, bottomSlot, lockOpts)) {
       unlockedSlots.push(bottomSlot);
       const value = getCellValueFromHive(hive, bottomSlot);
       if (value && value !== FREE) movableIds.push(value);
@@ -598,37 +613,39 @@
         grid: cloneGrid(sourceGrid),
         bottomId: normalizeCellValue(sourceBottom, { allowFree: true }),
         generatedAt: new Date().toISOString(),
+        mode,
       };
     }
 
     const maxQ = maxPlacementQuality(uniqueMovable.length);
-    /** Seuil d’arrêt : ~95 % de la qualité idéale suffit (évite de tout retrier pour 100 %). */
-    const TARGET_RATIO = 0.95;
-    /** Budget souple de joueurs déplacés (stat final) — on s’arrête si déjà bon. */
-    const MOVE_SOFT_CAP = Math.max(8, Math.min(14, Math.ceil(uniqueMovable.length * 0.1)));
-    /**
-     * Coût d’un déplacement en points de qualité.
-     * Sur une petite ruche : faible (autorise la correction d’une inversion).
-     * Sur une grande ruche : plus élevé (rejette les micro-ajustements coûteux).
-     */
-    const MOVE_PENALTY = Math.max(0, Math.floor(Math.sqrt(maxQ) * 0.2) - 1);
+    const TARGET_RATIO = mode === 'full' ? 0.98 : 0.95;
+    const MOVE_SOFT_CAP =
+      mode === 'full'
+        ? uniqueMovable.length
+        : Math.max(8, Math.min(14, Math.ceil(uniqueMovable.length * 0.1)));
+    const MOVE_PENALTY =
+      mode === 'full' ? 0 : Math.max(0, Math.floor(Math.sqrt(maxQ) * 0.2) - 1);
 
     const initialPositions = collectPlayerPositions(hive.grid, hive.bottomId);
     const posMap = () => collectPlayerPositions(hive.grid, hive.bottomId);
 
-    let quality = placementQuality(posMap(), uniqueMovable, mainState);
-    if (quality / maxQ >= TARGET_RATIO) {
+    let quality = placementQuality(posMap(), uniqueMovable, mainState, scoreMap);
+    if (mode === 'soft' && quality / maxQ >= TARGET_RATIO) {
       return {
         grid: cloneGrid(sourceGrid),
         bottomId: normalizeCellValue(sourceBottom, { allowFree: true }),
         generatedAt: new Date().toISOString(),
+        mode,
       };
     }
 
-    const maxPasses = Math.min(50, uniqueMovable.length * 2);
+    const maxPasses =
+      mode === 'full'
+        ? Math.min(120, uniqueMovable.length * 4)
+        : Math.min(50, uniqueMovable.length * 2);
     for (let pass = 0; pass < maxPasses; pass += 1) {
       const positions = posMap();
-      quality = placementQuality(positions, uniqueMovable, mainState);
+      quality = placementQuality(positions, uniqueMovable, mainState, scoreMap);
       if (quality / maxQ >= TARGET_RATIO) break;
 
       let movedNow = 0;
@@ -636,12 +653,16 @@
         const from = initialPositions.get(playerId);
         if (!from || !sameSlot(from, slot)) movedNow += 1;
       });
-      if (movedNow >= MOVE_SOFT_CAP && quality / maxQ >= 0.9) break;
+      if (mode === 'soft' && movedNow >= MOVE_SOFT_CAP && quality / maxQ >= 0.9) break;
 
       const wellPlaced = new Set();
-      uniqueMovable.forEach((id) => {
-        if (isWellPlaced(id, positions, uniqueMovable, mainState)) wellPlaced.add(id);
-      });
+      if (mode === 'soft') {
+        uniqueMovable.forEach((id) => {
+          if (isWellPlaced(id, positions, uniqueMovable, mainState, scoreMap)) {
+            wellPlaced.add(id);
+          }
+        });
+      }
 
       const emptySlots = unlockedSlots.filter((slot) => {
         const value = getCellValueFromHive(hive, slot);
@@ -671,15 +692,22 @@
           const slotA = positions.get(idA);
           const slotB = positions.get(idB);
           if (!slotA || !slotB) continue;
-          const pA = playerPowerValue(idA, mainState);
-          const pB = playerPowerValue(idB, mainState);
-          if (pA === pB) continue;
+          const pA = playerPowerValue(idA, mainState, scoreMap);
+          const pB = playerPowerValue(idB, mainState, scoreMap);
+          if (pA == null || pB == null || pA === pB) continue;
           const stronger = pA > pB ? idA : idB;
           const weaker = pA > pB ? idB : idA;
           const strongSlot = stronger === idA ? slotA : slotB;
           const weakSlot = weaker === idA ? slotA : slotB;
           if (chebyshevDist(strongSlot) <= chebyshevDist(weakSlot)) continue;
-          const delta = qualityDeltaForSwap(positions, uniqueMovable, idA, idB, mainState);
+          const delta = qualityDeltaForSwap(
+            positions,
+            uniqueMovable,
+            idA,
+            idB,
+            mainState,
+            scoreMap
+          );
           consider(slotA, slotB, idA, idB, delta, 2);
         }
       }
@@ -696,7 +724,8 @@
             uniqueMovable,
             playerId,
             toSlot,
-            mainState
+            mainState,
+            scoreMap
           );
           consider(fromSlot, toSlot, playerId, FREE, delta, 1);
         });
@@ -711,6 +740,7 @@
       grid: hive.grid,
       bottomId: hive.bottomId,
       generatedAt: new Date().toISOString(),
+      mode,
     };
   }
 
@@ -730,6 +760,7 @@
     });
 
     const mainState = ROSStorage.getState();
+    const scoreMap = buildRuchePowerScoreMap(mainState);
     const movableIds = [];
     const seen = new Set();
     fromMap.forEach((_pos, playerId) => {
@@ -740,7 +771,7 @@
     });
 
     const maxQ = computeIdealQuality(movableIds, mainState);
-    const qProposal = placementQuality(toMap, movableIds, mainState);
+    const qProposal = placementQuality(toMap, movableIds, mainState, scoreMap);
     const estimatedGainPct = Math.round((100 * qProposal) / Math.max(1, maxQ));
 
     return {
@@ -752,18 +783,24 @@
     };
   }
 
-  function ensureProposal(force = false) {
+  function ensureProposal(force = false, options = {}) {
     const s = getState();
     if (!force && s.proposal && Array.isArray(s.proposal.grid)) return s.proposal;
-    s.proposal = buildOptimizedProposal(s.grid, s.bottomId);
+    const mode = options.mode || getProposalMode();
+    s.proposal = buildOptimizedProposal(s.grid, s.bottomId, { mode });
     persist();
     return s.proposal;
   }
 
   function regenerateProposal() {
-    ensureProposal(true);
+    const mode = getProposalMode();
+    ensureProposal(true, { mode });
     render();
-    AppUI.toast('Proposition recalculée.');
+    AppUI.toast(
+      mode === 'full'
+        ? 'Nouveau plan complet généré.'
+        : 'Optimisation douce recalculée.'
+    );
   }
 
   function updateProposal(mutator) {
@@ -795,10 +832,15 @@
     if (!(keep?.type === 'bottom') && hive.bottomId === playerId) hive.bottomId = FREE;
   }
 
+  function proposalLockOptions(hive) {
+    const mode = hive?.mode || getProposalMode();
+    return mode === 'full' ? { mode: 'full' } : { mode: 'soft' };
+  }
+
   function setProposalSlot(slot, value) {
     if (!slot) return;
     updateProposal((hive) => {
-      if (isLockedSlotOnHive(hive, slot)) return hive;
+      if (isLockedSlotOnHive(hive, slot, proposalLockOptions(hive))) return hive;
       let next = normalizeCellValue(value, { allowFree: true });
       if (next && next !== FREE) removePlayerFromProposal(hive, next, slot);
       setHiveSlot(hive, slot, next);
@@ -809,7 +851,10 @@
   function swapProposalSlots(slotA, slotB) {
     if (!slotA || !slotB || sameSlot(slotA, slotB)) return;
     updateProposal((hive) => {
-      if (isLockedSlotOnHive(hive, slotA) || isLockedSlotOnHive(hive, slotB)) return hive;
+      const lockOpts = proposalLockOptions(hive);
+      if (isLockedSlotOnHive(hive, slotA, lockOpts) || isLockedSlotOnHive(hive, slotB, lockOpts)) {
+        return hive;
+      }
       const a = getCellValueFromHive(hive, slotA);
       const b = getCellValueFromHive(hive, slotB);
       setHiveSlot(hive, slotA, b || FREE);
@@ -852,20 +897,20 @@
     }
     const stats = computeProposalStats(s.grid, s.bottomId, proposal.grid, proposal.bottomId);
     const ok = await AppUI.confirm({
-      title: 'Valider cette proposition',
-      message: `Remplacer la ruche actuelle par la proposition ?\n\nGain estimé : ${stats.estimatedGainPct} %\nDéplacements : ${stats.moved} joueurs\n\nL’ancienne ruche sera archivée.`,
-      confirmLabel: 'Valider la proposition',
+      title: 'Valider cette proposition comme nouvelle ruche',
+      message: `Remplacer directement la ruche actuelle par la proposition ?\n\nGain estimé : ${stats.estimatedGainPct} %\nDéplacements : ${stats.moved} joueurs\n\nAucune archive ne sera créée.`,
+      confirmLabel: 'Valider comme nouvelle ruche',
     });
     if (!ok) return;
 
-    archiveCurrentHive('Ruche avant proposition');
+    // Remplace la ruche actuelle sans archivage ni historique
     s.grid = cloneGrid(proposal.grid);
     s.bottomId = normalizeCellValue(proposal.bottomId, { allowFree: true });
-    s.proposal = buildOptimizedProposal(s.grid, s.bottomId);
+    s.proposal = buildOptimizedProposal(s.grid, s.bottomId, { mode: 'soft' });
     persist();
     lastCheck = null;
     render();
-    AppUI.toast('Proposition validée — ancienne ruche archivée.');
+    AppUI.toast('Proposition validée — nouvelle ruche actuelle.');
   }
 
   /**
@@ -1165,7 +1210,7 @@
 
   function renderProposalBottom(hive) {
     const bottomId = hive.bottomId;
-    const locked = isLockedSlotOnHive(hive, { type: 'bottom' });
+    const locked = isLockedSlotOnHive(hive, { type: 'bottom' }, proposalLockOptions(hive));
     const bg = colorForValue(bottomId);
     const fg = textColorForBg(bg === 'transparent' ? '#1e232b' : bg);
     const filled = Boolean(bottomId);
@@ -1210,7 +1255,7 @@
         const value = hive.grid[r][c];
         const marshal = isMarshalCell(r, c);
         const slot = { type: 'grid', row: r, col: c };
-        const locked = isLockedSlotOnHive(hive, slot);
+        const locked = isLockedSlotOnHive(hive, slot, proposalLockOptions(hive));
         const bg = colorForGridCell(r, c, value);
         const fg = textColorForBg(bg === 'transparent' ? '#1e232b' : bg);
         const filled = Boolean(value) || marshal;

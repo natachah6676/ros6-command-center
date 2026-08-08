@@ -138,42 +138,44 @@
   }
 
   /**
-   * Population classée : actifs, hors R4/R5/archivés, puissance globale renseignée.
+   * Population classée : actifs, hors R4/R5, données héros+globale complètes.
    */
   function getPowerRankingPopulation(state) {
     return (state.players || []).filter((player) => {
       if (!player || player.status !== 'Actif') return false;
       if (player.absent) return false;
       if (player.role === 'R4' || player.role === 'R5') return false;
-      if (!ROSModels.normalizeGlobalPowerTierId(player.globalPowerTierId)) return false;
+      if (!ROSModels.hasCompletePowerData(player, state)) return false;
       return true;
     });
   }
 
   /**
-   * Groupes 30/40/30 sans séparer une même tranche.
-   * Retourne Map(playerId → { group, points, label }).
+   * Groupes 30/40/30 selon Score puissance 70/30.
+   * Ex æquo (même score) restent ensemble — pas de séparation arbitraire.
+   * Retourne Map(playerId → { group, points, label, powerScore }).
    */
   function buildPowerGroupAssignments(state) {
     const population = getPowerRankingPopulation(state);
     const assignments = new Map();
     if (!population.length) return assignments;
 
+    const scoreMap = ROSModels.buildCompositePowerScoreMap(population, state);
     const sorted = population.slice().sort((a, b) => {
-      const diff =
-        ROSModels.getPlayerGlobalPowerSortValue(b) - ROSModels.getPlayerGlobalPowerSortValue(a);
-      if (diff !== 0) return diff;
+      const sa = scoreMap.get(a.id)?.score ?? -1;
+      const sb = scoreMap.get(b.id)?.score ?? -1;
+      if (sb !== sa) return sb - sa;
       return a.pseudo.localeCompare(b.pseudo, 'fr', { sensitivity: 'base' });
     });
 
     const buckets = [];
     sorted.forEach((player) => {
-      const tierId = player.globalPowerTierId;
+      const scoreKey = String(scoreMap.get(player.id)?.score ?? '');
       const last = buckets[buckets.length - 1];
-      if (last && last.tierId === tierId) {
+      if (last && last.scoreKey === scoreKey) {
         last.players.push(player);
       } else {
-        buckets.push({ tierId, players: [player] });
+        buckets.push({ scoreKey, players: [player] });
       }
     });
 
@@ -192,6 +194,7 @@
           group: group.id,
           points: group.points,
           label: group.label,
+          powerScore: scoreMap.get(player.id)?.score ?? null,
         });
       });
       index += bucket.players.length;
@@ -255,6 +258,7 @@
 
     const map = powerAssignments || buildPowerGroupAssignments(state);
     const powerInfo = map.get(player.id) || null;
+    const hasCompletePower = ROSModels.hasCompletePowerData(player, state);
     const hasGlobalPower = Boolean(ROSModels.normalizeGlobalPowerTierId(player.globalPowerTierId));
     const powerPoints = powerInfo ? powerInfo.points : 0;
 
@@ -273,6 +277,8 @@
       coachingPoints,
       powerPoints,
       powerGroup: powerInfo,
+      powerScore: powerInfo?.powerScore ?? null,
+      hasCompletePower,
       hasGlobalPower,
       globalPowerLabel: ROSModels.getPlayerGlobalPowerLabel(player),
       heroPowerLabel: ROSModels.getPlayerPowerLabel(player, state),
@@ -335,13 +341,13 @@
 
   function renderPlayerCard(row) {
     const priority = row.priority || getPriority(row.realScore);
-    const powerBlock = row.hasGlobalPower
-      ? `<div>Puissance globale : <strong>${escapeHtml(row.globalPowerLabel)}</strong></div>
-         <div>Groupe : ${escapeHtml(row.powerGroup?.label || '—')} → <strong>+${
-           row.powerPoints
-         }</strong></div>`
-      : `<div>Puissance globale : <strong>Puissance à renseigner</strong></div>
-         <div>Groupe puissance : 0</div>`;
+    const powerScoreLabel =
+      row.powerScore != null && Number.isFinite(row.powerScore)
+        ? `${Math.round(row.powerScore * 10) / 10} / 100`
+        : 'Données de puissance incomplètes';
+    const groupBlock = row.powerGroup
+      ? `<div>Groupe : ${escapeHtml(row.powerGroup.label)} → <strong>+${row.powerPoints}</strong></div>`
+      : `<div>Groupe puissance : 0 (hors classement 30/40/30)</div>`;
 
     return `
       <article class="stack-item recrutement-card" data-player-id="${escapeHtml(row.player.id)}">
@@ -356,8 +362,10 @@
           </div>
           <div class="recrutement-breakdown">
             <div class="recrutement-block">
-              ${powerBlock}
-              <div>Puissance héros : ${escapeHtml(row.heroPowerLabel)}</div>
+              <div>Puissance héros : <strong>${escapeHtml(row.heroPowerLabel)}</strong></div>
+              <div>Puissance globale : <strong>${escapeHtml(row.globalPowerLabel)}</strong></div>
+              <div>Score de puissance : <strong>${escapeHtml(powerScoreLabel)}</strong></div>
+              ${groupBlock}
             </div>
             <div class="recrutement-block">
               <strong>Historique pondéré : +${escapeHtml(formatScoreReal(row.historyPoints))}</strong>
@@ -370,7 +378,7 @@
               <div>Inactif : ${
                 row.inactivePoints > 0 ? `<strong>+${row.inactivePoints}</strong>` : '0'
               }</div>
-              <div>Score réel : <strong>${escapeHtml(formatScoreReal(row.realScore))}</strong></div>
+              <div>Score Recrutement : <strong>${escapeHtml(formatScoreReal(row.realScore))}</strong></div>
             </div>
           </div>
         </div>

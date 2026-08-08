@@ -31,8 +31,12 @@ assert(html.includes('id="rucheProposalStats"'), 'Stats proposition');
 assert(html.includes('Gain estimé'), 'Libellé Gain estimé');
 assert(html.includes('Déplacements'), 'Libellé Déplacements');
 assert(!html.includes('Joueurs déplacés :'), 'Ancien libellé déplacés retiré');
-assert(html.includes('id="rucheProposalOptimize"'), 'Bouton relancer');
+assert(html.includes('id="rucheProposalOptimize"'), 'Bouton générer');
 assert(html.includes('id="rucheProposalValidate"'), 'Bouton valider proposition');
+assert(html.includes('id="rucheProposalMode"'), 'Sélecteur de mode');
+assert(html.includes('Optimisation douce'), 'Mode douce');
+assert(html.includes('Nouveau plan complet'), 'Mode complet');
+assert(html.includes('Valider cette proposition comme nouvelle ruche'), 'Libellé validation');
 assert(html.includes('ne change jamais automatiquement'), 'Mention non-auto actuelle');
 
 console.log('\n=== Module expose ===');
@@ -43,21 +47,23 @@ assert(rucheCode.includes('MOVE_PENALTY'), 'Pénalité de déplacement');
 assert(rucheCode.includes('TARGET_RATIO'), 'Seuil ~95 %');
 assert(rucheCode.includes('estimatedGainPct'), 'Stat gain estimé');
 assert(rucheCode.includes('validateProposal'), 'validateProposal');
+assert(rucheCode.includes('Aucune archive ne sera créée'), 'Validation sans archivage');
 assert(rucheCode.includes('swapProposalSlots'), 'swap / DnD proposition');
 assert(rucheCode.includes('proposal: null'), 'Champ proposal en état');
+assert(rucheCode.includes("mode === 'full'"), 'Mode full');
 
 const store = { data: null };
 const players = [
-  { id: 'm1', pseudo: 'Marshal', role: 'R5', status: 'Actif', heroPowerTierId: 'tier_75_80' },
-  { id: 'r5', pseudo: 'Chef', role: 'R5', status: 'Actif', heroPowerTierId: 'tier_70_75' },
-  { id: 'r4a', pseudo: 'Off1', role: 'R4', status: 'Actif', heroPowerTierId: 'tier_60_65' },
-  { id: 'r4b', pseudo: 'Off2', role: 'R4', status: 'Actif', heroPowerTierId: 'tier_55_60' },
-  { id: 'pStrong', pseudo: 'Strong', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_50_55' },
-  { id: 'pMid', pseudo: 'Mid', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_35_40' },
-  { id: 'pWeak', pseudo: 'Weak', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_25_30' },
-  { id: 'pOk1', pseudo: 'Willow', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_45_50' },
-  { id: 'pOk2', pseudo: 'Mertz', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_40_45' },
-  { id: 'pOk3', pseudo: 'XalAtath', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_40_45' },
+  { id: 'm1', pseudo: 'Marshal', role: 'R5', status: 'Actif', heroPowerTierId: 'tier_75_80', globalPowerTierId: 'gp_ge_200' },
+  { id: 'r5', pseudo: 'Chef', role: 'R5', status: 'Actif', heroPowerTierId: 'tier_70_75', globalPowerTierId: 'gp_150_155' },
+  { id: 'r4a', pseudo: 'Off1', role: 'R4', status: 'Actif', heroPowerTierId: 'tier_60_65', globalPowerTierId: 'gp_120_125' },
+  { id: 'r4b', pseudo: 'Off2', role: 'R4', status: 'Actif', heroPowerTierId: 'tier_55_60', globalPowerTierId: 'gp_100_105' },
+  { id: 'pStrong', pseudo: 'Strong', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_50_55', globalPowerTierId: 'gp_90_95' },
+  { id: 'pMid', pseudo: 'Mid', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_35_40', globalPowerTierId: 'gp_60_65' },
+  { id: 'pWeak', pseudo: 'Weak', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_25_30', globalPowerTierId: 'gp_lt_45' },
+  { id: 'pOk1', pseudo: 'Willow', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_45_50', globalPowerTierId: 'gp_80_85' },
+  { id: 'pOk2', pseudo: 'Mertz', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_40_45', globalPowerTierId: 'gp_70_75' },
+  { id: 'pOk3', pseudo: 'XalAtath', role: 'Membre', status: 'Actif', heroPowerTierId: 'tier_40_45', globalPowerTierId: 'gp_70_75' },
 ];
 
 const sandbox = {

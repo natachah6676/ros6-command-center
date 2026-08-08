@@ -396,6 +396,96 @@
     return opts.join('');
   }
 
+  /**
+   * Valeur représentative d’une tranche héros (milieu min/max).
+   * Ex. 35–40 → 37,5. Null si non renseignée.
+   */
+  function getHeroPowerRepresentativeValue(player, stateOrTiers) {
+    const tier = getPlayerPowerTier(player, stateOrTiers);
+    if (!tier) return null;
+    const min = Number(tier.min);
+    const max = Number(tier.max);
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+    return (min + max) / 2;
+  }
+
+  /**
+   * Valeur représentative d’une tranche globale.
+   * Bandes fermées : milieu ; ouvertes : même largeur 5 M sans avantage artificiel.
+   */
+  function getGlobalPowerRepresentativeValue(player) {
+    const tier = getPlayerGlobalPowerTier(player);
+    if (!tier) return null;
+    if (tier.id === 'gp_lt_45') return 42.5;
+    if (tier.id === 'gp_ge_200') return 202.5;
+    const match = String(tier.id).match(/^gp_(\d+)_(\d+)$/);
+    if (match) {
+      const start = Number(match[1]);
+      const endExclusive = Number(match[2]);
+      if (Number.isFinite(start) && Number.isFinite(endExclusive)) {
+        return (start + (endExclusive - 0.1)) / 2;
+      }
+    }
+    const sort = Number(tier.sortValue);
+    return Number.isFinite(sort) ? sort - 2.45 : null;
+  }
+
+  function hasCompletePowerData(player, stateOrTiers) {
+    return (
+      getHeroPowerRepresentativeValue(player, stateOrTiers) != null &&
+      getGlobalPowerRepresentativeValue(player) != null
+    );
+  }
+
+  function normalizeValueList(values) {
+    if (!values.length) return [];
+    let min = values[0];
+    let max = values[0];
+    values.forEach((v) => {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    });
+    if (max === min) return values.map(() => 50);
+    return values.map((v) => ((v - min) / (max - min)) * 100);
+  }
+
+  /**
+   * Score puissance commun (0–100) : 70 % héros normalisé + 30 % global normalisé.
+   * Normalisation relative à la population fournie (joueurs aux données complètes).
+   * Retourne Map(playerId → { score, heroNorm, globalNorm, heroRaw, globalRaw }).
+   */
+  function buildCompositePowerScoreMap(players, stateOrTiers) {
+    const list = Array.isArray(players) ? players : [];
+    const complete = list.filter((p) => hasCompletePowerData(p, stateOrTiers));
+    const map = new Map();
+    if (!complete.length) return map;
+
+    const heroRaws = complete.map((p) => getHeroPowerRepresentativeValue(p, stateOrTiers));
+    const globalRaws = complete.map((p) => getGlobalPowerRepresentativeValue(p));
+    const heroNorms = normalizeValueList(heroRaws);
+    const globalNorms = normalizeValueList(globalRaws);
+
+    complete.forEach((player, index) => {
+      const heroNorm = heroNorms[index];
+      const globalNorm = globalNorms[index];
+      const score = 0.7 * heroNorm + 0.3 * globalNorm;
+      map.set(player.id, {
+        score,
+        heroNorm,
+        globalNorm,
+        heroRaw: heroRaws[index],
+        globalRaw: globalRaws[index],
+      });
+    });
+    return map;
+  }
+
+  function getPlayerCompositePowerScore(player, scoreMap) {
+    if (!player?.id || !scoreMap) return null;
+    const row = scoreMap.get(player.id);
+    return row && Number.isFinite(row.score) ? row.score : null;
+  }
+
   /** Puissance globale : édition réservée aux R4 et R5 actifs. */
   function canEditGlobalPower() {
     if (global.ROSProfiles && typeof global.ROSProfiles.isActiveR4OrR5 === 'function') {
@@ -1097,6 +1187,7 @@
     getPlayerPowerTier,
     getPlayerPowerSortValue,
     getPlayerPowerLabel,
+    getHeroPowerRepresentativeValue,
     countPlayersUsingPowerTier,
     buildPowerTierSelectOptions,
     getGlobalPowerTiers,
@@ -1105,7 +1196,11 @@
     getPlayerGlobalPowerTier,
     getPlayerGlobalPowerLabel,
     getPlayerGlobalPowerSortValue,
+    getGlobalPowerRepresentativeValue,
     buildGlobalPowerSelectOptions,
+    hasCompletePowerData,
+    buildCompositePowerScoreMap,
+    getPlayerCompositePowerScore,
     canEditGlobalPower,
     createDefaultCoachingThreshold,
     normalizeCoachingThreshold,

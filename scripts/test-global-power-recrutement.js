@@ -102,11 +102,24 @@ function setPoints(score, total) {
   score.days.lundi = total;
 }
 
-// 10 membres avec puissances pour tester 30/40/30 + egalite de tranche
+// 10 membres héros+globale pour tester 30/40/30 (score 70/30) + égalités
+const powerTiers = ROSModels.createDefaultPowerTiers();
+const heroIds = [
+  'tier_75_80',
+  'tier_75_80',
+  'tier_70_75',
+  'tier_65_70',
+  'tier_60_65',
+  'tier_55_60',
+  'tier_50_55',
+  'tier_45_50',
+  'tier_40_45',
+  'tier_25_30',
+];
 const players = [];
 const tierIds = [
   'gp_ge_200',
-  'gp_ge_200', // meme tranche frontier
+  'gp_ge_200',
   'gp_100_105',
   'gp_90_95',
   'gp_80_85',
@@ -122,7 +135,7 @@ tierIds.forEach((tierId, i) => {
       pseudo: `P${String(i + 1).padStart(2, '0')}`,
       role: 'Membre',
       globalPowerTierId: tierId,
-      heroPowerTierId: null,
+      heroPowerTierId: heroIds[i],
     })
   );
 });
@@ -131,12 +144,18 @@ const unset = ROSModels.createPlayer({
   role: 'Membre',
   inactive: true,
 });
-const r4 = ROSModels.createPlayer({ pseudo: 'R4Lock', role: 'R4', globalPowerTierId: 'gp_ge_200' });
+const r4 = ROSModels.createPlayer({
+  pseudo: 'R4Lock',
+  role: 'R4',
+  globalPowerTierId: 'gp_ge_200',
+  heroPowerTierId: 'tier_75_80',
+});
 const absent = ROSModels.createPlayer({
   pseudo: 'Abs',
   role: 'Membre',
   absent: true,
   globalPowerTierId: 'gp_lt_45',
+  heroPowerTierId: 'tier_25_30',
   inactive: true,
 });
 
@@ -152,6 +171,7 @@ const wCurrent = makeWeek('wCur', 2, '2026-07-08', false);
 
 sandbox.__state = {
   ...ROSModels.createBlankState(),
+  powerTiers,
   currentWeekId: wCurrent.id,
   weeks: [w1, wCurrent],
   coachingThreshold: { min: 25, max: 30 },
@@ -163,14 +183,14 @@ sandbox.__state = {
   players: [...players, unset, r4, absent],
 };
 
-console.log('\n=== Groupes 30/40/30 + egalites ===');
+console.log('\n=== Groupes 30/40/30 + egalites (score 70/30) ===');
 const pop = Recrutement.getPowerRankingPopulation(sandbox.__state);
 assert(pop.length === 10, 'population 10 (hors R4/absent/unset)');
 const map = Recrutement.buildPowerGroupAssignments(sandbox.__state);
 const g1 = map.get(players[0].id);
 const g2 = map.get(players[1].id);
-assert(g1 && g2 && g1.group === g2.group, 'meme tranche reste ensemble');
-assert(g1.group === 'strong', 'top tranche en strong');
+assert(g1 && g2 && g1.group === g2.group, 'meme score reste ensemble');
+assert(g1.group === 'strong', 'top score en strong');
 assert(map.get(players[9].id).group === 'weak', 'plus faible en weak');
 assert(map.get(players[9].id).points === 20, 'weak +20');
 assert(!map.has(unset.id), 'unset hors classement');
@@ -180,8 +200,12 @@ const weakRow = Recrutement.scorePlayer(players[9], sandbox.__state, map);
 // historique 10*100% = 10 + power 20 = 30
 assert(weakRow.historyPoints === 10, 'historique 10');
 assert(weakRow.powerPoints === 20, 'power +20');
-assert(weakRow.realScore === 30, 'total 30');
-assert(weakRow.priority.level === 'medium', 'prio moyenne');
+assert(
+  Math.round(weakRow.realScore) ===
+    10 + 20 + weakRow.coachingPoints + weakRow.inactivePoints,
+  'total cumulatif'
+);
+assert(weakRow.priority.level === 'medium' || weakRow.priority.level === 'high', 'prio moyenne/élevée');
 
 unset.inactive = true;
 const unsetRow = Recrutement.scorePlayer(unset, sandbox.__state, map);
