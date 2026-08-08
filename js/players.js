@@ -13,7 +13,6 @@
     els.filterStatus = document.getElementById('filterStatus');
     els.filterRole = document.getElementById('filterRoleAdmin');
     els.filterPower = document.getElementById('filterPowerAdmin');
-    els.filterGlobalPower = document.getElementById('filterGlobalPowerAdmin');
     els.powerCounter = document.getElementById('playersPowerCounter');
     els.coachingCounter = document.getElementById('playersCoachingCounter');
     els.btnAdd = document.getElementById('btnAddPlayer');
@@ -53,12 +52,32 @@
     return Boolean(ROSModels.normalizeGlobalPowerTierId(player?.globalPowerTierId));
   }
 
+  /** Un seul menu « Puissance globale » : Toutes + Non renseignée + tranches. */
+  function fillGlobalPowerFilterOptions() {
+    if (!els.filterPower) return;
+    const current = els.filterPower.value || '';
+    const opts = [
+      '<option value="">Toutes les puissances</option>',
+      '<option value="missing">Non renseignée</option>',
+    ];
+    ROSModels.getGlobalPowerTiers().forEach((tier) => {
+      opts.push(
+        `<option value="${ROSUI.escapeHtml(tier.id)}">${ROSUI.escapeHtml(tier.label)}</option>`
+      );
+    });
+    els.filterPower.innerHTML = opts.join('');
+    const keep =
+      current === '' ||
+      current === 'missing' ||
+      Boolean(ROSModels.normalizeGlobalPowerTierId(current));
+    els.filterPower.value = keep ? current : '';
+  }
+
   function filteredPlayers() {
     const search = (els.search.value || '').trim().toLowerCase();
     const status = els.filterStatus.value;
     const role = els.filterRole?.value || '';
     const powerFilter = els.filterPower?.value || '';
-    const globalPowerFilter = els.filterGlobalPower?.value || '';
 
     return ROSStorage.getState()
       .players.filter((player) => {
@@ -69,9 +88,13 @@
         }
         if (role && player.role !== role) return false;
         if (search && !player.pseudo.toLowerCase().includes(search)) return false;
-        if (powerFilter === 'missing' && hasHeroPowerTier(player)) return false;
-        // Filtre Puissance globale « Non renseignée » (ce n’est pas une tranche)
-        if (globalPowerFilter === 'missing' && hasGlobalPowerTier(player)) return false;
+        if (powerFilter === 'missing') {
+          if (hasGlobalPowerTier(player)) return false;
+        } else if (powerFilter) {
+          if (ROSModels.normalizeGlobalPowerTierId(player.globalPowerTierId) !== powerFilter) {
+            return false;
+          }
+        }
         return true;
       })
       .sort((a, b) => a.pseudo.localeCompare(b.pseudo, 'fr', { sensitivity: 'base' }));
@@ -883,6 +906,7 @@
 
   function init() {
     cacheDom();
+    fillGlobalPowerFilterOptions();
     els.btnAdd.addEventListener('click', openCreateModal);
     els.form.addEventListener('submit', savePlayer);
     els.list.addEventListener('click', onListClick);
@@ -891,7 +915,6 @@
     els.filterStatus.addEventListener('change', render);
     els.filterRole.addEventListener('change', render);
     if (els.filterPower) els.filterPower.addEventListener('change', render);
-    if (els.filterGlobalPower) els.filterGlobalPower.addEventListener('change', render);
 
     els.modal.querySelectorAll('[data-close-modal]').forEach((btn) => {
       btn.addEventListener('click', closeModal);
