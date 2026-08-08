@@ -1,5 +1,5 @@
 /**
- * Tests puissance globale + groupes Recrutement + droits R5/R4.
+ * Tests puissance globale + groupes Recrutement + droits R5/R4 (édition).
  * node scripts/test-global-power-recrutement.js
  */
 const fs = require('fs');
@@ -38,8 +38,18 @@ const sandbox = {
   },
   ROSProfiles: {
     role: 'R5',
+    status: 'Actif',
+    isAccessAllowed() {
+      return sandbox.ROSProfiles.status === 'Actif';
+    },
     isActiveR5() {
-      return sandbox.ROSProfiles.role === 'R5';
+      return sandbox.ROSProfiles.isAccessAllowed() && sandbox.ROSProfiles.role === 'R5';
+    },
+    isActiveR4OrR5() {
+      const role = sandbox.ROSProfiles.role;
+      return (
+        sandbox.ROSProfiles.isAccessAllowed() && (role === 'R5' || role === 'R4')
+      );
     },
     getAppRole() {
       return sandbox.ROSProfiles.role;
@@ -63,11 +73,18 @@ assert(tiers.some((t) => t.label === '195 à 199,9 M'), 'tranche 195-199,9');
 assert(ROSModels.normalizeGlobalPowerTierId('gp_50_55') === 'gp_50_55', 'normalize ok');
 assert(ROSModels.normalizeGlobalPowerTierId('nope') === null, 'normalize invalide');
 
-console.log('\n=== Droits R5 / R4 ===');
+console.log('\n=== Droits R5 / R4 / autres ===');
+sandbox.ROSProfiles.status = 'Actif';
 sandbox.ROSProfiles.role = 'R5';
 assert(ROSModels.canEditGlobalPower() === true, 'R5 peut modifier');
 sandbox.ROSProfiles.role = 'R4';
-assert(ROSModels.canEditGlobalPower() === false, 'R4 ne peut pas modifier');
+assert(ROSModels.canEditGlobalPower() === true, 'R4 peut modifier');
+sandbox.ROSProfiles.role = 'Membre';
+assert(ROSModels.canEditGlobalPower() === false, 'Membre ne peut pas modifier');
+sandbox.ROSProfiles.role = 'R4';
+sandbox.ROSProfiles.status = 'Inactif';
+assert(ROSModels.canEditGlobalPower() === false, 'R4 inactif ne peut pas modifier');
+sandbox.ROSProfiles.status = 'Actif';
 sandbox.ROSProfiles.role = 'R5';
 
 function makeWeek(id, number, startDate, archived) {

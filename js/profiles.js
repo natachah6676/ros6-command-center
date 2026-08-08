@@ -120,6 +120,13 @@
     return isAccessAllowed() && getAppRole() === 'R5';
   }
 
+  /** R4 ou R5 actif — droits d’édition opérationnels (ex. puissance globale). */
+  function isActiveR4OrR5() {
+    if (!isAccessAllowed()) return false;
+    const role = getAppRole();
+    return role === 'R5' || role === 'R4';
+  }
+
   function getCurrentProfile() {
     return currentProfile;
   }
@@ -805,6 +812,7 @@
     getAppRole,
     isAccessAllowed,
     isActiveR5,
+    isActiveR4OrR5,
     listProfiles,
     updateProfile,
     createUser,

@@ -396,15 +396,20 @@
     return opts.join('');
   }
 
+  /** Puissance globale : édition réservée aux R4 et R5 actifs. */
   function canEditGlobalPower() {
-    if (global.ROSProfiles && typeof global.ROSProfiles.isActiveR5 === 'function') {
-      return Boolean(global.ROSProfiles.isActiveR5());
+    if (global.ROSProfiles && typeof global.ROSProfiles.isActiveR4OrR5 === 'function') {
+      return Boolean(global.ROSProfiles.isActiveR4OrR5());
+    }
+    if (global.ROSProfiles && typeof global.ROSProfiles.isAccessAllowed === 'function') {
+      if (!global.ROSProfiles.isAccessAllowed()) return false;
     }
     if (global.ROSProfiles && typeof global.ROSProfiles.getAppRole === 'function') {
-      return global.ROSProfiles.getAppRole() === 'R5';
+      const role = global.ROSProfiles.getAppRole();
+      return role === 'R5' || role === 'R4';
     }
     const shared = global.ROSStorage ? global.ROSStorage.getState()?.appRole : null;
-    return shared === 'R5';
+    return shared === 'R5' || shared === 'R4';
   }
 
   function escapeAttr(value) {

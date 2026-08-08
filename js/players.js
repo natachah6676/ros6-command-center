@@ -139,8 +139,8 @@
     els.globalPower.disabled = !allowed;
     if (els.globalPowerHint) {
       els.globalPowerHint.textContent = allowed
-        ? 'Tranche de puissance globale (R5)'
-        : 'Visible pour le R4 — modifiable uniquement par le R5';
+        ? 'Tranche de puissance globale (R4 / R5)'
+        : 'Lecture seule — modifiable uniquement par un R4 ou R5 actif';
     }
   }
 
@@ -596,7 +596,7 @@
 
   function setGlobalPowerTier(playerId, tierId) {
     if (!canEditGlobalPower()) {
-      AppUI.toast('Seul le R5 peut modifier la puissance globale.');
+      AppUI.toast('Seuls les R4 et R5 actifs peuvent modifier la puissance globale.');
       render();
       return;
     }
