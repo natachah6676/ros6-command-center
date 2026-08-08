@@ -1045,6 +1045,24 @@ button.tempete-presence-pct:hover {
   margin-top: 0.25rem;
 }
 
+.train-history-role {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+}
+
+.train-history-edit-btn {
+  padding: 0.15rem 0.45rem;
+  font-size: 0.75rem;
+  opacity: 0.85;
+}
+
+.train-history-archived-chip {
+  margin-top: 0.25rem;
+  display: inline-flex;
+}
+
 .train-lock-banner {
   margin-top: 0.85rem;
   padding: 0.75rem 0.9rem;

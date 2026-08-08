@@ -58,7 +58,11 @@
   let skipPersist = false;
   /** Tirage VIP : { dayKey, playerId } ou null */
   let vipDrawProposal = null;
-  /** Remplacement manuel : { dayKey, field: 'conductorId'|'vipId' } */
+  /**
+   * Remplacement manuel :
+   * - semaine courante : { source:'week', dayKey, field }
+   * - archive : { source:'history', historyId, field }
+   */
   let replaceContext = null;
 
   function uid(prefix) {
@@ -398,6 +402,221 @@
 
   function isR5() {
     return getAppRole() === 'R5';
+  }
+
+  function canCorrectTrainArchive() {
+    if (global.ROSProfiles && typeof ROSProfiles.isActiveR4OrR5 === 'function') {
+      return Boolean(ROSProfiles.isActiveR4OrR5());
+    }
+    const role = getAppRole();
+    return role === 'R4' || role === 'R5';
+  }
+
+  function deltasFromHistoryEntries(entries) {
+    const conductorIds = new Set();
+    const vipIds = new Set();
+    (entries || []).forEach((entry) => {
+      if (entry?.conductorId) conductorIds.add(entry.conductorId);
+      if (entry?.vipId) vipIds.add(entry.vipId);
+    });
+    const deltas = [];
+    conductorIds.forEach((id) => deltas.push({ playerId: id, conductor: 1, vip: 0 }));
+    vipIds.forEach((id) => {
+      const existing = deltas.find((d) => d.playerId === id);
+      if (existing) existing.vip += 1;
+      else deltas.push({ playerId: id, conductor: 0, vip: 1 });
+    });
+    return deltas;
+  }
+
+  function historyEntriesForWeek(trainState, weekId) {
+    if (!weekId) return [];
+    return (trainState.history || []).filter((h) => h && h.weekId === weekId);
+  }
+
+  function refreshHistoryCounterLabels(trainState, monthKey) {
+    (trainState.history || []).forEach((entry) => {
+      if (!entry || historyMonthKey(entry) !== monthKey) return;
+      if (entry.conductorId) {
+        const counts = readCountsFrom(trainState, monthKey, entry.conductorId);
+        entry.conductorCounters = `Conducteur ${counts.conductor} | VIP ${counts.vip}`;
+        entry.conductorPseudo =
+          getPlayerById(entry.conductorId)?.pseudo || entry.conductorPseudo || '—';
+      }
+      if (entry.vipId) {
+        const counts = readCountsFrom(trainState, monthKey, entry.vipId);
+        entry.vipCounters = `Conducteur ${counts.conductor} | VIP ${counts.vip}`;
+        entry.vipPseudo = getPlayerById(entry.vipId)?.pseudo || entry.vipPseudo || '—';
+      }
+    });
+  }
+
+  function syncWeekArchiveDay(trainState, weekId, dayKey, patch) {
+    if (!weekId || !dayKey || !patch) return;
+    (trainState.weekArchives || []).forEach((arch) => {
+      if (!arch || arch.weekId !== weekId || !arch.days || !arch.days[dayKey]) return;
+      Object.assign(arch.days[dayKey], patch);
+      if (!arch.weekCounters) arch.weekCounters = {};
+      const monthKey = arch.monthKey || currentMonthKey();
+      ['conductorId', 'vipId'].forEach((field) => {
+        const playerId = arch.days[dayKey][field];
+        if (!playerId) return;
+        arch.weekCounters[playerId] = {
+          pseudo: getPlayerById(playerId)?.pseudo || arch.weekCounters[playerId]?.pseudo || null,
+          ...readCountsFrom(trainState, monthKey, playerId),
+        };
+      });
+    });
+  }
+
+  function getArchiveCorrectionCandidates(entry, field) {
+    if (!entry || (field !== 'conductorId' && field !== 'vipId')) return [];
+    const otherId = field === 'conductorId' ? entry.vipId : entry.conductorId;
+    const currentId = entry[field] || null;
+    return getActivePlayers().filter((p) => p.id !== otherId && p.id !== currentId);
+  }
+
+  /**
+   * Correction administrative d’une journée archivée (pas un nouveau tirage).
+   * Met à jour l’historique, les compteurs mensuels et le snapshot weekArchives.
+   */
+  function correctArchivedHistoryRole(historyId, field, nextPlayerId) {
+    if (!canCorrectTrainArchive()) {
+      return { ok: false, error: 'Seuls les R4 et R5 peuvent corriger l’historique Train.' };
+    }
+    if (field !== 'conductorId' && field !== 'vipId') {
+      return { ok: false, error: 'Champ invalide.' };
+    }
+    const nextId = String(nextPlayerId || '').trim();
+    if (!nextId) return { ok: false, error: 'Sélectionnez un joueur.' };
+
+    const trainState = getState();
+    const entry = (trainState.history || []).find((h) => h && h.id === historyId);
+    if (!entry) return { ok: false, error: 'Entrée d’historique introuvable.' };
+
+    const oldId = entry[field] || null;
+    if (oldId === nextId) return { ok: false, error: 'Choisissez un joueur différent.' };
+
+    const otherField = field === 'conductorId' ? 'vipId' : 'conductorId';
+    if (entry[otherField] && entry[otherField] === nextId) {
+      return {
+        ok: false,
+        error: 'Un joueur ne peut pas être Conducteur et VIP le même jour.',
+      };
+    }
+
+    if (field === 'conductorId' && entry.day && entry.day !== 'dimanche') {
+      const conflict = (trainState.history || []).some(
+        (h) =>
+          h &&
+          h.weekId === entry.weekId &&
+          h.id !== entry.id &&
+          h.day &&
+          h.day !== 'dimanche' &&
+          h.conductorId === nextId
+      );
+      if (conflict) {
+        return {
+          ok: false,
+          error: 'Ce joueur est déjà Conducteur un autre jour de cette semaine archivée.',
+        };
+      }
+    }
+
+    if (field === 'vipId') {
+      const vipConflict = (trainState.history || []).some(
+        (h) =>
+          h &&
+          h.weekId === entry.weekId &&
+          h.id !== entry.id &&
+          h.vipId === nextId
+      );
+      if (vipConflict) {
+        return {
+          ok: false,
+          error: 'Ce joueur est déjà VIP un autre jour de cette semaine archivée.',
+        };
+      }
+    }
+
+    const nextPlayer = getPlayerById(nextId);
+    if (!nextPlayer) return { ok: false, error: 'Joueur introuvable.' };
+
+    const monthKey = historyMonthKey(entry) || currentMonthKey();
+    const countField = field === 'conductorId' ? 'conductor' : 'vip';
+    const roleLabel = field === 'conductorId' ? 'Conducteur' : 'VIP';
+
+    update((s) => {
+      const target = (s.history || []).find((h) => h && h.id === historyId);
+      if (!target) return s;
+
+      const weekId = target.weekId;
+      const dayKey = target.day;
+      const applied = weekId && s.appliedPlans ? s.appliedPlans[weekId] : null;
+      const oldDeltas = Array.isArray(applied?.deltas) ? applied.deltas : [];
+      const hadCounts = oldDeltas.length > 0;
+
+      target[field] = nextId;
+      if (field === 'conductorId') {
+        target.conductorPseudo = nextPlayer.pseudo;
+      } else {
+        target.vipPseudo = nextPlayer.pseudo;
+      }
+      target.mode = 'Correction';
+      target.correctedAt = new Date().toISOString();
+      target.correctedField = field;
+
+      const archivePatch =
+        field === 'conductorId'
+          ? {
+              conductorId: nextId,
+              conductorPseudo: nextPlayer.pseudo,
+            }
+          : {
+              vipId: nextId,
+              vipPseudo: nextPlayer.pseudo,
+              vipMode: 'manuel',
+            };
+      syncWeekArchiveDay(s, weekId, dayKey, archivePatch);
+
+      if (hadCounts) {
+        applyDeltas(s, applied.monthKey || monthKey, oldDeltas, 'reverse');
+        const newDeltas = deltasFromHistoryEntries(historyEntriesForWeek(s, weekId));
+        applyDeltas(s, applied.monthKey || monthKey, newDeltas, 'apply');
+        applied.deltas = newDeltas;
+        applied.correctedAt = new Date().toISOString();
+      } else {
+        // Semaine archivée sans compteurs appliqués : ajuster uniquement le rôle corrigé
+        if (oldId) adjustCount(s, monthKey, oldId, countField, -1);
+        adjustCount(s, monthKey, nextId, countField, 1);
+        if (applied) {
+          applied.deltas = deltasFromHistoryEntries(historyEntriesForWeek(s, weekId));
+          applied.correctedAt = new Date().toISOString();
+        }
+      }
+
+      refreshHistoryCounterLabels(s, monthKey);
+      if (field === 'conductorId') {
+        const counts = readCountsFrom(s, monthKey, nextId);
+        syncWeekArchiveDay(s, weekId, dayKey, {
+          conductorCounters: counts,
+        });
+      } else {
+        const counts = readCountsFrom(s, monthKey, nextId);
+        syncWeekArchiveDay(s, weekId, dayKey, {
+          vipCounters: counts,
+        });
+      }
+      return s;
+    });
+
+    return {
+      ok: true,
+      roleLabel,
+      oldId,
+      nextId,
+      monthKey,
+    };
   }
 
   function getAppliedWeek(weekId) {
@@ -1334,7 +1553,15 @@
   }
 
   function renderCategories() {
+    if (!els.categoriesList) return;
     const cats = getState().categories;
+    const canManage = canCorrectTrainArchive();
+    if (els.btnAddCategory) {
+      els.btnAddCategory.disabled = !canManage;
+      els.btnAddCategory.title = canManage
+        ? 'Ajouter une catégorie'
+        : 'Réservé aux R4 et R5';
+    }
     if (!cats.length) {
       els.categoriesList.innerHTML = '<p class="empty-state">Aucune catégorie. Créez-en une.</p>';
       return;
@@ -1347,8 +1574,12 @@
             <div class="train-cat-top">
               <span class="badge badge-saison">Conducteur</span>
               <div class="player-actions">
-                <button type="button" class="btn btn-ghost btn-sm" data-train-action="edit-cat" data-id="${cat.id}">Modifier</button>
-                <button type="button" class="btn btn-danger btn-sm" data-train-action="delete-cat" data-id="${cat.id}">Supprimer</button>
+                ${
+                  canManage
+                    ? `<button type="button" class="btn btn-ghost btn-sm" data-train-action="edit-cat" data-id="${cat.id}">Modifier</button>
+                <button type="button" class="btn btn-danger btn-sm" data-train-action="delete-cat" data-id="${cat.id}">Supprimer</button>`
+                    : ''
+                }
               </div>
             </div>
             <h4 class="stack-item-title">${escapeHtml(cat.name)}</h4>
@@ -1359,6 +1590,7 @@
   }
 
   function renderConductors() {
+    if (!els.conductorsList) return;
     const cats = getState().categories;
     els.conductorsList.innerHTML = cats
       .map(
@@ -1474,7 +1706,7 @@
         ? getEligibleWeekConductorPlayers(dayKey)
         : getEligibleWeekVipPlayers(dayKey);
 
-    replaceContext = { dayKey, field };
+    replaceContext = { source: 'week', dayKey, field };
     if (els.replaceTitle) {
       els.replaceTitle.textContent = `Modifier — ${roleLabel} (${day?.label || dayKey})`;
     }
@@ -1499,6 +1731,46 @@
     if (typeof els.replaceModal.showModal === 'function') els.replaceModal.showModal();
   }
 
+  function openHistoryReplaceModal(historyId, field) {
+    if (!canCorrectTrainArchive()) {
+      AppUI.toast('Seuls les R4 et R5 peuvent corriger l’historique Train.');
+      return;
+    }
+    if (!els.replaceModal || !els.replaceSelect) return;
+    const entry = getState().history.find((h) => h && h.id === historyId);
+    if (!entry) {
+      AppUI.toast('Entrée d’historique introuvable.');
+      return;
+    }
+    const roleLabel = field === 'conductorId' ? 'Conducteur' : 'VIP';
+    const currentId = entry[field] || null;
+    const candidates = getArchiveCorrectionCandidates(entry, field);
+    const monthKey = historyMonthKey(entry) || currentMonthKey();
+
+    replaceContext = { source: 'history', historyId, field };
+    if (els.replaceTitle) {
+      els.replaceTitle.textContent = `Corriger — ${roleLabel} (${entry.dayLabel || entry.day || 'jour'})`;
+    }
+    if (els.replaceHint) {
+      els.replaceHint.textContent = currentId
+        ? `Archive · ${entry.weekLabel || 'Semaine'} · Actuel : ${playerName(currentId)}. Choisissez qui a réellement pris la place (pas de nouveau tirage).`
+        : `Archive · ${entry.weekLabel || 'Semaine'}. Choisissez le ${roleLabel.toLowerCase()} réel.`;
+    }
+
+    const opts = ['<option value="">— Choisir —</option>'];
+    candidates.forEach((p) => {
+      opts.push(
+        `<option value="${p.id}">${escapeHtml(formatPlayerCounters(p, monthKey))}</option>`
+      );
+    });
+    els.replaceSelect.innerHTML = opts.join('');
+    if (!candidates.length) {
+      AppUI.toast('Aucun joueur disponible pour cette correction.');
+      return;
+    }
+    if (typeof els.replaceModal.showModal === 'function') els.replaceModal.showModal();
+  }
+
   function closeReplaceModal() {
     replaceContext = null;
     if (els.replaceModal?.open) els.replaceModal.close();
@@ -1507,12 +1779,33 @@
   async function submitReplaceModal(event) {
     event.preventDefault();
     if (!replaceContext) return;
-    const { dayKey, field } = replaceContext;
     const nextId = (els.replaceSelect?.value || '').trim();
     if (!nextId) {
-      AppUI.toast('Sélectionnez un joueur éligible.');
+      AppUI.toast('Sélectionnez un joueur.');
       return;
     }
+
+    if (replaceContext.source === 'history') {
+      const { historyId, field } = replaceContext;
+      const entry = getState().history.find((h) => h && h.id === historyId);
+      const roleLabel = field === 'conductorId' ? 'Conducteur' : 'VIP';
+      const ok = await AppUI.confirm({
+        title: `Corriger le ${roleLabel} archivé`,
+        message: `${entry?.weekLabel || 'Semaine'} · ${entry?.dayLabel || entry?.day || ''} — ${roleLabel} : ${playerName(nextId)} ?\n\nCorrection de l’historique réel uniquement. Les autres jours restent inchangés.`,
+        confirmLabel: 'Valider la correction',
+      });
+      if (!ok) return;
+      const result = correctArchivedHistoryRole(historyId, field, nextId);
+      closeReplaceModal();
+      if (!result.ok) {
+        AppUI.toast(result.error || 'Correction impossible.');
+        return;
+      }
+      AppUI.toast(`${result.roleLabel} archivé corrigé — compteurs mis à jour.`);
+      return;
+    }
+
+    const { dayKey, field } = replaceContext;
     const roleLabel = field === 'conductorId' ? 'Conducteur' : 'VIP';
     const day = WEEK_DAYS.find((d) => d.key === dayKey);
     const ok = await AppUI.confirm({
@@ -1834,6 +2127,25 @@
     refreshActionButtons();
   }
 
+  function renderHistoryRoleCell(h, field, monthKey, canEdit) {
+    const isConductor = field === 'conductorId';
+    const playerId = isConductor ? h.conductorId : h.vipId;
+    const fallback = isConductor ? h.conductorPseudo || '—' : h.vipPseudo || '—';
+    const name = playerId
+      ? ROSModels.getPlayerDisplayName(getAllianceState(), playerId, fallback)
+      : fallback;
+    const label = playerId ? `${name} — ${formatCountersShort(playerId, monthKey)}` : name;
+    const btn = canEdit
+      ? `<button type="button" class="btn btn-ghost btn-sm train-history-edit-btn" data-train-action="replace-history-role" data-history-id="${escapeHtml(h.id)}" data-field="${field}">Modifier</button>`
+      : '';
+    return `
+      <div class="train-history-role">
+        <span>${escapeHtml(label)}</span>
+        ${btn}
+      </div>
+    `;
+  }
+
   function renderHistory() {
     const history = getState().history;
     if (!history.length) {
@@ -1842,27 +2154,20 @@
       return;
     }
     els.historyEmpty.classList.add('hidden');
+    const canEdit = canCorrectTrainArchive();
     els.historyBody.innerHTML = history
       .map((h) => {
         const monthKey = historyMonthKey(h) || currentMonthKey();
-        const conductorName = h.conductorId
-          ? ROSModels.getPlayerDisplayName(getAllianceState(), h.conductorId, h.conductorPseudo || '—')
-          : h.conductorPseudo || '—';
-        const vipName = h.vipId
-          ? ROSModels.getPlayerDisplayName(getAllianceState(), h.vipId, h.vipPseudo || '—')
-          : h.vipPseudo || '—';
-        const conductorLabel = h.conductorId
-          ? `${conductorName} — ${formatCountersShort(h.conductorId, monthKey)}`
-          : conductorName;
-        const vipLabel = h.vipId
-          ? `${vipName} — ${formatCountersShort(h.vipId, monthKey)}`
-          : vipName;
         return `
         <tr>
-          <td>${escapeHtml(h.weekLabel)}<div class="panel-subtitle">${escapeHtml(monthKey)}</div></td>
+          <td>
+            ${escapeHtml(h.weekLabel)}
+            <div class="panel-subtitle">${escapeHtml(monthKey)}</div>
+            <span class="chip muted train-history-archived-chip">Archivée</span>
+          </td>
           <td>${escapeHtml(h.dayLabel || h.day || '—')}</td>
-          <td>${escapeHtml(conductorLabel)}</td>
-          <td>${escapeHtml(vipLabel)}</td>
+          <td>${renderHistoryRoleCell(h, 'conductorId', monthKey, canEdit)}</td>
+          <td>${renderHistoryRoleCell(h, 'vipId', monthKey, canEdit)}</td>
           <td>${escapeHtml(h.categoryName || '—')}</td>
           <td>${escapeHtml(h.mode || '—')}</td>
         </tr>
@@ -1902,6 +2207,10 @@
   /* ---------- Actions ---------- */
 
   async function addCategory() {
+    if (!canCorrectTrainArchive()) {
+      AppUI.toast('Seuls les R4 et R5 peuvent gérer les catégories Train.');
+      return;
+    }
     const name = window.prompt('Nom de la nouvelle catégorie :', 'Nouvelle catégorie');
     if (!name || !name.trim()) return;
 
@@ -1913,6 +2222,10 @@
   }
 
   async function editCategory(id) {
+    if (!canCorrectTrainArchive()) {
+      AppUI.toast('Seuls les R4 et R5 peuvent gérer les catégories Train.');
+      return;
+    }
     const cat = getState().categories.find((c) => c.id === id);
     if (!cat) return;
     const name = window.prompt('Nouveau nom de la catégorie :', cat.name);
@@ -1927,6 +2240,10 @@
   }
 
   async function deleteCategory(id) {
+    if (!canCorrectTrainArchive()) {
+      AppUI.toast('Seuls les R4 et R5 peuvent gérer les catégories Train.');
+      return;
+    }
     const cat = getState().categories.find((c) => c.id === id);
     if (!cat) return;
     const ok = await AppUI.confirm({
@@ -2084,6 +2401,14 @@
     AppUI.toast('Semaine déverrouillée (R5).');
   }
 
+  function onCategoriesClick(event) {
+    const btn = event.target.closest('[data-train-action]');
+    if (!btn) return;
+    const { trainAction, id } = btn.dataset;
+    if (trainAction === 'edit-cat') editCategory(id);
+    if (trainAction === 'delete-cat') deleteCategory(id);
+  }
+
   function onRootClick(event) {
     const btn = event.target.closest('[data-train-action]');
     if (!btn) return;
@@ -2101,6 +2426,9 @@
     if (trainAction === 'clear-week-vip') clearWeekVip(btn.dataset.day);
     if (trainAction === 'replace-week-role') {
       openReplaceModal(btn.dataset.day, btn.dataset.field);
+    }
+    if (trainAction === 'replace-history-role') {
+      openHistoryReplaceModal(btn.dataset.historyId, btn.dataset.field);
     }
     if (trainAction === 'vip-redraw') {
       runVipDraw(vipDrawProposal?.dayKey || els.vipDrawDay?.value);
@@ -2136,6 +2464,9 @@
 
     if (els.btnAddCategory) {
       els.btnAddCategory.addEventListener('click', () => addCategory());
+    }
+    if (els.categoriesList) {
+      els.categoriesList.addEventListener('click', onCategoriesClick);
     }
     els.btnAnalyze.addEventListener('click', analyzeConductors);
     els.btnValidateCheck.addEventListener('click', () => {
@@ -2195,5 +2526,8 @@
     getVipDrawExclusionStats,
     isEligibleForWeekVip,
     isEligibleForWeekConductor,
+    correctArchivedHistoryRole,
+    canCorrectTrainArchive,
+    getVipIdsThisMonth,
   };
 })(window);

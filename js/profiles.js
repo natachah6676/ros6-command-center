@@ -504,6 +504,7 @@
 
   function switchSettingsTab(tabName) {
     const generalPane = document.getElementById('settingsPaneGeneral');
+    const trainPane = document.getElementById('settingsPaneTrain');
     const accessPane = document.getElementById('settingsPaneAccess');
     document.querySelectorAll('[data-settings-tab]').forEach((btn) => {
       const active = btn.dataset.settingsTab === tabName;
@@ -511,7 +512,11 @@
       btn.setAttribute('aria-selected', active ? 'true' : 'false');
     });
     if (generalPane) generalPane.classList.toggle('hidden', tabName !== 'general');
+    if (trainPane) trainPane.classList.toggle('hidden', tabName !== 'train');
     if (accessPane) accessPane.classList.toggle('hidden', tabName !== 'access');
+    if (tabName === 'train' && global.TrainModule && typeof TrainModule.render === 'function') {
+      TrainModule.render();
+    }
   }
 
   function renderAccessPanel() {

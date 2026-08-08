@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20260808-r45lock" />
+  <link rel="stylesheet" href="css/styles.css?v=20260808-train-arch1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -335,19 +335,8 @@
         <div class="train-layout">
           <section class="block">
             <header class="block-header">
-              <h3>Catégories</h3>
-              <p id="trainCategoriesHint">Désignent les conducteurs — liste livrée avec l’alliance, entièrement modifiable</p>
-            </header>
-            <div class="settings-actions" style="margin-bottom:0.85rem">
-              <button type="button" id="trainAddCategory" class="btn btn-primary">+ Ajouter une catégorie</button>
-            </div>
-            <div id="trainCategoriesList" class="train-cat-grid"></div>
-          </section>
-
-          <section class="block">
-            <header class="block-header">
               <h3>Conducteurs</h3>
-              <p>🥇 Premier · 🥈 Deuxième — joueurs actifs uniquement</p>
+              <p>🥇 Premier · 🥈 Deuxième — joueurs actifs uniquement · catégories gérées dans Paramètres → Train</p>
             </header>
             <div id="trainConductorsList" class="train-conductors"></div>
             <div class="settings-actions" style="margin-top:0.85rem">
@@ -422,7 +411,7 @@
           <section class="block train-history-block">
             <header class="block-header">
               <h3>Historique</h3>
-              <p>Semaine · Jour · Conducteur · VIP · Catégorie · Mode</p>
+              <p>Semaines archivées — correction manuelle Conducteur / VIP (R4/R5)</p>
             </header>
             <div class="table-wrap">
               <table class="archive-table">
@@ -694,13 +683,16 @@
         <div class="panel-header">
           <div>
             <h2>Paramètres</h2>
-            <p class="panel-subtitle">Identité, accès (R5), sauvegarde et maintenance</p>
+            <p class="panel-subtitle">Identité, Train, accès (R5), sauvegarde et maintenance</p>
           </div>
         </div>
 
         <div class="settings-subtabs" role="tablist" aria-label="Sections paramètres">
           <button type="button" class="chip-filter is-active" data-settings-tab="general" aria-selected="true">
             Général
+          </button>
+          <button type="button" class="chip-filter" data-settings-tab="train" aria-selected="false">
+            Train
           </button>
           <button
             type="button"
@@ -711,6 +703,21 @@
           >
             Gestion des accès
           </button>
+        </div>
+
+        <div id="settingsPaneTrain" class="hidden">
+          <section class="block settings-block-wide" id="settingsTrainCategoriesBlock">
+            <header class="block-header">
+              <h3>Catégories</h3>
+              <p id="trainCategoriesHint">
+                Désignent les conducteurs — liste livrée avec l’alliance, entièrement modifiable (R4/R5)
+              </p>
+            </header>
+            <div class="settings-actions" style="margin-bottom:0.85rem">
+              <button type="button" id="trainAddCategory" class="btn btn-primary">+ Ajouter une catégorie</button>
+            </div>
+            <div id="trainCategoriesList" class="train-cat-grid"></div>
+          </section>
         </div>
 
         <div id="settingsPaneAccess" class="hidden">
@@ -1103,13 +1110,13 @@
       <div class="modal-body">
         <p id="trainReplaceHint" class="panel-subtitle"></p>
         <label class="field">
-          <span>Joueur éligible</span>
+          <span>Joueur</span>
           <select id="trainReplaceSelect" class="input" required></select>
         </label>
       </div>
       <footer class="modal-footer">
         <button type="button" class="btn btn-ghost" data-close-modal>Annuler</button>
-        <button type="submit" class="btn btn-primary">Valider le remplacement</button>
+        <button type="submit" class="btn btn-primary">Valider</button>
       </footer>
     </form>
   </dialog>
@@ -1261,7 +1268,7 @@
     })();
   </script>
   <script src="js/supabase-client.js?v=20260804-4"></script>
-  <script src="js/profiles.js?v=20260808-gp2"></script>
+  <script src="js/profiles.js?v=20260808-train-cat1"></script>
   <script src="js/supabase-sync.js?v=20260804-4"></script>
   <script src="js/models.js?v=20260808-pw1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
@@ -1275,11 +1282,11 @@
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260805-vs1"></script>
   <script src="js/archives.js?v=20260802-4"></script>
-  <script src="js/train.js?v=20260808-train3"></script>
+  <script src="js/train.js?v=20260808-train-cat1"></script>
   <script src="js/recrutement.js?v=20260808-pw1"></script>
   <script src="js/ruche.js?v=20260808-r45lock"></script>
   <script src="js/tempete.js?v=20260806-assign1"></script>
   <script src="js/backups.js?v=20260806-warops1"></script>
-  <script src="js/app.js?v=20260806-rec1"></script>
+  <script src="js/app.js?v=20260808-train-cat1"></script>
 </body>
 </html>

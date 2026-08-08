@@ -33,6 +33,8 @@ assert(train.includes('isEligibleForWeekConductor'), 'éligibilité conducteur')
 assert(train.includes('isEligibleForWeekVip'), 'éligibilité VIP');
 assert(train.includes('setWeekDayField'), 'mise à jour slot unique');
 assert(train.includes('buildNotificationText'), 'notif mise à jour');
+assert(train.includes('correctArchivedHistoryRole'), 'correction archive');
+assert(train.includes('replace-history-role'), 'bouton Modifier historique');
 
 console.log('\n=== Résultat ===');
 console.log(`${passed} OK · ${failed} KO`);
