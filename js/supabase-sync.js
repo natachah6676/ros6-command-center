@@ -1,6 +1,12 @@
 /**
  * Authentification Supabase + synchronisation de l’état partagé (ros6_state / main).
- * localStorage reste un cache de secours — ne remplace jamais une version distante plus récente.
+ *
+ * Principe :
+ * - chaque module marque UNIQUEMENT son store comme « dirty » ;
+ * - un push fusionne ces stores sur la base distante (les autres stores distants restent intacts) ;
+ * - Gestion des membres (ros6_command_center_v1.players) est protégée contre l’écrasement
+ *   accidentel de champs non vides par null/undefined venant d’un cache incomplet ;
+ * - un ancien cache local ne peut pas écraser silencieusement une version distante plus récente.
  */
 (function (global) {
   const ROW_ID = 'main';
@@ -11,6 +17,20 @@
     'ros6_ruche_v1',
     'ros6_tempete_v1',
     'ros6_backups_v1',
+  ];
+
+  const COMMAND_CENTER_KEY = 'ros6_command_center_v1';
+
+  /** Champs membres : une valeur distante non vide ne cède pas à un vide local sans clear explicite. */
+  const PROTECTED_NONEMPTY_PLAYER_FIELDS = [
+    'pseudo',
+    'role',
+    'status',
+    'heroPowerTierId',
+    'globalPowerTierId',
+    'coachingException',
+    'createdAt',
+    'leftAt',
   ];
 
   const STATUS = {
@@ -37,6 +57,8 @@
   let appStarted = false;
   /** Versions écrites avec succès par cet onglet (évite un faux conflit sur nos propres pushes). */
   const ownPushedVersions = new Set();
+  /** Stores modifiés localement en attente de push ciblé. */
+  const pendingDirty = new Set();
 
   function $(id) {
     return document.getElementById(id);
@@ -82,11 +104,14 @@
   function readMeta() {
     try {
       const raw = localStorage.getItem(META_KEY);
-      if (!raw) return { version: 0 };
+      if (!raw) return { version: 0, savedAt: '' };
       const parsed = JSON.parse(raw);
-      return { version: Number(parsed.version) || 0 };
+      return {
+        version: Number(parsed.version) || 0,
+        savedAt: String(parsed.savedAt || ''),
+      };
     } catch (error) {
-      return { version: 0 };
+      return { version: 0, savedAt: '' };
     }
   }
 
@@ -107,25 +132,197 @@
     }
   }
 
-  function collectStores() {
+  function cloneJson(value) {
+    return value == null ? value : JSON.parse(JSON.stringify(value));
+  }
+
+  function isEmptyFieldValue(value) {
+    return value == null || value === '';
+  }
+
+  function markDirty(storeKey) {
+    if (!storeKey || !STORE_KEYS.includes(storeKey)) {
+      console.warn('ROSSync.schedulePush: store inconnu ignoré', storeKey);
+      return false;
+    }
+    pendingDirty.add(storeKey);
+    return true;
+  }
+
+  function getLocalStore(key) {
+    if (key === COMMAND_CENTER_KEY && global.ROSStorage) {
+      try {
+        return cloneJson(ROSStorage.getState());
+      } catch (error) {
+        /* fallback localStorage */
+      }
+    }
+    const raw = localStorage.getItem(key);
+    return raw != null ? parseStoreValue(raw) : null;
+  }
+
+  function collectLocalStoresMap() {
     const stores = {};
     STORE_KEYS.forEach((key) => {
-      if (key === 'ros6_command_center_v1' && global.ROSStorage) {
-        try {
-          stores[key] = ROSStorage.getState();
-          return;
-        } catch (error) {
-          /* fallback localStorage */
+      const value = getLocalStore(key);
+      if (value != null) stores[key] = value;
+    });
+    return stores;
+  }
+
+  /** @deprecated Prefer collectLocalStoresMap + buildPushPayload. Kept for migration export. */
+  function collectStores() {
+    return {
+      appName: 'WAROPS',
+      stores: collectLocalStoresMap(),
+      collectedAt: new Date().toISOString(),
+    };
+  }
+
+  function countFilledGlobalPower(dataOrStores) {
+    const stores = dataOrStores?.stores || dataOrStores || {};
+    const players = stores[COMMAND_CENTER_KEY]?.players;
+    if (!Array.isArray(players)) return 0;
+    return players.filter(
+      (p) => p && !isEmptyFieldValue(p.globalPowerTierId)
+    ).length;
+  }
+
+  function stripPlayerSyncMeta(player) {
+    if (!player || typeof player !== 'object') return player;
+    const next = { ...player };
+    delete next.syncClears;
+    return next;
+  }
+
+  /**
+   * Fusion d’une fiche joueur : le local (édition membres) prime,
+   * sauf vide accidentel qui écraserait une valeur distante non vide.
+   * Clear volontaire = player.syncClears[field] truthy.
+   */
+  function mergePlayerRecord(remotePlayer, localPlayer) {
+    if (!localPlayer) return stripPlayerSyncMeta(cloneJson(remotePlayer));
+    if (!remotePlayer) return stripPlayerSyncMeta(cloneJson(localPlayer));
+
+    const merged = { ...cloneJson(remotePlayer), ...cloneJson(localPlayer) };
+    const clears =
+      localPlayer.syncClears && typeof localPlayer.syncClears === 'object'
+        ? localPlayer.syncClears
+        : {};
+
+    PROTECTED_NONEMPTY_PLAYER_FIELDS.forEach((field) => {
+      const localVal = localPlayer[field];
+      const remoteVal = remotePlayer[field];
+      if (isEmptyFieldValue(localVal) && !isEmptyFieldValue(remoteVal)) {
+        if (clears[field]) {
+          merged[field] = null;
+        } else if (field === 'leftAt' && localPlayer.status === 'Actif') {
+          // Retour Actif : leftAt null est volontaire.
+          merged[field] = null;
+        } else {
+          merged[field] = remoteVal;
         }
       }
-      const raw = localStorage.getItem(key);
-      if (raw != null) stores[key] = parseStoreValue(raw);
     });
+
+    return stripPlayerSyncMeta(merged);
+  }
+
+  function mergeCommandCenterStore(remoteStore, localStore) {
+    if (!localStore) return cloneJson(remoteStore);
+    if (!remoteStore) return cloneJson(localStore);
+
+    const remotePlayers = Array.isArray(remoteStore.players) ? remoteStore.players : [];
+    const localPlayers = Array.isArray(localStore.players) ? localStore.players : [];
+    const remoteById = new Map(remotePlayers.map((p) => [p.id, p]));
+
+    const mergedPlayers = localPlayers.map((localP) => {
+      if (!localP || !localP.id) return stripPlayerSyncMeta(localP);
+      return mergePlayerRecord(remoteById.get(localP.id), localP);
+    });
+
+    return {
+      ...cloneJson(remoteStore),
+      ...cloneJson(localStore),
+      players: mergedPlayers,
+    };
+  }
+
+  /**
+   * Construit le document à écrire : base = distant, overlay = stores dirty locaux.
+   * Les stores non dirty restent exactement ceux de Supabase.
+   * @param {object} [localStoresOverride] Pour tests / injection ; sinon lecture locale.
+   */
+  function buildPushPayload(remoteData, dirtyKeys, localStoresOverride) {
+    const remoteStores =
+      remoteData && typeof remoteData === 'object' && remoteData.stores
+        ? remoteData.stores
+        : {};
+    const localStores =
+      localStoresOverride && typeof localStoresOverride === 'object'
+        ? localStoresOverride
+        : collectLocalStoresMap();
+    const dirty = dirtyKeys instanceof Set ? dirtyKeys : new Set(dirtyKeys || []);
+
+    const stores = {};
+    Object.keys(remoteStores).forEach((key) => {
+      stores[key] = cloneJson(remoteStores[key]);
+    });
+    STORE_KEYS.forEach((key) => {
+      if (!(key in stores) && remoteStores[key] != null) {
+        stores[key] = cloneJson(remoteStores[key]);
+      }
+    });
+
+    dirty.forEach((key) => {
+      if (!STORE_KEYS.includes(key)) return;
+      const local = localStores[key];
+      if (local == null) return;
+      if (key === COMMAND_CENTER_KEY) {
+        stores[key] = mergeCommandCenterStore(remoteStores[key], local);
+      } else {
+        stores[key] = cloneJson(local);
+      }
+    });
+
     return {
       appName: 'WAROPS',
       stores,
       collectedAt: new Date().toISOString(),
+      syncMode: 'scoped',
     };
+  }
+
+  /**
+   * Après conflit distant : adopter le remote pour les stores non dirty,
+   * conserver / fusionner les stores dirty locaux.
+   */
+  function rebaseLocalAfterRemote(remoteData, dirtyKeys) {
+    const remoteStores =
+      remoteData && typeof remoteData === 'object' && remoteData.stores
+        ? remoteData.stores
+        : {};
+    const dirty = dirtyKeys instanceof Set ? dirtyKeys : new Set(dirtyKeys || []);
+    const stores = {};
+
+    STORE_KEYS.forEach((key) => {
+      if (dirty.has(key)) {
+        const local = getLocalStore(key);
+        if (key === COMMAND_CENTER_KEY) {
+          stores[key] = mergeCommandCenterStore(remoteStores[key], local);
+        } else {
+          stores[key] = local != null ? cloneJson(local) : cloneJson(remoteStores[key]);
+        }
+      } else if (remoteStores[key] != null) {
+        stores[key] = cloneJson(remoteStores[key]);
+      }
+    });
+
+    Object.keys(remoteStores).forEach((key) => {
+      if (!(key in stores)) stores[key] = cloneJson(remoteStores[key]);
+    });
+
+    return { appName: 'WAROPS', stores, collectedAt: new Date().toISOString() };
   }
 
   function localHasUsefulData() {
@@ -134,7 +331,7 @@
       if (!raw || raw === '{}' || raw === 'null') return false;
       try {
         const parsed = JSON.parse(raw);
-        if (key === 'ros6_command_center_v1') {
+        if (key === COMMAND_CENTER_KEY) {
           return Array.isArray(parsed.players) && parsed.players.length > 0;
         }
         if (key === 'ros6_backups_v1') {
@@ -272,15 +469,14 @@
     return data;
   }
 
-  async function pushToSupabase({ force = false } = {}) {
+  async function pushToSupabase({ force = false, allStores = false } = {}) {
     if (!session || !client || suppressPush) return { ok: false, reason: 'noop' };
     if (!navigator.onLine) {
       setSyncStatus('offline');
       return { ok: false, reason: 'offline' };
     }
 
-    // Sérialise via une file de promises (flushPush attend la fin du push en cours).
-    const run = () => runPushAttempt({ force });
+    const run = () => runPushAttempt({ force, allStores });
     const resultPromise = pushChain.then(run, run);
     pushChain = resultPromise.then(
       () => undefined,
@@ -289,7 +485,7 @@
     return resultPromise;
   }
 
-  async function runPushAttempt({ force = false } = {}) {
+  async function runPushAttempt({ force = false, allStores = false } = {}) {
     pushing = true;
     setSyncStatus('saving');
     let lastResult = { ok: false, reason: 'noop' };
@@ -309,6 +505,16 @@
           break;
         }
 
+        const dirtyForPush = allStores
+          ? new Set(STORE_KEYS)
+          : new Set(pendingDirty);
+
+        if (!dirtyForPush.size && !force) {
+          setSyncStatus('synced');
+          lastResult = { ok: true, reason: 'nothing-dirty' };
+          break;
+        }
+
         let remote;
         try {
           remote = await ensureRemoteRow();
@@ -322,29 +528,29 @@
         const remoteVersion = Number(remote.version) || 0;
 
         if (!force && isExternalRemoteConflict(remoteVersion)) {
-          // Autre appareil / autre utilisateur : adopter Supabase, mettre à jour le cache, pas de reload.
+          // Rebase : remote gagne pour les stores non dirty ; dirty conservés/fusionnés.
           writeMeta(remoteVersion);
-          applyStoresToLocal(remote.data || {}, { reload: false });
+          const rebased = rebaseLocalAfterRemote(remote.data || {}, dirtyForPush);
+          applyStoresToLocal(rebased, { reload: false });
           hydrateAppFromLocalCache();
-          setSyncStatus('synced', 'mis à jour depuis Supabase');
-          if (global.AppUI) {
-            await AppUI.confirm({
-              title: 'Données plus récentes détectées',
-              message:
-                'Un autre appareil ou un autre utilisateur a modifié les données partagées. Le cache local a été mis à jour avec la version Supabase.',
-              confirmLabel: 'OK',
-            });
+          setSyncStatus('saving', 'fusion après conflit');
+          if (global.AppUI && attempts === 1) {
+            AppUI.toast(
+              'Version distante plus récente — fusion des modules modifiés, sans écraser le reste.'
+            );
           }
-          lastResult = { ok: false, reason: 'conflict' };
-          pushQueued = false;
-          break;
+          pushQueued = true;
+          continue;
         }
 
         if (!force && remoteVersion > localVersion && ownPushedVersions.has(remoteVersion)) {
           writeMeta(remoteVersion);
         }
 
-        const payload = collectStores();
+        // force : toujours fusionner sur la base distante (jamais un replace aveugle)
+        const keysToWrite =
+          force && allStores ? new Set(STORE_KEYS) : dirtyForPush;
+        const payload = buildPushPayload(remote.data || {}, keysToWrite);
         const nextVersion = remoteVersion + 1;
 
         if (force) {
@@ -381,12 +587,12 @@
           }
         }
 
-        // Succès Supabase → puis mise à jour du cache local (méta + stores), sans reload.
+        keysToWrite.forEach((key) => pendingDirty.delete(key));
         ownPushedVersions.add(nextVersion);
         writeMeta(nextVersion);
         applyStoresToLocal(payload, { reload: false });
         setSyncStatus('synced');
-        lastResult = { ok: true, version: nextVersion };
+        lastResult = { ok: true, version: nextVersion, stores: [...keysToWrite] };
       } while (pushQueued);
 
       return lastResult;
@@ -402,22 +608,29 @@
     }
   }
 
-  function schedulePush() {
+  /**
+   * @param {string} [storeKey] Store modifié (ex. ros6_ruche_v1).
+   * Sans clé : ne marque rien ; relance seulement s’il reste des dirty en attente.
+   */
+  function schedulePush(storeKey) {
     if (!bootstrapped || !session || suppressPush) return;
+    if (storeKey) markDirty(storeKey);
+    if (!pendingDirty.size) return;
     setSyncStatus('saving');
     clearTimeout(pushTimer);
     pushTimer = setTimeout(() => {
       pushTimer = null;
-      pushToSupabase();
+      pushToSupabase({ force: false, allStores: false });
     }, 500);
   }
 
-  /** Annule le debounce et pousse immédiatement (attend la confirmation Supabase). */
+  /** Annule le debounce et pousse immédiatement les stores dirty. */
   async function flushPush() {
     if (!bootstrapped || !session || suppressPush) return { ok: false, reason: 'noop' };
     clearTimeout(pushTimer);
     pushTimer = null;
-    return pushToSupabase();
+    if (!pendingDirty.size) return { ok: true, reason: 'nothing-dirty' };
+    return pushToSupabase({ force: false, allStores: false });
   }
 
   async function migrateLocalIfNeeded(remote) {
@@ -448,19 +661,41 @@
       );
     if (error) throw error;
     writeMeta(1);
+    pendingDirty.clear();
     AppUI.toast('Données locales importées dans Supabase.');
     return true;
   }
 
   async function confirmOverwriteRemoteIfNeeded(remote) {
     if (remoteIsEmpty(remote?.data)) return true;
-    // Ne jamais écraser une base déjà remplie sans confirmation explicite
-    // (utilisé uniquement si une action volontaire le demande — bootstrap ne l’appelle pas)
+
+    const remoteGp = countFilledGlobalPower(remote.data);
+    const localGp = countFilledGlobalPower({ stores: collectLocalStoresMap() });
+    const remoteUpdated = remote.updated_at
+      ? new Date(remote.updated_at).toLocaleString('fr-FR')
+      : '—';
+    const riskLines = [];
+    if (remoteGp > localGp) {
+      riskLines.push(
+        `⚠ Supabase a ${remoteGp} Puissance(s) globale(s) renseignée(s) contre ${localGp} en local.`
+      );
+    }
+    if ((Number(remote.version) || 0) < localVersion) {
+      riskLines.push(
+        `Version locale (${localVersion}) > version Supabase (${Number(remote.version) || 0}).`
+      );
+    }
+    riskLines.push(
+      'Même en confirmant, les champs membres déjà remplis côté Supabase ne seront pas effacés par des valeurs vides locales (fusion protectrice).'
+    );
+
     return AppUI.confirm({
       title: 'Écraser la base partagée ?',
       message:
-        'La base Supabase contient déjà des données. Confirmez-vous vouloir les remplacer par les données locales ?',
-      confirmLabel: 'Écraser Supabase',
+        `La base Supabase contient déjà des données (màj : ${remoteUpdated}).\n\n` +
+        `Confirmez-vous vouloir y fusionner le cache local ?\n\n` +
+        riskLines.join('\n'),
+      confirmLabel: 'Fusionner vers Supabase',
     });
   }
 
@@ -488,18 +723,20 @@
 
       if (!remoteIsEmpty(remote?.data)) {
         const remoteVersion = Number(remote.version) || 0;
-        // Toujours préférer Supabase au chargement ; le cache local ne gagne jamais s’il est plus ancien
+        // Toujours préférer Supabase au chargement s’il est au moins aussi récent
         if (remoteVersion >= localVersion || localVersion === 0) {
           applyStoresToLocal(remote.data, { reload: false });
           writeMeta(remoteVersion);
+          pendingDirty.clear();
         } else if (remoteVersion < localVersion) {
-          // Cache local prétend être plus récent : ne pas écraser Supabase sans confirmation
           const overwrite = await confirmOverwriteRemoteIfNeeded(remote);
           if (overwrite) {
-            await pushToSupabase({ force: true });
+            STORE_KEYS.forEach((key) => pendingDirty.add(key));
+            await pushToSupabase({ force: true, allStores: true });
           } else {
             applyStoresToLocal(remote.data, { reload: false });
             writeMeta(remoteVersion);
+            pendingDirty.clear();
             AppUI.toast('Version Supabase conservée (cache local ignoré).');
           }
         }
@@ -597,6 +834,7 @@
       bootstrapped = false;
       bootstrapping = false;
       appStarted = false;
+      pendingDirty.clear();
       showGate(true);
       setSyncStatus('idle');
       updateUserLabel();
@@ -700,6 +938,26 @@
     });
   }
 
+  /**
+   * Marque un clear volontaire d’un champ membre (ex. Puissance globale → Non renseignée).
+   * À appeler depuis Gestion des membres uniquement.
+   */
+  function markPlayerFieldCleared(player, field) {
+    if (!player || !field) return player;
+    if (!player.syncClears || typeof player.syncClears !== 'object') {
+      player.syncClears = {};
+    }
+    player.syncClears[field] = Date.now();
+    return player;
+  }
+
+  function clearPlayerFieldCleared(player, field) {
+    if (!player?.syncClears || !field) return player;
+    delete player.syncClears[field];
+    if (!Object.keys(player.syncClears).length) delete player.syncClears;
+    return player;
+  }
+
   global.ROSSync = {
     init,
     schedulePush,
@@ -707,6 +965,20 @@
     pushNow: () => flushPush(),
     getSession: () => session,
     refreshUserLabel: updateUserLabel,
+    markPlayerFieldCleared,
+    clearPlayerFieldCleared,
     STORE_KEYS,
+    COMMAND_CENTER_KEY,
+    /** Helpers exposés pour tests unitaires (non utilisés par l’UI). */
+    __test: {
+      mergePlayerRecord,
+      mergeCommandCenterStore,
+      buildPushPayload,
+      rebaseLocalAfterRemote,
+      countFilledGlobalPower,
+      isEmptyFieldValue,
+      PROTECTED_NONEMPTY_PLAYER_FIELDS,
+      pendingDirty,
+    },
   };
 })(window);

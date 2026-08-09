@@ -193,7 +193,7 @@
     if (skipPersist) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     if (global.ROSSync && typeof ROSSync.schedulePush === 'function') {
-      ROSSync.schedulePush();
+      ROSSync.schedulePush('ros6_train_v1');
     }
   }
 

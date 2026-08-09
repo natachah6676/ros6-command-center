@@ -945,7 +945,7 @@
     const players = Array.isArray(raw.players)
       ? raw.players.map((p) => {
           const heroPowerTierId = migrateHeroPowerTierId(p, powerTiers);
-          return {
+          const player = {
             id: p.id || uid('player'),
             pseudo: String(p.pseudo || '').trim() || 'Sans pseudo',
             role: PLAYER_ROLES.includes(p.role) ? p.role : 'Membre',
@@ -961,6 +961,11 @@
             createdAt: p.createdAt || new Date().toISOString(),
             leftAt: p.leftAt || null,
           };
+          // Intentions de clear volontaires (sync) — jamais une source métier distante
+          if (p.syncClears && typeof p.syncClears === 'object') {
+            player.syncClears = { ...p.syncClears };
+          }
+          return player;
         })
       : [];
 

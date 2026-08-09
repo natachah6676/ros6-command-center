@@ -489,8 +489,18 @@
         player.absent = absent;
         player.inactive = inactive;
         player.heroPowerTierId = heroPowerTierId;
+        if (!heroPowerTierId && global.ROSSync?.markPlayerFieldCleared) {
+          ROSSync.markPlayerFieldCleared(player, 'heroPowerTierId');
+        } else if (heroPowerTierId && global.ROSSync?.clearPlayerFieldCleared) {
+          ROSSync.clearPlayerFieldCleared(player, 'heroPowerTierId');
+        }
         if (mayEditGlobal) {
           player.globalPowerTierId = requestedGlobalPowerTierId;
+          if (!requestedGlobalPowerTierId && global.ROSSync?.markPlayerFieldCleared) {
+            ROSSync.markPlayerFieldCleared(player, 'globalPowerTierId');
+          } else if (requestedGlobalPowerTierId && global.ROSSync?.clearPlayerFieldCleared) {
+            ROSSync.clearPlayerFieldCleared(player, 'globalPowerTierId');
+          }
         }
         player.preferredVolant = preferredVolant;
         player.coachingException = coachingException;
@@ -620,6 +630,11 @@
       const target = state.players.find((p) => p.id === playerId);
       if (!target) return state;
       target.heroPowerTierId = nextId;
+      if (!nextId && global.ROSSync?.markPlayerFieldCleared) {
+        ROSSync.markPlayerFieldCleared(target, 'heroPowerTierId');
+      } else if (nextId && global.ROSSync?.clearPlayerFieldCleared) {
+        ROSSync.clearPlayerFieldCleared(target, 'heroPowerTierId');
+      }
       return state;
     });
     AppUI.toast(nextId ? 'Puissance héros enregistrée.' : 'Puissance héros : Non renseignée.');
@@ -636,6 +651,11 @@
       const target = state.players.find((p) => p.id === playerId);
       if (!target) return state;
       target.globalPowerTierId = nextId;
+      if (!nextId && global.ROSSync?.markPlayerFieldCleared) {
+        ROSSync.markPlayerFieldCleared(target, 'globalPowerTierId');
+      } else if (nextId && global.ROSSync?.clearPlayerFieldCleared) {
+        ROSSync.clearPlayerFieldCleared(target, 'globalPowerTierId');
+      }
       return state;
     });
     AppUI.toast(

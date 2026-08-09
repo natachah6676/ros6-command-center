@@ -35,7 +35,7 @@
   function saveIndex(index) {
     localStorage.setItem(BACKUPS_KEY, JSON.stringify(index));
     if (global.ROSSync && typeof ROSSync.schedulePush === 'function') {
-      ROSSync.schedulePush();
+      ROSSync.schedulePush('ros6_backups_v1');
     }
   }
 

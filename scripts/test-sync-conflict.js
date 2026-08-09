@@ -36,3 +36,4 @@ assert(!isExternalRemoteConflict(6, 6, own), 'aligné sur propre version → pas
 assert(isExternalRemoteConflict(7, 6, own), 'version 7 tierce → conflit externe');
 
 console.log('OK — 6 assertions sync conflit');
+console.log('(Voir aussi scripts/test-sync-scoped.js pour la sync par module.)');
