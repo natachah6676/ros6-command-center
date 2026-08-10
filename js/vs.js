@@ -112,7 +112,6 @@
   function renderWeekBar() {
     const state = ROSStorage.getState();
     const active = getActiveWeek(state);
-    const selected = getSelectedWeek();
 
     if (els.activeTitle && active) {
       els.activeTitle.textContent = active.label || `Semaine ${active.number || '?'}`;
@@ -121,7 +120,7 @@
       els.activeDates.textContent = `${ROSModels.formatDateFR(active.startDate)} → ${ROSModels.formatDateFR(active.endDate)}`;
     }
 
-    const selectedId = els.weekSelector.value || state.currentWeekId;
+    const previousSelectedId = els.weekSelector.value || state.currentWeekId;
     els.weekSelector.innerHTML = state.weeks
       .map((week) => {
         const mark = week.id === state.currentWeekId ? ' — active' : ' — archivée';
@@ -129,12 +128,14 @@
       })
       .join('');
 
-    if (state.weeks.some((w) => w.id === selectedId)) {
-      els.weekSelector.value = selectedId;
+    if (state.weeks.some((w) => w.id === previousSelectedId)) {
+      els.weekSelector.value = previousSelectedId;
     } else {
       els.weekSelector.value = state.currentWeekId;
     }
 
+    // Toujours relire la semaine réellement sélectionnée après mise à jour du <select>
+    const selected = getSelectedWeek();
     const editable = ROSModels.isWeekEditable(selected, state.currentWeekId);
     els.archiveNotice.classList.toggle('hidden', editable);
     if (!editable && selected) {
@@ -530,7 +531,9 @@
       return s;
     });
 
+    // Le subscribe a pu rendre VS encore sur l’ancienne sélection : forcer la nouvelle active
     els.weekSelector.value = ROSStorage.getState().currentWeekId;
+    render();
     AppUI.toast('Nouvelle semaine créée. La précédente est archivée.');
   }
 
