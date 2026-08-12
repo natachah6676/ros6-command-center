@@ -23,10 +23,11 @@ function assert(cond, msg) {
 
 console.log('\n=== Train remplacement manuel ===');
 assert(html.includes('id="trainReplaceModal"'), 'modal remplacement');
-assert(train.includes('replace-week-role'), 'action Modifier');
+assert(train.includes('replace-week-role'), 'action Remplacer');
+assert(train.includes('Remplacer (absence)'), 'libellé Remplacer (absence)');
 assert(train.includes('openReplaceModal'), 'openReplaceModal');
 assert(train.includes('submitReplaceModal'), 'submitReplaceModal');
-assert(train.includes('renderWeekRoleLine'), 'affichage Nom + Modifier');
+assert(train.includes('renderWeekRoleLine'), 'affichage Nom + Remplacer');
 assert(train.includes("field === 'conductorId'"), 'remplacement conducteur');
 assert(train.includes("field === 'vipId'"), 'remplacement VIP');
 assert(train.includes('isEligibleForWeekConductor'), 'éligibilité conducteur');

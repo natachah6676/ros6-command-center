@@ -1045,6 +1045,63 @@ button.tempete-presence-pct:hover {
   margin-top: 0.25rem;
 }
 
+.train-collapsible {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  padding: 0;
+}
+
+.train-collapsible-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.75rem;
+  list-style: none;
+  cursor: pointer;
+  padding: 0.75rem 0.9rem;
+  user-select: none;
+}
+
+.train-collapsible-summary::-webkit-details-marker {
+  display: none;
+}
+
+.train-collapsible-title {
+  font-weight: 650;
+  color: var(--text);
+}
+
+.train-collapsible-hint {
+  flex: 1 1 10rem;
+  min-width: 0;
+  color: var(--steel-light);
+  font-size: 0.85rem;
+}
+
+.train-collapsible-toggle {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent, #7eb6ff);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.train-collapsible-toggle::before {
+  content: 'Ouvrir';
+}
+
+.train-collapsible[open] > .train-collapsible-summary .train-collapsible-toggle::before {
+  content: 'Fermer';
+}
+
+.train-collapsible-body {
+  padding: 0 0.9rem 0.9rem;
+  border-top: 1px solid var(--border-soft);
+}
+
 .train-history-role {
   display: flex;
   flex-wrap: wrap;

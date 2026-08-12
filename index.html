@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20260808-train-hist1" />
+  <link rel="stylesheet" href="css/styles.css?v=20260810-train-ux-a14" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -409,42 +409,55 @@
           </section>
 
           <section class="block train-history-block">
-            <header class="block-header">
-              <h3>Historique</h3>
-              <p id="trainHistorySince">Aucun historique officiel pour le moment.</p>
-            </header>
-            <p class="panel-subtitle" style="margin-bottom:0.75rem">
-              Consultation et tableau d’équité. L’initialisation / gestion administrative se fait dans Paramètres → Train (R5).
-            </p>
-            <div id="trainHistoryBody" class="train-official-history-list"></div>
-            <p id="trainHistoryEmpty" class="empty-state hidden">Aucun historique Train pour le moment.</p>
+            <details class="train-collapsible" id="trainHistoryDetails">
+              <summary class="train-collapsible-summary">
+                <span class="train-collapsible-title">Historique</span>
+                <span class="train-collapsible-hint" id="trainHistorySince">Aucun historique officiel pour le moment.</span>
+                <span class="train-collapsible-toggle" aria-hidden="true"></span>
+              </summary>
+              <div class="train-collapsible-body">
+                <p class="panel-subtitle" style="margin-bottom:0.75rem">
+                  Consultation et correction manuelle Conducteur / VIP. L’initialisation / gestion administrative se fait dans Paramètres → Train (R5).
+                </p>
+                <div id="trainHistoryBody" class="train-official-history-list"></div>
+                <p id="trainHistoryEmpty" class="empty-state hidden">Aucun historique Train pour le moment.</p>
+              </div>
+            </details>
 
-            <header class="block-header" style="margin-top:1.25rem">
-              <h3>Tableau d’équité</h3>
-              <p>Occurrences depuis le début de l’historique WarOps (calculées, jamais remises à zéro chaque mois)</p>
-            </header>
-            <label class="field" style="max-width:16rem;margin-bottom:0.65rem">
-              <span>Trier</span>
-              <select id="trainEquitySort" class="input" aria-label="Tri tableau d’équité Train">
-                <option value="alpha">Ordre alphabétique</option>
-                <option value="conductor-asc">Conducteur croissant</option>
-                <option value="conductor-desc">Conducteur décroissant</option>
-                <option value="vip-asc">VIP croissant</option>
-                <option value="vip-desc">VIP décroissant</option>
-              </select>
-            </label>
-            <div class="table-wrap">
-              <table class="archive-table">
-                <thead>
-                  <tr>
-                    <th>Joueur</th>
-                    <th>Conducteur</th>
-                    <th>VIP</th>
-                  </tr>
-                </thead>
-                <tbody id="trainEquityBody"></tbody>
-              </table>
-            </div>
+            <details class="train-collapsible" id="trainEquityDetails" style="margin-top:0.85rem">
+              <summary class="train-collapsible-summary">
+                <span class="train-collapsible-title">Tableau d’équité</span>
+                <span class="train-collapsible-hint">Depuis le début de l’historique WarOps</span>
+                <span class="train-collapsible-toggle" aria-hidden="true"></span>
+              </summary>
+              <div class="train-collapsible-body">
+                <p class="panel-subtitle" style="margin-bottom:0.65rem">
+                  Occurrences depuis le début (calculées, jamais remises à zéro chaque mois)
+                </p>
+                <label class="field" style="max-width:16rem;margin-bottom:0.65rem">
+                  <span>Trier</span>
+                  <select id="trainEquitySort" class="input" aria-label="Tri tableau d’équité Train">
+                    <option value="alpha">Ordre alphabétique</option>
+                    <option value="conductor-asc">Conducteur croissant</option>
+                    <option value="conductor-desc">Conducteur décroissant</option>
+                    <option value="vip-asc">VIP croissant</option>
+                    <option value="vip-desc">VIP décroissant</option>
+                  </select>
+                </label>
+                <div class="table-wrap">
+                  <table class="archive-table">
+                    <thead>
+                      <tr>
+                        <th>Joueur</th>
+                        <th>Conducteur</th>
+                        <th>VIP</th>
+                      </tr>
+                    </thead>
+                    <tbody id="trainEquityBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </details>
           </section>
         </div>
       </section>
@@ -1336,7 +1349,7 @@
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260810-week1"></script>
   <script src="js/archives.js?v=20260802-4"></script>
-  <script src="js/train.js?v=20260809-scoped1"></script>
+  <script src="js/train.js?v=20260810-train-ux-a14"></script>
   <script src="js/recrutement.js?v=20260808-pw1"></script>
   <script src="js/ruche.js?v=20260809-scoped1"></script>
   <script src="js/tempete.js?v=20260809-scoped1"></script>

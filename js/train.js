@@ -312,15 +312,19 @@
     return readCountsFrom(getState(), monthKey, playerId);
   }
 
+  function formatChoiceCounters(playerId, monthKey = currentMonthKey()) {
+    const hist = getHistoricalCounts(playerId);
+    const month = getPlayerMonthCounts(playerId, monthKey);
+    return `Depuis le début : C:${hist.conductor} · V:${hist.vip} · Ce mois : C:${month.conductor} · V:${month.vip}`;
+  }
+
   function formatPlayerCounters(player, monthKey = currentMonthKey()) {
     if (!player) return '';
-    const counts = getPlayerMonthCounts(player.id, monthKey);
-    return `${player.pseudo} — Conducteur ${counts.conductor} | VIP ${counts.vip}`;
+    return `${player.pseudo} — ${formatChoiceCounters(player.id, monthKey)}`;
   }
 
   function formatCountersShort(playerId, monthKey = currentMonthKey()) {
-    const counts = getPlayerMonthCounts(playerId, monthKey);
-    return `Conducteur ${counts.conductor} | VIP ${counts.vip}`;
+    return formatChoiceCounters(playerId, monthKey);
   }
 
   function adjustCount(trainState, monthKey, playerId, field, delta) {
@@ -576,13 +580,11 @@
   }
 
   function formatHistoricalShort(playerId) {
-    const c = getHistoricalCounts(playerId);
-    return `Conducteur : ${c.conductor} · VIP : ${c.vip}`;
+    return formatChoiceCounters(playerId);
   }
 
   function formatPlayerWithHistorical(player) {
-    if (!player) return '';
-    return `${player.pseudo} — ${formatHistoricalShort(player.id)}`;
+    return formatPlayerCounters(player);
   }
 
   /**
@@ -1158,7 +1160,15 @@
         player: getPlayerById(c.firstId),
         playerId: c.firstId,
       }))
-      .filter((c) => c.player);
+      .filter((c) => c.player)
+      .sort((a, b) => {
+        // Aide visuelle uniquement : moins utilisé comme conducteur depuis le début en premier.
+        // Aucune auto-affectation.
+        const ca = getHistoricalCounts(a.playerId).conductor;
+        const cb = getHistoricalCounts(b.playerId).conductor;
+        if (ca !== cb) return ca - cb;
+        return a.player.pseudo.localeCompare(b.player.pseudo, 'fr', { sensitivity: 'base' });
+      });
   }
 
   function isEligibleForWeekVip(player, exceptDayKey) {
@@ -2047,7 +2057,7 @@
     const name = playerId ? playerName(playerId) : '—';
     const btn = locked
       ? ''
-      : `<button type="button" class="btn btn-ghost btn-sm" data-train-action="replace-week-role" data-day="${dayKey}" data-field="${field}">Modifier</button>`;
+      : `<button type="button" class="btn btn-ghost btn-sm" data-train-action="replace-week-role" data-day="${dayKey}" data-field="${field}">Remplacer (absence)</button>`;
     return `
       <div class="train-day-assign">
         <span class="train-day-assign-label">${roleLabel} :</span>
@@ -2123,7 +2133,7 @@
 
     replaceContext = { source: 'week', dayKey, field };
     if (els.replaceTitle) {
-      els.replaceTitle.textContent = `Modifier — ${roleLabel} (${day?.label || dayKey})`;
+      els.replaceTitle.textContent = `Remplacer — ${roleLabel} (${day?.label || dayKey})`;
     }
     if (els.replaceHint) {
       els.replaceHint.textContent = currentId
@@ -2134,9 +2144,7 @@
     const opts = ['<option value="">— Choisir —</option>'];
     eligible.forEach((p) => {
       if (p.id === currentId) return;
-      opts.push(
-        `<option value="${p.id}">${escapeHtml(formatPlayerWithHistorical(p))} · mois ${getPlayerMonthCounts(p.id).conductor}/${getPlayerMonthCounts(p.id).vip}</option>`
-      );
+      opts.push(`<option value="${p.id}">${escapeHtml(formatPlayerCounters(p))}</option>`);
     });
     els.replaceSelect.innerHTML = opts.join('');
     if (!eligible.filter((p) => p.id !== currentId).length) {
@@ -2311,8 +2319,6 @@
 
     els.weekCandidates.innerHTML = candidates
       .map((c) => {
-        const monthCounts = getPlayerMonthCounts(c.playerId);
-        const hist = getHistoricalCounts(c.playerId);
         const already = taken.has(c.playerId);
         const disabled = locked || already;
         return `
@@ -2324,11 +2330,7 @@
                 <span class="chip muted">Mérite — choix manuel</span>
               </div>
               <p class="panel-subtitle" style="margin:0.4rem 0 0">
-                Conducteur depuis le début : <strong>${hist.conductor}</strong>
-                · VIP depuis le début : <strong>${hist.vip}</strong>
-              </p>
-              <p class="panel-subtitle" style="margin:0.2rem 0 0">
-                Ce mois — Conducteur ${monthCounts.conductor} | VIP ${monthCounts.vip}
+                ${escapeHtml(formatChoiceCounters(c.playerId))}
               </p>
             </div>
             <div class="train-assign-controls">
@@ -2739,7 +2741,7 @@
                 <strong>${escapeHtml(week.weekLabel)}</strong>
                 <div class="panel-subtitle">
                   ${escapeHtml(week.weekStartDate || '—')} → ${escapeHtml(week.weekEndDate || '—')}
-                  · <span class="chip muted">${escapeHtml(week.source === 'init' ? 'Initialisation' : week.source === 'correction' ? 'Corrigée' : 'Clôturée')}</span>
+                  · <span class="chip muted train-history-archived-chip">${escapeHtml(week.source === 'init' ? 'Initialisation' : week.source === 'correction' ? 'Corrigée' : 'Clôturée')}</span>
                 </div>
               </div>
             </header>
@@ -3366,9 +3368,11 @@
     STORAGE_KEY,
     getPlayerMonthCounts,
     getHistoricalCounts,
+    formatChoiceCounters,
     formatPlayerCounters,
     formatCountersShort,
     formatPlayerWithHistorical,
+    getFirstCandidates,
     currentMonthKey,
     migratePlayerIdentity,
     getVipDrawExclusionStats,
