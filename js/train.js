@@ -24,6 +24,18 @@
 
   const ASSIGNABLE_DAYS = WEEK_DAYS.filter((d) => d.key !== 'dimanche');
 
+  /** Sentinelle non-joueur pour le conducteur du dimanche (Jeu / Quiz). */
+  const SUNDAY_JEU_QUIZ_ID = 'jeu_quiz';
+  const SUNDAY_JEU_QUIZ_LABEL = 'Jeu / Quiz';
+
+  function isJeuQuizConductor(id) {
+    return id === SUNDAY_JEU_QUIZ_ID;
+  }
+
+  function isRealPlayerId(id) {
+    return Boolean(id) && !isJeuQuizConductor(id);
+  }
+
   const DEFAULT_CATEGORY_NAMES = [
     'MVP',
     "Champion de l'Alliance",
@@ -116,6 +128,7 @@
     WEEK_DAYS.forEach((d) => {
       days[d.key] = { conductorId: null, vipId: null, vipMode: null };
     });
+    days.dimanche.conductorId = SUNDAY_JEU_QUIZ_ID;
     return days;
   }
 
@@ -371,8 +384,8 @@
     const vipIds = new Set();
     WEEK_DAYS.forEach((d) => {
       const slot = plan.days[d.key] || {};
-      if (slot.conductorId) conductorIds.add(slot.conductorId);
-      if (slot.vipId) vipIds.add(slot.vipId);
+      if (isRealPlayerId(slot.conductorId)) conductorIds.add(slot.conductorId);
+      if (isRealPlayerId(slot.vipId)) vipIds.add(slot.vipId);
     });
     const deltas = [];
     conductorIds.forEach((id) => deltas.push({ playerId: id, conductor: 1, vip: 0 }));
@@ -386,7 +399,16 @@
 
   function isSundayFilled(plan = getWeeklyPlan()) {
     const sunday = plan.days.dimanche || {};
-    return Boolean(sunday.conductorId && sunday.vipId);
+    if (isJeuQuizConductor(sunday.conductorId)) return true;
+    return Boolean(isRealPlayerId(sunday.conductorId) && sunday.vipId);
+  }
+
+  function sundayConductorLabel(slot = {}) {
+    if (isJeuQuizConductor(slot.conductorId)) return SUNDAY_JEU_QUIZ_LABEL;
+    if (isRealPlayerId(slot.conductorId)) {
+      return getPlayerById(slot.conductorId)?.pseudo || slot.conductorPseudo || '—';
+    }
+    return slot.conductorPseudo || '—';
   }
 
   function areWeekdaysComplete(plan = getWeeklyPlan()) {
@@ -555,8 +577,8 @@
       WEEK_DAYS.forEach((d) => {
         const slot = week.days?.[d.key];
         if (!slot) return;
-        if (slot.conductorId === playerId) conductor += 1;
-        if (slot.vipId === playerId) vip += 1;
+        if (isRealPlayerId(slot.conductorId) && slot.conductorId === playerId) conductor += 1;
+        if (isRealPlayerId(slot.vipId) && slot.vipId === playerId) vip += 1;
       });
     });
     return { conductor, vip };
@@ -765,7 +787,9 @@
       const slot = plan.days?.[d.key] || {};
       days[d.key] = {
         conductorId: slot.conductorId || null,
-        conductorPseudo: getPlayerById(slot.conductorId)?.pseudo || null,
+        conductorPseudo: isJeuQuizConductor(slot.conductorId)
+          ? SUNDAY_JEU_QUIZ_LABEL
+          : getPlayerById(slot.conductorId)?.pseudo || null,
         vipId: slot.vipId || null,
         vipPseudo: getPlayerById(slot.vipId)?.pseudo || null,
       };
@@ -1058,8 +1082,10 @@
     const plan = createBlankWeeklyPlan(weekId, vsWeekId);
     WEEK_DAYS.forEach((d) => {
       const src = raw.days && raw.days[d.key] ? raw.days[d.key] : {};
+      let conductorId = src.conductorId || null;
+      if (d.key === 'dimanche' && !conductorId) conductorId = SUNDAY_JEU_QUIZ_ID;
       plan.days[d.key] = {
-        conductorId: src.conductorId || null,
+        conductorId,
         vipId: src.vipId || null,
         vipMode: src.vipMode || null,
       };
@@ -1104,7 +1130,7 @@
     const ids = new Set();
     WEEK_DAYS.forEach((d) => {
       const id = plan.days[d.key]?.conductorId;
-      if (id) ids.add(id);
+      if (isRealPlayerId(id)) ids.add(id);
     });
     return ids;
   }
@@ -1177,20 +1203,66 @@
     const color = getPlayerWeekColor(player.id);
     // Hors Vert (Rouge et Orange) exclus du tirage VIP
     if (color === 'color-orange' || color === 'color-red') return false;
-    // Conducteurs déjà choisis cette semaine (y compris le jour cible) — jamais VIP
-    if (getWeekConductorIds().has(player.id)) return false;
     // VIP déjà VIP ce mois
     if (getVipIdsThisMonth().has(player.id)) return false;
     // VIP déjà pris un autre jour de la semaine
     if (getWeekVipIds(exceptDayKey).has(player.id)) return false;
-    // Conducteur du jour cible (sécurité explicite)
+    // Conducteur du jour cible uniquement (peut être VIP un autre jour)
     const dayConductor = getWeeklyPlan().days[exceptDayKey]?.conductorId;
-    if (dayConductor && dayConductor === player.id) return false;
+    if (isRealPlayerId(dayConductor) && dayConductor === player.id) return false;
     return true;
   }
 
   function getEligibleWeekVipPlayers(exceptDayKey) {
     return getActivePlayers().filter((p) => isEligibleForWeekVip(p, exceptDayKey));
+  }
+
+  /** Motifs d’exclusion VIP pour un jour (libellés UI). */
+  function getVipExclusionReasons(player, dayKey) {
+    const reasons = [];
+    if (!player || player.status !== 'Actif') return reasons;
+    if (player.absent) reasons.push('Absent');
+    const color = getPlayerWeekColor(player.id);
+    if (color === 'color-orange' || color === 'color-red') reasons.push('Orange/Rouge');
+    if (getVipIdsThisMonth().has(player.id)) reasons.push('VIP déjà ce mois');
+    if (getWeekVipIds(dayKey).has(player.id)) reasons.push('VIP déjà cette semaine');
+    const dayConductor = getWeeklyPlan().days[dayKey]?.conductorId;
+    if (isRealPlayerId(dayConductor) && dayConductor === player.id) {
+      reasons.push('Conducteur du jour');
+    }
+    return reasons;
+  }
+
+  function isVipForceBlocked(reasons) {
+    return (reasons || []).includes('Conducteur du jour');
+  }
+
+  /**
+   * Candidats VIP pour remplacement manuel :
+   * - eligible : tirage + sélection normale
+   * - forceable : exclus mais forçables (R4/R5)
+   * - blocked : conducteur du jour (jamais sélectionnable)
+   */
+  function classifyWeekVipCandidates(dayKey, currentId = null) {
+    const eligible = [];
+    const forceable = [];
+    const blocked = [];
+    getActivePlayers().forEach((p) => {
+      if (currentId && p.id === currentId) return;
+      if (isEligibleForWeekVip(p, dayKey)) {
+        eligible.push({ player: p, reasons: [] });
+        return;
+      }
+      const reasons = getVipExclusionReasons(p, dayKey);
+      if (!reasons.length) return;
+      if (isVipForceBlocked(reasons)) blocked.push({ player: p, reasons });
+      else forceable.push({ player: p, reasons });
+    });
+    return { eligible, forceable, blocked };
+  }
+
+  function canForceVipManual() {
+    return canCorrectTrainArchive();
   }
 
   /** Conducteur manuel / affectation : Actif, présent, Vert, pas déjà conducteur Lun–Sam. */
@@ -1216,17 +1288,19 @@
 
   /**
    * Transparence du tirage VIP — décomptes (un joueur peut apparaître dans plusieurs lignes).
-   * totalExcluded = joueurs Actifs non éligibles au tirage du jour.
+   * totalExcluded / eligible = joueurs Actifs non éligibles / éligibles au tirage du jour.
    */
   function getVipDrawExclusionStats(dayKey) {
-    const key = dayKey || els.vipDrawDay?.value || 'lundi';
+    const key = dayKey || els.vipDrawDay?.value || vipDrawProposal?.dayKey || 'lundi';
     const actifs = getActivePlayers();
     let absents = 0;
     let rouges = 0;
-    let conductors = 0;
+    let dayConductor = 0;
+    let vipWeek = 0;
     let vipMonth = 0;
     let totalExcluded = 0;
-    const weekConductors = getWeekConductorIds();
+    const dayConductorId = getWeeklyPlan().days[key]?.conductorId;
+    const weekVipIds = getWeekVipIds(key);
     const vipMonthIds = getVipIdsThisMonth();
 
     actifs.forEach((p) => {
@@ -1235,18 +1309,24 @@
       if (p.absent) absents += 1;
       const color = getPlayerWeekColor(p.id);
       if (!p.absent && (color === 'color-red' || color === 'color-orange')) rouges += 1;
-      if (weekConductors.has(p.id)) conductors += 1;
+      if (isRealPlayerId(dayConductorId) && dayConductorId === p.id) dayConductor += 1;
+      if (weekVipIds.has(p.id)) vipWeek += 1;
       if (vipMonthIds.has(p.id)) vipMonth += 1;
     });
 
+    const eligible = Math.max(0, actifs.length - totalExcluded);
     return {
       dayKey: key,
+      actifs: actifs.length,
       totalExcluded,
       absents,
       rouges,
-      conductors,
+      dayConductor,
+      vipWeek,
       vipMonth,
-      eligible: Math.max(0, actifs.length - totalExcluded),
+      /** @deprecated alias — conducteur du jour uniquement (plus toute la semaine) */
+      conductors: dayConductor,
+      eligible,
     };
   }
 
@@ -1381,9 +1461,9 @@
 
   /* ---------- Catégories ---------- */
 
-  function allFirstFilled() {
-    const cats = getState().categories;
-    return cats.length > 0 && cats.every((c) => Boolean(c.firstId));
+  /** Au moins une catégorie a un Premier renseigné (les vides sont ignorées à l’analyse). */
+  function hasAnyFirstFilled() {
+    return getState().categories.some((c) => Boolean(c.firstId));
   }
 
   function findFirstConflicts() {
@@ -1420,7 +1500,6 @@
   function validateWeeklyPlanErrors() {
     const errors = [];
     const plan = getWeeklyPlan();
-    const weekConductors = new Set();
     const weekVips = new Map();
 
     findWeekdayConductorDuplicates().forEach(({ player, playerId, days }) => {
@@ -1434,8 +1513,7 @@
 
     WEEK_DAYS.forEach((d) => {
       const slot = plan.days[d.key] || {};
-      if (slot.conductorId) weekConductors.add(slot.conductorId);
-      if (slot.vipId) {
+      if (isRealPlayerId(slot.vipId)) {
         if (!weekVips.has(slot.vipId)) weekVips.set(slot.vipId, []);
         weekVips.get(slot.vipId).push(d.label);
       }
@@ -1452,19 +1530,22 @@
 
     WEEK_DAYS.forEach((d) => {
       const slot = plan.days[d.key] || {};
-      if (slot.conductorId && slot.vipId && slot.conductorId === slot.vipId) {
+      if (
+        isRealPlayerId(slot.conductorId) &&
+        isRealPlayerId(slot.vipId) &&
+        slot.conductorId === slot.vipId
+      ) {
         const p = getPlayerById(slot.conductorId);
         errors.push(
           `Conducteur aussi choisi comme VIP : ${p ? p.pseudo : slot.conductorId} (${d.label})`
         );
       }
-      if (slot.vipId && weekConductors.has(slot.vipId) && slot.conductorId !== slot.vipId) {
-        const p = getPlayerById(slot.vipId);
-        errors.push(
-          `VIP aussi conducteur cette semaine : ${p ? p.pseudo : slot.vipId} (${d.label})`
-        );
-      }
-      if (slot.vipId && getVipIdsThisMonth().has(slot.vipId)) {
+      const vipForced = slot.vipMode === 'force';
+      if (
+        !vipForced &&
+        isRealPlayerId(slot.vipId) &&
+        getVipIdsThisMonth().has(slot.vipId)
+      ) {
         const applied = getAppliedWeek(plan.weekId);
         const alreadyCounted =
           applied &&
@@ -1475,8 +1556,12 @@
           errors.push(`VIP déjà VIP ce mois : ${p ? p.pseudo : slot.vipId} (${d.label})`);
         }
       }
-      if (slot.conductorId) pushPlayerEligibilityErrors(errors, slot.conductorId, d.label);
-      if (slot.vipId) pushPlayerEligibilityErrors(errors, slot.vipId, d.label);
+      if (isRealPlayerId(slot.conductorId)) {
+        pushPlayerEligibilityErrors(errors, slot.conductorId, d.label);
+      }
+      if (isRealPlayerId(slot.vipId) && !vipForced) {
+        pushPlayerEligibilityErrors(errors, slot.vipId, d.label);
+      }
     });
 
     return [...new Set(errors)];
@@ -1497,8 +1582,13 @@
     });
 
     const sunday = plan.days.dimanche || {};
-    if (!sunday.conductorId) errors.push('Conducteur manquant : Dimanche');
-    if (!sunday.vipId) errors.push('VIP manquant : Dimanche');
+    if (isJeuQuizConductor(sunday.conductorId)) {
+      // Jeu / Quiz suffit : VIP dimanche optionnel
+    } else if (isRealPlayerId(sunday.conductorId)) {
+      if (!sunday.vipId) errors.push('VIP manquant : Dimanche');
+    } else {
+      errors.push('Conducteur manquant : Dimanche');
+    }
 
     return [...new Set(errors)];
   }
@@ -1552,29 +1642,33 @@
       const historyIds = [];
       WEEK_DAYS.forEach((d) => {
         const slot = s.weeklyPlan.days[d.key] || {};
-        if (!slot.conductorId && !slot.vipId) return;
+        if (!isRealPlayerId(slot.conductorId) && !isRealPlayerId(slot.vipId)) return;
         const histId = uid('hist');
         historyIds.push(histId);
         const cat =
           s.categories.find((c) => c.firstId === slot.conductorId) ||
           s.categories.find((c) => c.secondId === slot.conductorId) ||
           null;
-        const conductorCounts = slot.conductorId
+        const conductorCounts = isRealPlayerId(slot.conductorId)
           ? readCountsFrom(s, monthKey, slot.conductorId)
           : null;
-        const vipCounts = slot.vipId ? readCountsFrom(s, monthKey, slot.vipId) : null;
+        const vipCounts = isRealPlayerId(slot.vipId)
+          ? readCountsFrom(s, monthKey, slot.vipId)
+          : null;
         s.history.unshift({
           id: histId,
           weekLabel,
           weekId,
           day: d.key,
           dayLabel: d.label,
-          conductorId: slot.conductorId,
-          conductorPseudo: getPlayerById(slot.conductorId)?.pseudo || '—',
+          conductorId: isRealPlayerId(slot.conductorId) ? slot.conductorId : null,
+          conductorPseudo: isJeuQuizConductor(slot.conductorId)
+            ? SUNDAY_JEU_QUIZ_LABEL
+            : getPlayerById(slot.conductorId)?.pseudo || '—',
           conductorCounters: conductorCounts
             ? `Conducteur ${conductorCounts.conductor} | VIP ${conductorCounts.vip}`
             : '',
-          vipId: slot.vipId,
+          vipId: slot.vipId || null,
           vipPseudo: getPlayerById(slot.vipId)?.pseudo || '—',
           vipCounters: vipCounts
             ? `Conducteur ${vipCounts.conductor} | VIP ${vipCounts.vip}`
@@ -1586,9 +1680,11 @@
               ? 'Tirage'
               : slot.vipMode === 'merite'
                 ? 'Mérite'
-                : slot.vipMode === 'manuel'
-                  ? 'Manuel'
-                  : 'Planning',
+                : slot.vipMode === 'force'
+                  ? 'Forcé'
+                  : slot.vipMode === 'manuel'
+                    ? 'Manuel'
+                    : 'Planning',
           monthKey,
           createdAt: now,
         });
@@ -1623,7 +1719,7 @@
     if (!plan?.days) return false;
     return WEEK_DAYS.some((d) => {
       const slot = plan.days[d.key] || {};
-      return Boolean(slot.conductorId || slot.vipId);
+      return isRealPlayerId(slot.conductorId) || isRealPlayerId(slot.vipId);
     });
   }
 
@@ -1643,14 +1739,18 @@
     const days = {};
     WEEK_DAYS.forEach((d) => {
       const slot = plan.days?.[d.key] || {};
-      const conductorCounts = slot.conductorId
+      const conductorCounts = isRealPlayerId(slot.conductorId)
         ? readCountsFrom(trainState, monthKey, slot.conductorId)
         : null;
-      const vipCounts = slot.vipId ? readCountsFrom(trainState, monthKey, slot.vipId) : null;
+      const vipCounts = isRealPlayerId(slot.vipId)
+        ? readCountsFrom(trainState, monthKey, slot.vipId)
+        : null;
       days[d.key] = {
         dayLabel: d.label,
         conductorId: slot.conductorId || null,
-        conductorPseudo: getPlayerById(slot.conductorId)?.pseudo || null,
+        conductorPseudo: isJeuQuizConductor(slot.conductorId)
+          ? SUNDAY_JEU_QUIZ_LABEL
+          : getPlayerById(slot.conductorId)?.pseudo || null,
         conductorCounters: conductorCounts,
         vipId: slot.vipId || null,
         vipPseudo: getPlayerById(slot.vipId)?.pseudo || null,
@@ -1739,29 +1839,33 @@
     const historyIds = [];
     WEEK_DAYS.forEach((d) => {
       const slot = plan.days[d.key] || {};
-      if (!slot.conductorId && !slot.vipId) return;
+      if (!isRealPlayerId(slot.conductorId) && !isRealPlayerId(slot.vipId)) return;
       const histId = uid('hist');
       historyIds.push(histId);
       const cat =
         trainState.categories.find((c) => c.firstId === slot.conductorId) ||
         trainState.categories.find((c) => c.secondId === slot.conductorId) ||
         null;
-      const conductorCounts = slot.conductorId
+      const conductorCounts = isRealPlayerId(slot.conductorId)
         ? readCountsFrom(trainState, monthKey, slot.conductorId)
         : null;
-      const vipCounts = slot.vipId ? readCountsFrom(trainState, monthKey, slot.vipId) : null;
+      const vipCounts = isRealPlayerId(slot.vipId)
+        ? readCountsFrom(trainState, monthKey, slot.vipId)
+        : null;
       trainState.history.unshift({
         id: histId,
         weekLabel,
         weekId,
         day: d.key,
         dayLabel: d.label,
-        conductorId: slot.conductorId,
-        conductorPseudo: getPlayerById(slot.conductorId)?.pseudo || '—',
+        conductorId: isRealPlayerId(slot.conductorId) ? slot.conductorId : null,
+        conductorPseudo: isJeuQuizConductor(slot.conductorId)
+          ? SUNDAY_JEU_QUIZ_LABEL
+          : getPlayerById(slot.conductorId)?.pseudo || '—',
         conductorCounters: conductorCounts
           ? `Conducteur ${conductorCounts.conductor} | VIP ${conductorCounts.vip}`
           : '',
-        vipId: slot.vipId,
+        vipId: slot.vipId || null,
         vipPseudo: getPlayerById(slot.vipId)?.pseudo || '—',
         vipCounters: vipCounts
           ? `Conducteur ${vipCounts.conductor} | VIP ${vipCounts.vip}`
@@ -1773,9 +1877,11 @@
             ? 'Tirage'
             : slot.vipMode === 'merite'
               ? 'Mérite'
-              : slot.vipMode === 'manuel'
-                ? 'Manuel'
-                : 'Planning',
+              : slot.vipMode === 'force'
+                ? 'Forcé'
+                : slot.vipMode === 'manuel'
+                  ? 'Manuel'
+                  : 'Planning',
         monthKey,
         createdAt: now,
         archivedVia: 'nouvelle_semaine',
@@ -1947,11 +2053,13 @@
     const stats = getVipDrawExclusionStats(els.vipDrawDay?.value || vipDrawProposal?.dayKey);
     els.vipExclusionStats.innerHTML = `
       <div class="train-exclusion-card">
-        <strong>Joueurs exclus du tirage : ${stats.totalExcluded}</strong>
+        <strong>Éligibles au tirage : ${stats.eligible} / ${stats.actifs}</strong>
+        <p class="panel-subtitle" style="margin:0.35rem 0 0.5rem">Exclus : ${stats.totalExcluded} (un joueur peut compter dans plusieurs motifs)</p>
         <ul>
           <li>Absents : ${stats.absents}</li>
-          <li>Rouges : ${stats.rouges}</li>
-          <li>Conducteurs : ${stats.conductors}</li>
+          <li>Orange / Rouge : ${stats.rouges}</li>
+          <li>Conducteur du jour : ${stats.dayConductor}</li>
+          <li>VIP déjà cette semaine : ${stats.vipWeek}</li>
           <li>VIP du mois : ${stats.vipMonth}</li>
         </ul>
       </div>
@@ -2041,20 +2149,26 @@
       )
       .join('');
 
-    els.btnAnalyze.disabled = !allFirstFilled();
-    els.btnAnalyze.title = allFirstFilled()
-      ? 'Analyser les conflits entre premiers'
-      : 'Renseignez tous les Premiers pour analyser';
+    els.btnAnalyze.disabled = !hasAnyFirstFilled();
+    els.btnAnalyze.title = hasAnyFirstFilled()
+      ? 'Analyser les conflits entre Premiers renseignés'
+      : 'Renseignez au moins une catégorie pour analyser les conducteurs.';
   }
 
   function playerName(id) {
+    if (isJeuQuizConductor(id)) return SUNDAY_JEU_QUIZ_LABEL;
     const p = getPlayerById(id);
     return p ? p.pseudo : '—';
   }
 
   function renderWeekRoleLine(dayKey, field, playerId, locked) {
     const roleLabel = field === 'conductorId' ? 'Conducteur' : 'VIP';
-    const name = playerId ? playerName(playerId) : '—';
+    const name =
+      field === 'conductorId' && dayKey === 'dimanche' && !playerId
+        ? '—'
+        : playerId
+          ? playerName(playerId)
+          : '—';
     const btn = locked
       ? ''
       : `<button type="button" class="btn btn-ghost btn-sm" data-train-action="replace-week-role" data-day="${dayKey}" data-field="${field}">Remplacer (absence)</button>`;
@@ -2089,9 +2203,9 @@
           <article class="train-day-card train-day-sunday">
             <header>
               <strong>${day.label}</strong>
-              <span class="chip warn">Jeu en direct</span>
+              <span class="chip warn">Jeu / Quiz</span>
             </header>
-            <p class="panel-subtitle">Facultatif pendant la préparation — à renseigner pour la clôture · modification manuelle possible</p>
+            <p class="panel-subtitle">Par défaut « Jeu / Quiz » (VIP optionnel). Remplaçable par un joueur réel quand le conducteur est connu.</p>
             ${renderWeekRoleLine(day.key, 'conductorId', conductorId, locked)}
             ${renderWeekRoleLine(day.key, 'vipId', vipId, locked)}
           </article>
@@ -2126,10 +2240,67 @@
       field === 'conductorId'
         ? getWeeklyPlan().days[dayKey]?.conductorId
         : getWeeklyPlan().days[dayKey]?.vipId;
-    const eligible =
-      field === 'conductorId'
-        ? getEligibleWeekConductorPlayers(dayKey)
-        : getEligibleWeekVipPlayers(dayKey);
+
+    if (field === 'vipId') {
+      const { eligible, forceable } = classifyWeekVipCandidates(dayKey, currentId);
+      const allowForce = canForceVipManual();
+      const forceableShown = allowForce ? forceable : [];
+      replaceContext = {
+        source: 'week',
+        dayKey,
+        field,
+        forceableVipIds: new Set(forceableShown.map((e) => e.player.id)),
+        forceableVipReasons: Object.fromEntries(
+          forceableShown.map((e) => [e.player.id, e.reasons])
+        ),
+      };
+      if (els.replaceTitle) {
+        els.replaceTitle.textContent = `Remplacer — ${roleLabel} (${day?.label || dayKey})`;
+      }
+      if (els.replaceHint) {
+        els.replaceHint.textContent = currentId
+          ? `Actuel : ${playerName(currentId)}. Tirage non relancé · exclus forçables réservés R4/R5.`
+          : `Choisissez un VIP. Tirage non relancé · exclus forçables réservés R4/R5.`;
+      }
+      const opts = ['<option value="">— Choisir —</option>'];
+      opts.push('<optgroup label="Éligibles">');
+      if (!eligible.length) {
+        opts.push('<option value="" disabled>(aucun)</option>');
+      } else {
+        eligible.forEach(({ player: p }) => {
+          opts.push(
+            `<option value="${p.id}" data-vip-force="0">${escapeHtml(formatPlayerCounters(p))}</option>`
+          );
+        });
+      }
+      opts.push('</optgroup>');
+      opts.push('<optgroup label="Exclus — sélection manuelle possible">');
+      if (!forceableShown.length) {
+        opts.push(
+          `<option value="" disabled>${
+            allowForce ? '(aucun)' : '(réservé R4/R5)'
+          }</option>`
+        );
+      } else {
+        forceableShown.forEach(({ player: p, reasons }) => {
+          opts.push(
+            `<option value="${p.id}" data-vip-force="1">${escapeHtml(
+              `${p.pseudo} — ${reasons.join(' · ')}`
+            )}</option>`
+          );
+        });
+      }
+      opts.push('</optgroup>');
+      els.replaceSelect.innerHTML = opts.join('');
+      if (!eligible.length && !forceableShown.length) {
+        AppUI.toast('Aucun VIP sélectionnable pour ce jour.');
+        return;
+      }
+      if (typeof els.replaceModal.showModal === 'function') els.replaceModal.showModal();
+      return;
+    }
+
+    const eligible = getEligibleWeekConductorPlayers(dayKey);
 
     replaceContext = { source: 'week', dayKey, field };
     if (els.replaceTitle) {
@@ -2142,12 +2313,20 @@
     }
 
     const opts = ['<option value="">— Choisir —</option>'];
+    if (dayKey === 'dimanche' && field === 'conductorId') {
+      if (currentId !== SUNDAY_JEU_QUIZ_ID) {
+        opts.push(
+          `<option value="${SUNDAY_JEU_QUIZ_ID}">${escapeHtml(SUNDAY_JEU_QUIZ_LABEL)}</option>`
+        );
+      }
+    }
     eligible.forEach((p) => {
       if (p.id === currentId) return;
       opts.push(`<option value="${p.id}">${escapeHtml(formatPlayerCounters(p))}</option>`);
     });
     els.replaceSelect.innerHTML = opts.join('');
-    if (!eligible.filter((p) => p.id !== currentId).length) {
+    const hasChoice = opts.length > 1;
+    if (!hasChoice) {
       AppUI.toast(`Aucun ${roleLabel.toLowerCase()} éligible disponible.`);
       return;
     }
@@ -2291,6 +2470,39 @@
     const { dayKey, field } = replaceContext;
     const roleLabel = field === 'conductorId' ? 'Conducteur' : 'VIP';
     const day = WEEK_DAYS.find((d) => d.key === dayKey);
+
+    if (field === 'vipId') {
+      const forceableIds = replaceContext.forceableVipIds || new Set();
+      const reasonsMap = replaceContext.forceableVipReasons || {};
+      const isForce = forceableIds.has(nextId);
+      if (isForce) {
+        if (!canForceVipManual()) {
+          AppUI.toast('Seuls les R4 et R5 peuvent forcer un VIP exclu.');
+          return;
+        }
+        const reasons = reasonsMap[nextId] || getVipExclusionReasons(getPlayerById(nextId), dayKey);
+        if (isVipForceBlocked(reasons)) {
+          AppUI.toast('Impossible : ce joueur est conducteur du jour.');
+          return;
+        }
+        let message = `Ce joueur est normalement exclu : ${reasons.join(', ')}.\nConfirmer quand même ?`;
+        if (reasons.includes('VIP déjà cette semaine')) {
+          message +=
+            '\n\nIl sera retiré du VIP de l’autre jour de la semaine (un seul VIP par joueur / semaine).';
+        }
+        const okForce = await AppUI.confirm({
+          title: 'Forcer un VIP exclu',
+          message,
+          confirmLabel: 'Confirmer',
+        });
+        if (!okForce) return;
+        setWeekDayField(dayKey, field, nextId, { forceVip: true });
+        closeReplaceModal();
+        AppUI.toast('VIP forcé — planning mis à jour (sans tirage).');
+        return;
+      }
+    }
+
     const ok = await AppUI.confirm({
       title: `Remplacer le ${roleLabel}`,
       message: `${day?.label || dayKey} — ${roleLabel} : ${playerName(nextId)} ?\n\nSeule cette affectation sera modifiée.`,
@@ -2396,14 +2608,14 @@
     AppUI.toast(`Conducteur affecté au ${WEEK_DAYS.find((d) => d.key === dayKey).label}.`);
   }
 
-  function setWeekDayField(dayKey, field, value) {
+  function setWeekDayField(dayKey, field, value, options = {}) {
     if (isCurrentWeekLocked()) {
       AppUI.toast('Semaine clôturée — déverrouillage R5 requis.');
       render();
       return;
     }
     const player = value ? getPlayerById(value) : null;
-    if (field === 'conductorId' && value) {
+    if (field === 'conductorId' && value && !isJeuQuizConductor(value)) {
       if (!isEligibleForWeekConductor(player, dayKey)) {
         AppUI.toast('Conducteur non éligible (Absent, Rouge/Orange ou déjà conducteur).');
         render();
@@ -2411,7 +2623,25 @@
       }
     }
     if (field === 'vipId' && value) {
-      if (!isEligibleForWeekVip(player, dayKey)) {
+      const dayConductor = getWeeklyPlan().days[dayKey]?.conductorId;
+      if (isRealPlayerId(dayConductor) && dayConductor === value) {
+        AppUI.toast('Impossible : un joueur ne peut pas être Conducteur et VIP le même jour.');
+        render();
+        return;
+      }
+      if (options.forceVip) {
+        if (!canForceVipManual()) {
+          AppUI.toast('Seuls les R4 et R5 peuvent forcer un VIP exclu.');
+          render();
+          return;
+        }
+        const reasons = getVipExclusionReasons(player, dayKey);
+        if (isVipForceBlocked(reasons)) {
+          AppUI.toast('Impossible : conducteur du jour.');
+          render();
+          return;
+        }
+      } else if (!isEligibleForWeekVip(player, dayKey)) {
         AppUI.toast('VIP non éligible — règles Train non respectées.');
         render();
         return;
@@ -2423,7 +2653,7 @@
       if (!s.weeklyPlan.days[dayKey]) {
         s.weeklyPlan.days[dayKey] = { conductorId: null, vipId: null, vipMode: null };
       }
-      if (field === 'conductorId' && value) {
+      if (field === 'conductorId' && isRealPlayerId(value)) {
         const conflictDays =
           dayKey === 'dimanche'
             ? []
@@ -2440,9 +2670,28 @@
           s.weeklyPlan.days[dayKey].vipMode = null;
         }
       }
-      s.weeklyPlan.days[dayKey][field] = value || null;
+      if (field === 'vipId' && isRealPlayerId(value) && options.forceVip) {
+        // Un seul VIP / joueur / semaine : retirer des autres jours
+        WEEK_DAYS.forEach((d) => {
+          if (d.key === dayKey) return;
+          const slot = s.weeklyPlan.days[d.key];
+          if (slot && slot.vipId === value) {
+            slot.vipId = null;
+            slot.vipMode = null;
+          }
+        });
+      }
+      if (field === 'conductorId' && dayKey === 'dimanche' && !value) {
+        s.weeklyPlan.days[dayKey].conductorId = SUNDAY_JEU_QUIZ_ID;
+      } else {
+        s.weeklyPlan.days[dayKey][field] = value || null;
+      }
       if (field === 'vipId') {
-        s.weeklyPlan.days[dayKey].vipMode = value ? 'manuel' : null;
+        s.weeklyPlan.days[dayKey].vipMode = value
+          ? options.forceVip
+            ? 'force'
+            : 'manuel'
+          : null;
       }
       return s;
     });
@@ -2485,11 +2734,23 @@
       const vip = slot.vipId ? playerName(slot.vipId) : '';
       lines.push(`${d.label} | Conducteur : ${conductor} | VIP : ${vip}`);
     });
-    if (mode === 'final' && isSundayFilled(plan)) {
-      const sunday = plan.days.dimanche || {};
+    const sunday = plan.days.dimanche || {};
+    if (isJeuQuizConductor(sunday.conductorId)) {
+      if (isRealPlayerId(sunday.vipId)) {
+        lines.push(
+          `Dimanche : ${SUNDAY_JEU_QUIZ_LABEL} | VIP : ${playerName(sunday.vipId)}`
+        );
+      } else {
+        lines.push(`Dimanche : ${SUNDAY_JEU_QUIZ_LABEL}`);
+      }
+    } else if (mode === 'final' && isSundayFilled(plan)) {
       lines.push(
         `Dimanche | Conducteur : ${playerName(sunday.conductorId)} | VIP : ${playerName(sunday.vipId)}`
       );
+    } else if (mode === 'provisional' && (isRealPlayerId(sunday.conductorId) || isRealPlayerId(sunday.vipId))) {
+      const conductor = sunday.conductorId ? playerName(sunday.conductorId) : '';
+      const vip = sunday.vipId ? playerName(sunday.vipId) : '';
+      lines.push(`Dimanche | Conducteur : ${conductor} | VIP : ${vip}`);
     }
     return lines.join('\n');
   }
@@ -2541,14 +2802,19 @@
       AppUI.toast('Aucun jour renseigné du lundi au samedi.');
       return;
     }
-    showNotificationBlock(text, 'Notification provisoire (lundi → samedi, sans dimanche)');
+    showNotificationBlock(
+      text,
+      'Notification provisoire (lundi → samedi · dimanche Jeu / Quiz si applicable)'
+    );
     AppUI.toast('Notification provisoire générée — compteurs inchangés.');
   }
 
   function generateFinalNotification() {
     const plan = getWeeklyPlan();
     if (!isSundayFilled(plan)) {
-      AppUI.toast('Renseignez le Conducteur et le VIP du dimanche.');
+      AppUI.toast(
+        'Renseignez le dimanche (Jeu / Quiz, ou Conducteur + VIP si joueur réel).'
+      );
       return;
     }
     const text = buildNotificationText(plan, 'final');
@@ -2599,7 +2865,7 @@
       const ready = validateClosure().length === 0;
       els.validationResult.innerHTML = ready
         ? '<div class="train-ok">Aucune erreur détectée. La semaine peut être clôturée.</div>'
-        : '<div class="train-ok">Aucune erreur de doublon / éligibilité. Complétez lundi→samedi et le dimanche pour clôturer. La notification provisoire reste disponible.</div>';
+        : '<div class="train-ok">Aucune erreur de doublon / éligibilité. Complétez lundi→samedi (et Conducteur+VIP dimanche si joueur réel ; Jeu / Quiz suffit sinon) pour clôturer. La notification provisoire reste disponible.</div>';
       refreshActionButtons();
       return;
     }
@@ -2617,9 +2883,11 @@
     const isConductor = field === 'conductorId';
     const playerId = isConductor ? slot.conductorId : slot.vipId;
     const fallback = isConductor ? slot.conductorPseudo || '—' : slot.vipPseudo || '—';
-    const name = playerId
-      ? ROSModels.getPlayerDisplayName(getAllianceState(), playerId, fallback)
-      : fallback;
+    const name = isJeuQuizConductor(playerId)
+      ? SUNDAY_JEU_QUIZ_LABEL
+      : playerId
+        ? ROSModels.getPlayerDisplayName(getAllianceState(), playerId, fallback)
+        : fallback;
     const roleLabel = isConductor ? 'Conducteur' : 'VIP';
     const btn = canEdit
       ? `<button type="button" class="btn btn-ghost btn-sm train-history-edit-btn" data-train-action="replace-official-role" data-week-id="${escapeHtml(week.id)}" data-day="${dayKey}" data-field="${field}">Modifier</button>`
@@ -2946,6 +3214,10 @@
     const lines = [`Semaine : ${label}`, ''];
     WEEK_DAYS.forEach((d) => {
       const slot = days[d.key] || {};
+      if (isJeuQuizConductor(slot.conductorId) && !isRealPlayerId(slot.vipId)) {
+        lines.push(`${d.label} — ${SUNDAY_JEU_QUIZ_LABEL}`);
+        return;
+      }
       if (!slot.conductorId && !slot.vipId) return;
       lines.push(
         `${d.label} — Conducteur : ${playerName(slot.conductorId)} · VIP : ${playerName(slot.vipId)}`
@@ -3098,8 +3370,8 @@
   }
 
   function analyzeConductors() {
-    if (!allFirstFilled()) {
-      AppUI.toast('Renseignez tous les Premiers avant d’analyser.');
+    if (!hasAnyFirstFilled()) {
+      AppUI.toast('Renseignez au moins une catégorie pour analyser les conducteurs.');
       return;
     }
     const conflicts = findFirstConflicts();
@@ -3389,5 +3661,26 @@
     pullOfficialWeeksFromSupabase,
     renderSettingsHistoryAdmin,
     canManageTrainHistorySettings,
+    SUNDAY_JEU_QUIZ_ID,
+    SUNDAY_JEU_QUIZ_LABEL,
+    isJeuQuizConductor,
+    isRealPlayerId,
+    isSundayFilled,
+    validateClosure,
+    validateWeeklyPlanErrors,
+    buildWeeklyPlanDeltas,
+    buildNotificationText,
+    getWeeklyPlan,
+    setWeekDayField,
+    getWeekConductorIds,
+    hasAnyFirstFilled,
+    findFirstConflicts,
+    analyzeConductors,
+    getVipDrawExclusionStats,
+    getEligibleWeekVipPlayers,
+    getVipExclusionReasons,
+    classifyWeekVipCandidates,
+    isVipForceBlocked,
+    canForceVipManual,
   };
 })(window);
