@@ -91,8 +91,28 @@
   }
 
   function importJSON(jsonText) {
+    const previousPlayers = Array.isArray(getState().players) ? getState().players.map((p) => ({ ...p })) : [];
     const parsed = JSON.parse(jsonText);
     state = ROSModels.normalizeState(parsed);
+    // Ne jamais laisser un import incomplet effacer des PG déjà connues localement
+    // sans intention syncClears (la fusion Supabase protège aussi côté distant).
+    if (global.ROSSync && typeof ROSSync.protectPlayersGlobalPowers === 'function') {
+      ROSSync.protectPlayersGlobalPowers(previousPlayers, state.players);
+    } else {
+      const prevById = new Map(previousPlayers.filter((p) => p?.id).map((p) => [p.id, p]));
+      state.players.forEach((p) => {
+        const prev = prevById.get(p.id);
+        if (!prev) return;
+        const clears = p.syncClears && typeof p.syncClears === 'object' ? p.syncClears : {};
+        if (
+          prev.globalPowerTierId &&
+          !p.globalPowerTierId &&
+          !clears.globalPowerTierId
+        ) {
+          p.globalPowerTierId = prev.globalPowerTierId;
+        }
+      });
+    }
     persist(true);
     return state;
   }

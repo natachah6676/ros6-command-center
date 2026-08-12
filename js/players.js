@@ -495,12 +495,9 @@
           ROSSync.clearPlayerFieldCleared(player, 'heroPowerTierId');
         }
         if (mayEditGlobal) {
-          player.globalPowerTierId = requestedGlobalPowerTierId;
-          if (!requestedGlobalPowerTierId && global.ROSSync?.markPlayerFieldCleared) {
-            ROSSync.markPlayerFieldCleared(player, 'globalPowerTierId');
-          } else if (requestedGlobalPowerTierId && global.ROSSync?.clearPlayerFieldCleared) {
-            ROSSync.clearPlayerFieldCleared(player, 'globalPowerTierId');
-          }
+          applyGlobalPowerChange(state, player, requestedGlobalPowerTierId, {
+            explicitClear: !requestedGlobalPowerTierId,
+          });
         }
         player.preferredVolant = preferredVolant;
         player.coachingException = coachingException;
@@ -541,6 +538,11 @@
           coachingException,
         });
         state.players.push(created);
+        if (mayEditGlobal && requestedGlobalPowerTierId) {
+          appendGlobalPowerAudit(state, created, null, requestedGlobalPowerTierId);
+        } else if (mayEditGlobal && !requestedGlobalPowerTierId) {
+          // Création sans PG : pas un clear (rien à protéger côté serveur encore)
+        }
         const week = state.weeks.find((w) => w.id === state.currentWeekId);
         if (week && !absent) week.scores[created.id] = ROSModels.createEmptyScore();
       }
@@ -640,6 +642,48 @@
     AppUI.toast(nextId ? 'Puissance héros enregistrée.' : 'Puissance héros : Non renseignée.');
   }
 
+  function appendGlobalPowerAudit(state, player, fromValue, toValue) {
+    if (!state || !player) return;
+    if (!Array.isArray(state.globalPowerAudit)) state.globalPowerAudit = [];
+    const actor = actorStamp();
+    state.globalPowerAudit.unshift({
+      id: `gpa_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      playerId: player.id,
+      pseudo: player.pseudo || '',
+      from: fromValue || null,
+      to: toValue || null,
+      at: new Date().toISOString(),
+      actorUserId: actor.actorUserId || '',
+      actorLabel: actor.actorLabel || '',
+    });
+    if (state.globalPowerAudit.length > 200) {
+      state.globalPowerAudit.length = 200;
+    }
+  }
+
+  /**
+   * Applique une modification explicite de Puissance globale (set ou clear).
+   * Un null implicite sans clear n’est jamais une suppression.
+   */
+  function applyGlobalPowerChange(state, player, nextTierId, { explicitClear = false } = {}) {
+    if (!player) return false;
+    const prev = ROSModels.normalizeGlobalPowerTierId(player.globalPowerTierId);
+    const next = ROSModels.normalizeGlobalPowerTierId(nextTierId);
+    if (!next && !explicitClear && !prev) return false;
+    if (prev === next && !(explicitClear && !next)) return false;
+
+    player.globalPowerTierId = next;
+    if (!next) {
+      if (global.ROSSync?.markPlayerFieldCleared) {
+        ROSSync.markPlayerFieldCleared(player, 'globalPowerTierId');
+      }
+    } else if (global.ROSSync?.clearPlayerFieldCleared) {
+      ROSSync.clearPlayerFieldCleared(player, 'globalPowerTierId');
+    }
+    appendGlobalPowerAudit(state, player, prev, next);
+    return true;
+  }
+
   function setGlobalPowerTier(playerId, tierId) {
     if (!canEditGlobalPower()) {
       AppUI.toast('Seuls les R4 et R5 actifs peuvent modifier la puissance globale.');
@@ -647,22 +691,35 @@
       return;
     }
     const nextId = ROSModels.normalizeGlobalPowerTierId(tierId);
+    if (!nextId) {
+      clearGlobalPowerTier(playerId);
+      return;
+    }
     ROSStorage.update((state) => {
       const target = state.players.find((p) => p.id === playerId);
       if (!target) return state;
-      target.globalPowerTierId = nextId;
-      if (!nextId && global.ROSSync?.markPlayerFieldCleared) {
-        ROSSync.markPlayerFieldCleared(target, 'globalPowerTierId');
-      } else if (nextId && global.ROSSync?.clearPlayerFieldCleared) {
-        ROSSync.clearPlayerFieldCleared(target, 'globalPowerTierId');
-      }
+      applyGlobalPowerChange(state, target, nextId, { explicitClear: false });
       return state;
     });
     AppUI.toast(
-      nextId
-        ? `Puissance globale : ${ROSModels.getPlayerGlobalPowerLabel({ globalPowerTierId: nextId })}.`
-        : 'Puissance globale : Non renseignée.'
+      `Puissance globale : ${ROSModels.getPlayerGlobalPowerLabel({ globalPowerTierId: nextId })}.`
     );
+  }
+
+  /** Suppression volontaire uniquement — jamais via un save partiel / cache incomplet. */
+  function clearGlobalPowerTier(playerId) {
+    if (!canEditGlobalPower()) {
+      AppUI.toast('Seuls les R4 et R5 actifs peuvent modifier la puissance globale.');
+      render();
+      return;
+    }
+    ROSStorage.update((state) => {
+      const target = state.players.find((p) => p.id === playerId);
+      if (!target) return state;
+      applyGlobalPowerChange(state, target, null, { explicitClear: true });
+      return state;
+    });
+    AppUI.toast('Puissance globale : Non renseignée.');
   }
 
   function setCoachingContacted(playerId, contacted) {
@@ -972,5 +1029,7 @@
     openEditModal,
     openDetail,
     closeDetail,
+    setGlobalPowerTier,
+    clearGlobalPowerTier,
   };
 })(window);

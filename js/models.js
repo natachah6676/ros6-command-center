@@ -827,7 +827,26 @@
       vsSettings: createDefaultVsSettings(),
       coachingThreshold: createDefaultCoachingThreshold(),
       alliance: createDefaultAllianceSettings(),
+      /** Journal minimal des changements de Puissance globale (sync / audit). */
+      globalPowerAudit: [],
     };
+  }
+
+  function normalizeGlobalPowerAudit(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .filter((e) => e && typeof e === 'object' && e.playerId)
+      .map((e) => ({
+        id: e.id || uid('gpa'),
+        playerId: String(e.playerId),
+        pseudo: e.pseudo != null ? String(e.pseudo) : '',
+        from: normalizeGlobalPowerTierId(e.from),
+        to: normalizeGlobalPowerTierId(e.to),
+        at: e.at || new Date().toISOString(),
+        actorUserId: e.actorUserId != null ? String(e.actorUserId) : '',
+        actorLabel: e.actorLabel != null ? String(e.actorLabel) : '',
+      }))
+      .slice(0, 200);
   }
 
   function createDefaultCoachingThreshold() {
@@ -1098,6 +1117,7 @@
       vsSettings,
       coachingThreshold,
       alliance,
+      globalPowerAudit: normalizeGlobalPowerAudit(raw.globalPowerAudit),
     };
 
     // Compatibilité : anciennes clés « pseudo » → identifiant interne
@@ -1225,6 +1245,7 @@
     createBlankUiState,
     createInitialState,
     normalizeState,
+    normalizeGlobalPowerAudit,
     canReset,
     canImportOverwrite,
   };

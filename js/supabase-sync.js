@@ -188,11 +188,54 @@
     ).length;
   }
 
+  function countFilledGlobalPowerInPlayers(players) {
+    if (!Array.isArray(players)) return 0;
+    return players.filter((p) => p && !isEmptyFieldValue(p.globalPowerTierId)).length;
+  }
+
+  /**
+   * Restaure les Puissances globales non vides d’une liste source
+   * lorsque la cible a null/undefined sans clear volontaire.
+   */
+  function protectPlayersGlobalPowers(sourcePlayers, targetPlayers) {
+    if (!Array.isArray(sourcePlayers) || !Array.isArray(targetPlayers)) return targetPlayers;
+    const sourceById = new Map(sourcePlayers.filter((p) => p?.id).map((p) => [p.id, p]));
+    targetPlayers.forEach((target) => {
+      if (!target?.id) return;
+      const source = sourceById.get(target.id);
+      if (!source) return;
+      const sourceVal = source.globalPowerTierId;
+      const targetVal = target.globalPowerTierId;
+      const clears = target.syncClears && typeof target.syncClears === 'object' ? target.syncClears : {};
+      if (
+        !isEmptyFieldValue(sourceVal) &&
+        isEmptyFieldValue(targetVal) &&
+        !clears.globalPowerTierId
+      ) {
+        target.globalPowerTierId = sourceVal;
+      }
+    });
+    return targetPlayers;
+  }
+
   function stripPlayerSyncMeta(player) {
     if (!player || typeof player !== 'object') return player;
     const next = { ...player };
     delete next.syncClears;
     return next;
+  }
+
+  function mergeGlobalPowerAudit(remoteList, localList) {
+    const map = new Map();
+    [...(Array.isArray(remoteList) ? remoteList : []), ...(Array.isArray(localList) ? localList : [])].forEach(
+      (entry) => {
+        if (!entry || !entry.id) return;
+        map.set(entry.id, cloneJson(entry));
+      }
+    );
+    return [...map.values()]
+      .sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))
+      .slice(0, 200);
   }
 
   /**
@@ -234,18 +277,49 @@
 
     const remotePlayers = Array.isArray(remoteStore.players) ? remoteStore.players : [];
     const localPlayers = Array.isArray(localStore.players) ? localStore.players : [];
-    const remoteById = new Map(remotePlayers.map((p) => [p.id, p]));
+    const remoteById = new Map(remotePlayers.filter((p) => p?.id).map((p) => [p.id, p]));
+    const seen = new Set();
+    const mergedPlayers = [];
 
-    const mergedPlayers = localPlayers.map((localP) => {
-      if (!localP || !localP.id) return stripPlayerSyncMeta(localP);
-      return mergePlayerRecord(remoteById.get(localP.id), localP);
+    // 1) Joueurs présents localement (édition membres / VS) avec protection champs
+    localPlayers.forEach((localP) => {
+      if (!localP?.id) {
+        mergedPlayers.push(stripPlayerSyncMeta(localP));
+        return;
+      }
+      seen.add(localP.id);
+      mergedPlayers.push(mergePlayerRecord(remoteById.get(localP.id), localP));
     });
 
-    return {
+    // 2) Joueurs uniquement côté serveur : ne jamais les perdre (cache incomplet)
+    remotePlayers.forEach((remoteP) => {
+      if (!remoteP?.id || seen.has(remoteP.id)) return;
+      seen.add(remoteP.id);
+      mergedPlayers.push(stripPlayerSyncMeta(cloneJson(remoteP)));
+    });
+
+    const merged = {
       ...cloneJson(remoteStore),
       ...cloneJson(localStore),
       players: mergedPlayers,
+      globalPowerAudit: mergeGlobalPowerAudit(
+        remoteStore.globalPowerAudit,
+        localStore.globalPowerAudit
+      ),
     };
+
+    // Filet final : aucune PG distante non vide ne doit disparaître sans clear
+    protectPlayersGlobalPowers(remotePlayers, merged.players);
+    return merged;
+  }
+
+  /**
+   * Empêche un force-push destructeur quand le cache local a moins de PG renseignées.
+   */
+  function shouldBlockDestructiveGlobalPowerOverwrite(remoteData, localStoresMap) {
+    const remoteGp = countFilledGlobalPower(remoteData);
+    const localGp = countFilledGlobalPower({ stores: localStoresMap || collectLocalStoresMap() });
+    return remoteGp > localGp;
   }
 
   /**
@@ -469,14 +543,14 @@
     return data;
   }
 
-  async function pushToSupabase({ force = false, allStores = false } = {}) {
+  async function pushToSupabase({ force = false, allStores = false, allowFewerGlobalPowers = false } = {}) {
     if (!session || !client || suppressPush) return { ok: false, reason: 'noop' };
     if (!navigator.onLine) {
       setSyncStatus('offline');
       return { ok: false, reason: 'offline' };
     }
 
-    const run = () => runPushAttempt({ force, allStores });
+    const run = () => runPushAttempt({ force, allStores, allowFewerGlobalPowers });
     const resultPromise = pushChain.then(run, run);
     pushChain = resultPromise.then(
       () => undefined,
@@ -485,7 +559,7 @@
     return resultPromise;
   }
 
-  async function runPushAttempt({ force = false, allStores = false } = {}) {
+  async function runPushAttempt({ force = false, allStores = false, allowFewerGlobalPowers = false } = {}) {
     pushing = true;
     setSyncStatus('saving');
     let lastResult = { ok: false, reason: 'noop' };
@@ -526,6 +600,23 @@
         }
 
         const remoteVersion = Number(remote.version) || 0;
+        const localStoresMap = collectLocalStoresMap();
+
+        if (
+          force &&
+          allStores &&
+          !allowFewerGlobalPowers &&
+          shouldBlockDestructiveGlobalPowerOverwrite(remote.data || {}, localStoresMap)
+        ) {
+          setSyncStatus('error', 'protection puissances');
+          if (global.AppUI) {
+            AppUI.toast(
+              'Écriture complète bloquée : le cache local a moins de Puissances globales renseignées que Supabase.'
+            );
+          }
+          lastResult = { ok: false, reason: 'blocked-global-power' };
+          break;
+        }
 
         if (!force && isExternalRemoteConflict(remoteVersion)) {
           // Rebase : remote gagne pour les stores non dirty ; dirty conservés/fusionnés.
@@ -550,7 +641,7 @@
         // force : toujours fusionner sur la base distante (jamais un replace aveugle)
         const keysToWrite =
           force && allStores ? new Set(STORE_KEYS) : dirtyForPush;
-        const payload = buildPushPayload(remote.data || {}, keysToWrite);
+        const payload = buildPushPayload(remote.data || {}, keysToWrite, localStoresMap);
         const nextVersion = remoteVersion + 1;
 
         if (force) {
@@ -669,16 +760,26 @@
   async function confirmOverwriteRemoteIfNeeded(remote) {
     if (remoteIsEmpty(remote?.data)) return true;
 
+    const localStoresMap = collectLocalStoresMap();
     const remoteGp = countFilledGlobalPower(remote.data);
-    const localGp = countFilledGlobalPower({ stores: collectLocalStoresMap() });
+    const localGp = countFilledGlobalPower({ stores: localStoresMap });
     const remoteUpdated = remote.updated_at
       ? new Date(remote.updated_at).toLocaleString('fr-FR')
       : '—';
-    const riskLines = [];
+
+    // Priorité absolue : un cache local plus pauvre en PG ne peut pas écraser Supabase.
     if (remoteGp > localGp) {
-      riskLines.push(
-        `⚠ Supabase a ${remoteGp} Puissance(s) globale(s) renseignée(s) contre ${localGp} en local.`
-      );
+      if (global.AppUI) {
+        AppUI.toast(
+          `Cache local incomplet (${localGp} PG vs ${remoteGp} sur Supabase) — version distante conservée.`
+        );
+      }
+      return false;
+    }
+
+    const riskLines = [];
+    if (remoteGp === localGp && remoteGp > 0) {
+      riskLines.push(`Puissances globales renseignées : ${remoteGp} (local = distant).`);
     }
     if ((Number(remote.version) || 0) < localVersion) {
       riskLines.push(
@@ -729,15 +830,29 @@
           writeMeta(remoteVersion);
           pendingDirty.clear();
         } else if (remoteVersion < localVersion) {
-          const overwrite = await confirmOverwriteRemoteIfNeeded(remote);
-          if (overwrite) {
-            STORE_KEYS.forEach((key) => pendingDirty.add(key));
-            await pushToSupabase({ force: true, allStores: true });
-          } else {
+          const remoteGp = countFilledGlobalPower(remote.data);
+          const localGp = countFilledGlobalPower({ stores: collectLocalStoresMap() });
+          if (remoteGp > localGp) {
+            // Cache local plus ancien/incomplet : ne jamais forcer l’écrasement des PG.
             applyStoresToLocal(remote.data, { reload: false });
             writeMeta(remoteVersion);
             pendingDirty.clear();
-            AppUI.toast('Version Supabase conservée (cache local ignoré).');
+            if (global.AppUI) {
+              AppUI.toast(
+                `Cache local incomplet (${localGp} PG vs ${remoteGp} Supabase) — données distantes conservées.`
+              );
+            }
+          } else {
+            const overwrite = await confirmOverwriteRemoteIfNeeded(remote);
+            if (overwrite) {
+              STORE_KEYS.forEach((key) => pendingDirty.add(key));
+              await pushToSupabase({ force: true, allStores: true });
+            } else {
+              applyStoresToLocal(remote.data, { reload: false });
+              writeMeta(remoteVersion);
+              pendingDirty.clear();
+              AppUI.toast('Version Supabase conservée (cache local ignoré).');
+            }
           }
         }
       }
@@ -967,6 +1082,9 @@
     refreshUserLabel: updateUserLabel,
     markPlayerFieldCleared,
     clearPlayerFieldCleared,
+    protectPlayersGlobalPowers,
+    countFilledGlobalPower,
+    shouldBlockDestructiveGlobalPowerOverwrite,
     STORE_KEYS,
     COMMAND_CENTER_KEY,
     /** Helpers exposés pour tests unitaires (non utilisés par l’UI). */
@@ -976,6 +1094,10 @@
       buildPushPayload,
       rebaseLocalAfterRemote,
       countFilledGlobalPower,
+      countFilledGlobalPowerInPlayers,
+      protectPlayersGlobalPowers,
+      shouldBlockDestructiveGlobalPowerOverwrite,
+      mergeGlobalPowerAudit,
       isEmptyFieldValue,
       PROTECTED_NONEMPTY_PLAYER_FIELDS,
       pendingDirty,
