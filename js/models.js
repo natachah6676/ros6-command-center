@@ -27,7 +27,7 @@
 
   function createDefaultVsSettings() {
     return {
-      mode: 'eco',
+      mode: 'afond',
       afond: {
         dailyGoal: 7200000,
         midMin: 3600000,
@@ -548,7 +548,7 @@
     return `${d}/${m}/${y}`;
   }
 
-  function createEmptyScore() {
+  function createEmptyScore(options = {}) {
     return {
       days: {
         lundi: 0,
@@ -565,7 +565,13 @@
         vendredi: 'ok',
       },
       allianceDonMissed: false,
+      /** Snapshot historique (renseigné à la clôture) ; absent des anciennes données = false. */
+      absent: Boolean(options.absent),
     };
+  }
+
+  function isScoreAbsent(score) {
+    return Boolean(score && score.absent);
   }
 
   function getNextWeekNumber(weeks) {
@@ -597,7 +603,9 @@
   }
 
   function isWeekEditable(week, currentWeekId) {
-    return Boolean(week && !week.archived && week.id === currentWeekId);
+    return Boolean(
+      week && currentWeekId && !week.archived && week.id === currentWeekId
+    );
   }
 
   function createPlayer({
@@ -702,19 +710,36 @@
   }
 
   function getWeekScoreSummary(week, playerId, stateOrSettings) {
-    const score = (week && week.scores && week.scores[playerId]) || createEmptyScore();
-    const total = computeTotal(score, stateOrSettings);
-    const color = getColorClass(total, stateOrSettings);
+    if (!week) {
+      const empty = createEmptyScore();
+      return {
+        score: empty,
+        total: 0,
+        color: 'color-green',
+        colorLabel: 'Vert',
+        flaggedDays: [],
+        donationMissed: false,
+        daysUnderObjective: 0,
+        objectivesMet: 5,
+        hasRecord: false,
+        absent: false,
+      };
+    }
+    const score = (week.scores && week.scores[playerId]) || createEmptyScore();
+    const absent = isScoreAbsent(score);
+    const total = absent ? 0 : computeTotal(score, stateOrSettings);
+    const color = absent ? 'color-green' : getColorClass(total, stateOrSettings);
     return {
       score,
       total,
       color,
       colorLabel: getColorLabel(total, stateOrSettings),
-      flaggedDays: getFlaggedDays(score),
-      donationMissed: Boolean(score.allianceDonMissed),
-      daysUnderObjective: countDaysUnderObjective(score),
-      objectivesMet: countObjectivesMet(score),
-      hasRecord: Boolean(week && week.scores && week.scores[playerId]),
+      flaggedDays: absent ? [] : getFlaggedDays(score),
+      donationMissed: absent ? false : Boolean(score.allianceDonMissed),
+      daysUnderObjective: absent ? 0 : countDaysUnderObjective(score),
+      objectivesMet: absent ? 5 : countObjectivesMet(score),
+      hasRecord: Boolean(week.scores && week.scores[playerId]),
+      absent,
     };
   }
 
@@ -722,9 +747,11 @@
     return (state.weeks || []).slice().sort((a, b) => (a.startDate < b.startDate ? 1 : -1));
   }
 
+  /** Semaine VS active uniquement ; null s’il n’y en a pas. */
   function getCurrentWeekFromState(state) {
-    const weeks = getSortedWeeks(state);
-    return weeks.find((w) => w.id === state.currentWeekId) || weeks[0] || null;
+    if (!state || !state.currentWeekId) return null;
+    const weeks = state.weeks || [];
+    return weeks.find((w) => w.id === state.currentWeekId) || null;
   }
 
   function getColorHistory(state, playerId) {
@@ -814,13 +841,12 @@
   }
 
   function createBlankState() {
-    const week = createWeek(new Date(), { number: 1, archived: false });
     return {
       version: DATA_VERSION,
       appRole: 'R5',
       players: [],
-      weeks: [week],
-      currentWeekId: week.id,
+      weeks: [],
+      currentWeekId: null,
       ui: createBlankUiState(),
       playerWeekNotes: {},
       powerTiers: createDefaultPowerTiers(),
@@ -948,10 +974,7 @@
         : [];
 
     state.players = players;
-    players.forEach((player) => {
-      state.weeks[0].scores[player.id] = createEmptyScore();
-    });
-
+    // Pas de semaine VS automatique : créée uniquement quand on joue le VS à fond.
     return state;
   }
 
@@ -1036,6 +1059,7 @@
                   : inferDayBracket(days.vendredi),
               },
               allianceDonMissed: Boolean(s.allianceDonMissed),
+              absent: Boolean(s.absent),
             };
             scores[playerId] = score;
           });
@@ -1056,7 +1080,9 @@
             scores,
           };
         })
-      : base.weeks;
+      : Array.isArray(raw.weeks)
+        ? []
+        : base.weeks;
 
     // Trier les semaines du plus récent au plus ancien
     weeks = weeks.slice().sort((a, b) => (a.startDate < b.startDate ? 1 : -1));
@@ -1070,14 +1096,25 @@
       }
     });
 
-    let currentWeekId = raw.currentWeekId;
-    if (!weeks.some((w) => w.id === currentWeekId)) {
-      currentWeekId = weeks[0].id;
+    let currentWeekId = raw.currentWeekId || null;
+    if (currentWeekId && !weeks.some((w) => w.id === currentWeekId)) {
+      currentWeekId = null;
+    }
+    // Compat : si pas d’id courant mais une seule semaine encore ouverte dans les données
+    if (!currentWeekId && weeks.length) {
+      const openWeeks = weeks.filter((w) => !w.archived);
+      if (openWeeks.length === 1) {
+        currentWeekId = openWeeks[0].id;
+      } else if (openWeeks.length > 1) {
+        currentWeekId = openWeeks[0].id;
+      }
+      // Si toutes sont archivées → currentWeekId reste null (aucune active)
     }
 
-    // Seule la semaine courante reste éditable ; les autres sont archivées
+    // Au plus une semaine active ; les autres sont clôturées / archivées.
+    // Autorise currentWeekId = null (aucune semaine active).
     weeks.forEach((week) => {
-      week.archived = week.id !== currentWeekId;
+      week.archived = !currentWeekId || week.id !== currentWeekId;
     });
 
     const rawUi = raw.ui && typeof raw.ui === 'object' ? raw.ui : {};
@@ -1161,6 +1198,7 @@
     toISODate,
     formatDateFR,
     createEmptyScore,
+    isScoreAbsent,
     getNextWeekNumber,
     createWeek,
     isWeekEditable,

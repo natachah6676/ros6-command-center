@@ -1,6 +1,5 @@
 /**
- * Module VS hebdomadaire — gestion sécurisée des semaines
- * Modes VS ÉCO / VS À FOND · paramètres · indicateurs · clôture sécurisée
+ * Module VS — semaines à fond à la demande · clôture / création séparées
  */
 (function (global) {
   const els = {};
@@ -10,12 +9,14 @@
   function cacheDom() {
     els.weekSelector = document.getElementById('weekSelector');
     els.btnNewWeek = document.getElementById('btnNewWeek');
+    els.btnCloseWeek = document.getElementById('btnCloseWeek');
     els.tbody = document.getElementById('vsTableBody');
     els.empty = document.getElementById('vsEmpty');
     els.table = document.getElementById('vsTable');
     els.activeTitle = document.getElementById('vsActiveWeekTitle');
     els.activeDates = document.getElementById('vsActiveWeekDates');
     els.archiveNotice = document.getElementById('vsArchiveNotice');
+    els.noActiveNotice = document.getElementById('vsNoActiveNotice');
     els.modeBar = document.getElementById('vsModeBar');
     els.modeLabel = document.getElementById('vsModeLabel');
     els.btnToggleMode = document.getElementById('vsToggleMode');
@@ -41,13 +42,17 @@
 
   function getSelectedWeek() {
     const state = ROSStorage.getState();
-    const selectedId = els.weekSelector.value || state.currentWeekId;
-    return state.weeks.find((w) => w.id === selectedId) || state.weeks[0];
+    const weeks = state.weeks || [];
+    if (!weeks.length) return null;
+    const selectedId = els.weekSelector?.value || state.currentWeekId;
+    return weeks.find((w) => w.id === selectedId) || weeks[0] || null;
   }
 
+  /** Semaine réellement active (éditable) — null s’il n’y en a pas. */
   function getActiveWeek(state) {
     const current = state || ROSStorage.getState();
-    return current.weeks.find((w) => w.id === current.currentWeekId) || current.weeks[0];
+    if (!current.currentWeekId) return null;
+    return (current.weeks || []).find((w) => w.id === current.currentWeekId) || null;
   }
 
   function isSelectedEditable() {
@@ -112,32 +117,64 @@
   function renderWeekBar() {
     const state = ROSStorage.getState();
     const active = getActiveWeek(state);
+    const weeks = state.weeks || [];
 
-    if (els.activeTitle && active) {
-      els.activeTitle.textContent = active.label || `Semaine ${active.number || '?'}`;
+    if (els.activeTitle) {
+      els.activeTitle.textContent = active
+        ? active.label || `Semaine ${active.number || '?'}`
+        : 'Aucune';
     }
-    if (els.activeDates && active) {
-      els.activeDates.textContent = `${ROSModels.formatDateFR(active.startDate)} → ${ROSModels.formatDateFR(active.endDate)}`;
+    if (els.activeDates) {
+      els.activeDates.textContent = active
+        ? `${ROSModels.formatDateFR(active.startDate)} → ${ROSModels.formatDateFR(active.endDate)}`
+        : '';
+    }
+
+    if (els.btnCloseWeek) {
+      els.btnCloseWeek.disabled = !active;
+    }
+    if (els.btnNewWeek) {
+      els.btnNewWeek.disabled = Boolean(active);
+      els.btnNewWeek.title = active
+        ? 'Clôturez d’abord la semaine VS active'
+        : 'Créer une semaine VS à fond';
     }
 
     const previousSelectedId = els.weekSelector.value || state.currentWeekId;
-    els.weekSelector.innerHTML = state.weeks
+    els.weekSelector.innerHTML = weeks
       .map((week) => {
-        const mark = week.id === state.currentWeekId ? ' — active' : ' — archivée';
+        const mark =
+          week.id === state.currentWeekId && !week.archived ? ' — active' : ' — clôturée';
         return `<option value="${week.id}">${escapeHtml(week.label || `Semaine ${week.number}`)}${mark}</option>`;
       })
       .join('');
 
-    if (state.weeks.some((w) => w.id === previousSelectedId)) {
+    if (weeks.some((w) => w.id === previousSelectedId)) {
       els.weekSelector.value = previousSelectedId;
-    } else {
+    } else if (state.currentWeekId && weeks.some((w) => w.id === state.currentWeekId)) {
       els.weekSelector.value = state.currentWeekId;
+    } else if (weeks[0]) {
+      els.weekSelector.value = weeks[0].id;
     }
 
-    // Toujours relire la semaine réellement sélectionnée après mise à jour du <select>
     const selected = getSelectedWeek();
     const editable = ROSModels.isWeekEditable(selected, state.currentWeekId);
-    els.archiveNotice.classList.toggle('hidden', editable);
+
+    if (els.noActiveNotice) {
+      if (!active && !selected) {
+        els.noActiveNotice.classList.remove('hidden');
+        els.noActiveNotice.textContent =
+          'Aucune semaine VS. Créez une semaine lorsque vous jouez le VS à fond.';
+      } else if (!active && selected) {
+        els.noActiveNotice.classList.remove('hidden');
+        els.noActiveNotice.textContent =
+          'Aucune semaine VS active. Consultez l’historique ou créez une nouvelle semaine à fond.';
+      } else {
+        els.noActiveNotice.classList.add('hidden');
+      }
+    }
+
+    els.archiveNotice.classList.toggle('hidden', editable || !selected);
     if (!editable && selected) {
       const by =
         global.ROSProfiles && typeof ROSProfiles.resolveActor === 'function'
@@ -211,6 +248,7 @@
 
   function playersForWeek(week, editable) {
     const state = ROSStorage.getState();
+    if (!week) return [];
 
     if (editable) {
       return state.players
@@ -295,6 +333,15 @@
       const players = playersForWeek(week, editable);
       const cfg = ROSModels.getActiveVsConfig(state);
 
+      if (!week) {
+        els.tbody.innerHTML = '';
+        els.table.classList.add('hidden');
+        els.empty.classList.remove('hidden');
+        els.empty.textContent =
+          'Aucune semaine VS. Cliquez sur « Nouvelle semaine VS » lorsque vous jouez le VS à fond.';
+        return;
+      }
+
       if (!players.length) {
         els.tbody.innerHTML = '';
         els.table.classList.add('hidden');
@@ -322,7 +369,9 @@
         .map((player) => {
           const localScore = freshWeek.scores[player.id] || ROSModels.createEmptyScore();
           ROSModels.ensureDayBrackets(localScore);
-          const ignored = Boolean(player.absent) && editable;
+          const histAbsent = !editable && ROSModels.isScoreAbsent(localScore);
+          const liveAbsent = editable && Boolean(player.absent);
+          const ignored = liveAbsent || histAbsent;
           const total = ignored ? 0 : ROSModels.computeTotal(localScore, freshState);
           const color = ignored ? 'color-green' : ROSModels.getColorClass(total, freshState);
           const rowEditable = editable && !player.absent;
@@ -340,7 +389,7 @@
             )
           ).join('');
 
-          const absentBadge = player.absent
+          const absentBadge = ignored
             ? ' <span class="badge badge-absent">Absent</span>'
             : '';
 
@@ -374,6 +423,7 @@
 
     const state = ROSStorage.getState();
     const week = getSelectedWeek();
+    if (!week) return;
     const score = week.scores[playerId] || ROSModels.createEmptyScore();
     const total = ROSModels.computeTotal(score, state);
     const color = ROSModels.getColorClass(total, state);
@@ -428,12 +478,11 @@
       },
       { silent: true }
     );
-
     refreshRowTotal(playerId);
     syncSideViews();
   }
 
-  function updateDonation(playerId, checked) {
+  function updateDonation(playerId, missed) {
     const state = ROSStorage.getState();
     const weekId = els.weekSelector.value;
     const week = state.weeks.find((w) => w.id === weekId);
@@ -451,39 +500,67 @@
         const target = s.weeks.find((w) => w.id === weekId);
         if (!ROSModels.isWeekEditable(target, s.currentWeekId)) return s;
         const score = ROSModels.ensurePlayerScore(target, playerId);
-        score.allianceDonMissed = Boolean(checked);
+        score.allianceDonMissed = Boolean(missed);
         return s;
       },
       { silent: true }
     );
-
     refreshRowTotal(playerId);
     syncSideViews();
   }
 
   function nextAvailableMonday() {
     const state = ROSStorage.getState();
-    const existing = new Set(state.weeks.map((w) => w.startDate));
-    const calendarMonday = ROSModels.startOfWeekMonday();
-    let candidate = calendarMonday;
-
-    if (existing.has(ROSModels.toISODate(candidate))) {
-      const starts = state.weeks.map((w) => w.startDate).sort();
-      const latestStart = starts[starts.length - 1];
-      candidate = ROSModels.addDays(new Date(`${latestStart}T12:00:00`), 7);
+    const used = new Set((state.weeks || []).map((w) => w.startDate));
+    let cursor = ROSModels.startOfWeekMonday(new Date());
+    for (let i = 0; i < 104; i += 1) {
+      const iso = ROSModels.toISODate(cursor);
+      if (!used.has(iso)) return cursor;
+      cursor = ROSModels.addDays(cursor, 7);
     }
-
-    while (existing.has(ROSModels.toISODate(candidate))) {
-      candidate = ROSModels.addDays(candidate, 7);
-    }
-
-    return candidate;
+    return ROSModels.startOfWeekMonday(new Date());
   }
 
-  async function createNewWeek() {
+  function stampClosedWeek(week) {
+    week.archived = true;
+    week.closedAt = new Date().toISOString();
+    const actor =
+      global.ROSProfiles && typeof ROSProfiles.stampActor === 'function'
+        ? ROSProfiles.stampActor()
+        : { actorUserId: '', actorPlayerId: null, actorLabel: '' };
+    week.closedByUserId = actor.actorUserId || '';
+    week.closedByPlayerId = actor.actorPlayerId || null;
+    week.closedBy = actor.actorLabel || '';
+  }
+
+  /**
+   * Snapshot d’absence à la clôture : chaque actif a une entrée ;
+   * absents → score 0 + absent:true (historique indépendant de player.absent).
+   */
+  function snapshotAbsencesOnClose(week, players) {
+    (players || [])
+      .filter((p) => p.status === 'Actif')
+      .forEach((player) => {
+        if (player.absent) {
+          week.scores[player.id] = ROSModels.createEmptyScore({ absent: true });
+          return;
+        }
+        const existing = week.scores[player.id] || ROSModels.createEmptyScore();
+        ROSModels.ensureDayBrackets(existing);
+        existing.absent = false;
+        week.scores[player.id] = existing;
+      });
+  }
+
+  async function closeActiveWeek() {
     const state = ROSStorage.getState();
     const current = getActiveWeek(state);
-    if (current && !current.donationsVerified) {
+    if (!current) {
+      AppUI.toast('Aucune semaine VS active à clôturer.');
+      return;
+    }
+
+    if (!current.donationsVerified) {
       await AppUI.confirm({
         title: 'Vérification des dons',
         message: 'Les dons d’alliance ont-ils bien été vérifiés pour tous les joueurs ?',
@@ -493,8 +570,41 @@
     }
 
     const ok = await AppUI.confirm({
-      title: 'Créer la semaine suivante',
-      message: 'Créer la semaine suivante ? La semaine actuelle sera automatiquement archivée.',
+      title: 'Clôturer la semaine VS',
+      message:
+        'Clôturer la semaine active ? Elle restera dans l’historique (lecture seule). Aucune nouvelle semaine ne sera créée automatiquement.',
+      confirmLabel: 'Clôturer',
+    });
+    if (!ok) return;
+
+    const closedId = current.id;
+    ROSStorage.update((s) => {
+      const week = s.weeks.find((w) => w.id === s.currentWeekId);
+      if (!week || week.id !== closedId) return s;
+      snapshotAbsencesOnClose(week, s.players);
+      stampClosedWeek(week);
+      s.currentWeekId = null;
+      return s;
+    });
+
+    if (els.weekSelector) els.weekSelector.value = closedId;
+    render();
+    syncSideViews();
+    AppUI.toast('Semaine VS clôturée. Aucune semaine active.');
+  }
+
+  async function createNewWeek() {
+    const state = ROSStorage.getState();
+    const current = getActiveWeek(state);
+    if (current) {
+      AppUI.toast('Clôturez d’abord la semaine VS active avant d’en créer une nouvelle.');
+      return;
+    }
+
+    const ok = await AppUI.confirm({
+      title: 'Nouvelle semaine VS',
+      message:
+        'Créer une nouvelle semaine VS à fond ? Elle sera la seule semaine active et éditable.',
       confirmLabel: 'Créer',
     });
     if (!ok) return;
@@ -502,18 +612,10 @@
     const startDateObj = nextAvailableMonday();
 
     ROSStorage.update((s) => {
-      const currentWeek = s.weeks.find((w) => w.id === s.currentWeekId);
-      if (currentWeek) {
-        currentWeek.archived = true;
-        currentWeek.closedAt = new Date().toISOString();
-        const actor =
-          global.ROSProfiles && typeof ROSProfiles.stampActor === 'function'
-            ? ROSProfiles.stampActor()
-            : { actorUserId: '', actorPlayerId: null, actorLabel: '' };
-        currentWeek.closedByUserId = actor.actorUserId || '';
-        currentWeek.closedByPlayerId = actor.actorPlayerId || null;
-        currentWeek.closedBy = actor.actorLabel || '';
-      }
+      s.vsSettings = ROSModels.normalizeVsSettings({
+        ...ROSModels.getVsSettings(s),
+        mode: 'afond',
+      });
 
       const week = ROSModels.createWeek(startDateObj, {
         number: ROSModels.getNextWeekNumber(s.weeks),
@@ -531,10 +633,10 @@
       return s;
     });
 
-    // Le subscribe a pu rendre VS encore sur l’ancienne sélection : forcer la nouvelle active
     els.weekSelector.value = ROSStorage.getState().currentWeekId;
     render();
-    AppUI.toast('Nouvelle semaine créée. La précédente est archivée.');
+    syncSideViews();
+    AppUI.toast('Nouvelle semaine VS à fond créée.');
   }
 
   async function toggleMode() {
@@ -570,24 +672,24 @@
 
   function saveSettings(event) {
     event.preventDefault();
-    const readNum = (id) => Number(document.getElementById(id)?.value);
+    const num = (id) => Number(document.getElementById(id)?.value);
 
     ROSStorage.update((s) => {
       s.vsSettings = ROSModels.normalizeVsSettings({
         mode: ROSModels.getVsSettings(s).mode,
         afond: {
-          dailyGoal: readNum('vsAfondDailyGoal'),
-          midMin: readNum('vsAfondMidMin'),
-          midPoints: readNum('vsAfondMidPoints'),
-          lowPoints: readNum('vsAfondLowPoints'),
-          donationPenalty: readNum('vsAfondDonation'),
-          redFrom: readNum('vsAfondRedFrom'),
+          dailyGoal: num('vsAfondDailyGoal'),
+          midMin: num('vsAfondMidMin'),
+          midPoints: num('vsAfondMidPoints'),
+          lowPoints: num('vsAfondLowPoints'),
+          donationPenalty: num('vsAfondDonation'),
+          redFrom: num('vsAfondRedFrom'),
         },
         eco: {
-          dailyGoal: readNum('vsEcoDailyGoal'),
-          underPoints: readNum('vsEcoUnderPoints'),
-          donationPenalty: readNum('vsEcoDonation'),
-          redFrom: readNum('vsEcoRedFrom'),
+          dailyGoal: num('vsEcoDailyGoal'),
+          underPoints: num('vsEcoUnderPoints'),
+          donationPenalty: num('vsEcoDonation'),
+          redFrom: num('vsEcoRedFrom'),
         },
       });
       const active = s.weeks.find((w) => w.id === s.currentWeekId);
@@ -608,7 +710,7 @@
       return;
     }
     const result = await ROSSync.flushPush();
-    if (result?.ok || result?.reason === 'noop') {
+    if (result?.ok || result?.reason === 'noop' || result?.reason === 'local-runtime') {
       AppUI.toast('Paramètres VS enregistrés.');
       return;
     }
@@ -651,9 +753,10 @@
 
   function init() {
     cacheDom();
-    els.btnNewWeek.addEventListener('click', createNewWeek);
-    els.weekSelector.addEventListener('change', render);
-    els.tbody.addEventListener('change', onTableChange);
+    els.btnNewWeek?.addEventListener('click', createNewWeek);
+    els.btnCloseWeek?.addEventListener('click', closeActiveWeek);
+    els.weekSelector?.addEventListener('change', render);
+    els.tbody?.addEventListener('change', onTableChange);
     els.btnToggleMode?.addEventListener('click', toggleMode);
     els.btnOpenSettings?.addEventListener('click', () => {
       fillSettingsForm(ROSStorage.getState());
@@ -668,5 +771,13 @@
     showSettingsView(false);
   }
 
-  global.VSModule = { init, render, getSelectedWeek, getActiveWeek };
+  global.VSModule = {
+    init,
+    render,
+    getSelectedWeek,
+    getActiveWeek,
+    createNewWeek,
+    closeActiveWeek,
+    snapshotAbsencesOnClose,
+  };
 })(window);

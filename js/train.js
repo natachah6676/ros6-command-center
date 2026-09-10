@@ -257,6 +257,7 @@
 
   function getPlayerWeekColor(playerId) {
     const week = getCurrentWeek();
+    if (!week) return 'color-green';
     const summary = ROSModels.getWeekScoreSummary(week, playerId);
     return summary.color;
   }
@@ -1095,7 +1096,16 @@
 
   function syncWeeklyPlanToCurrentWeek(trainState) {
     const week = getCurrentWeek();
-    const vsWeekId = week ? week.id : null;
+    // Pas de semaine VS active : conserver le plan Train (pas de reset métier).
+    if (!week) {
+      if (!trainState.weeklyPlan) {
+        trainState.weeklyPlan = createBlankWeeklyPlan(null, null);
+      } else {
+        trainState.weeklyPlan = normalizeWeeklyPlan(trainState.weeklyPlan);
+      }
+      return;
+    }
+    const vsWeekId = week.id;
     if (!trainState.weeklyPlan) {
       trainState.weeklyPlan = createBlankWeeklyPlan(vsWeekId, vsWeekId);
       return;

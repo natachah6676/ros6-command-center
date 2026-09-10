@@ -7,6 +7,7 @@
   function getActiveRows(state) {
     const current = state || ROSStorage.getState();
     const week = ROSModels.getCurrentWeekFromState(current);
+    if (!week) return [];
     // Absents exclus des calculs VS / alertes opérationnelles
     return current.players
       .filter((p) => ROSModels.isVsParticipant(p))
@@ -47,13 +48,13 @@
     const current = state || ROSStorage.getState();
     const week = ROSModels.getCurrentWeekFromState(current);
 
-    if (!week || !(current.weeks || []).length) {
+    if (!(current.weeks || []).length) {
       alerts.push({
         id: 'no_week',
-        level: 'danger',
-        category: 'priority',
+        level: 'info',
+        category: 'info',
         tag: 'Semaine VS',
-        text: 'Aucune semaine VS n’existe. Créez une semaine dans le module VS.',
+        text: 'Aucune semaine VS en historique. Créez-en une lorsque vous jouez le VS à fond.',
         playerId: null,
       });
     }
@@ -109,7 +110,8 @@
 
   function needsNewWeek(state) {
     const week = ROSModels.getCurrentWeekFromState(state);
-    if (!week) return true;
+    // Pas de semaine active = état normal (VS à la demande), pas une alerte.
+    if (!week) return false;
     const calendarMonday = ROSModels.toISODate(ROSModels.startOfWeekMonday());
     return week.startDate < calendarMonday;
   }
