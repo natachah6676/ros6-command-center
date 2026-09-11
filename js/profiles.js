@@ -144,6 +144,41 @@
     );
   }
 
+  /** Aligne le rôle Liste des membres sur le rôle d’accès R4/R5 du compte lié. */
+  function syncLinkedPlayerAppRole(playerId, appRole) {
+    if (!playerId || !APP_ROLES.includes(appRole) || !global.ROSStorage) return;
+    ROSStorage.update((s) => {
+      const player = (s.players || []).find((p) => p && p.id === playerId);
+      if (!player) return s;
+      if (player.role === appRole) return s;
+      player.role = appRole;
+      return s;
+    });
+  }
+
+  /** Pour tous les comptes Accès actifs liés : propage R4/R5 vers Liste des membres. */
+  function syncAllLinkedPlayerAppRoles() {
+    if (!global.ROSStorage) return;
+    const active = listProfiles().filter(
+      (p) => p && p.status === 'Actif' && p.playerId && APP_ROLES.includes(p.role)
+    );
+    if (!active.length) return;
+    const state = ROSStorage.getState();
+    const needsSync = active.some((prof) => {
+      const player = (state.players || []).find((p) => p && p.id === prof.playerId);
+      return player && player.role !== prof.role;
+    });
+    if (!needsSync) return;
+    ROSStorage.update((s) => {
+      active.forEach((prof) => {
+        const player = (s.players || []).find((p) => p && p.id === prof.playerId);
+        if (!player) return;
+        if (player.role !== prof.role) player.role = prof.role;
+      });
+      return s;
+    });
+  }
+
   function stampActor() {
     const user = sessionUser();
     const userId = user?.id || '';
@@ -216,6 +251,7 @@
   async function refresh() {
     const rows = await fetchAll();
     setCache(rows);
+    syncAllLinkedPlayerAppRoles();
     return listProfiles();
   }
 
@@ -345,7 +381,11 @@
     }
 
     await refresh();
-    return normalizeProfile(data);
+    const updated = normalizeProfile(data);
+    if (updated.status === 'Actif' && updated.playerId && APP_ROLES.includes(updated.role)) {
+      syncLinkedPlayerAppRole(updated.playerId, updated.role);
+    }
+    return updated;
   }
 
   /**
@@ -409,7 +449,13 @@
 
     if (payload?.ok === true) {
       await refresh();
-      return normalizeProfile(payload.profile);
+      const profile = normalizeProfile(payload.profile);
+      if (profile?.playerId && APP_ROLES.includes(profile.role || cleanRole)) {
+        syncLinkedPlayerAppRole(profile.playerId, profile.role || cleanRole);
+      } else if (cleanPlayerId) {
+        syncLinkedPlayerAppRole(cleanPlayerId, cleanRole);
+      }
+      return profile;
     }
 
     const raw =
@@ -547,6 +593,7 @@
     }
 
     if (!root) return;
+    syncAllLinkedPlayerAppRoles();
     const profiles = listProfiles();
     if (empty) empty.classList.toggle('hidden', profiles.length > 0);
 
@@ -715,6 +762,9 @@
       }
       renderAccessPanel();
       renderOwnAccessSummary();
+      if (global.SuiviModule && typeof SuiviModule.renderSettings === 'function') {
+        SuiviModule.renderSettings();
+      }
       if (global.ROSSync?.refreshUserLabel) ROSSync.refreshUserLabel();
       if (typeof global.applyAppRolePermissions === 'function') {
         global.applyAppRolePermissions();
@@ -745,6 +795,9 @@
       await createUser({ email, password, playerId, role });
       closeCreateModal();
       renderAccessPanel();
+      if (global.SuiviModule && typeof SuiviModule.renderSettings === 'function') {
+        SuiviModule.renderSettings();
+      }
       if (global.AppUI) {
         AppUI.toast('Utilisateur créé et associé avec succès');
       }
