@@ -125,7 +125,8 @@
 
   function getCurrentWeek() {
     const s = getState();
-    return s.weeks.find((w) => w.id === s.currentWeekId) || s.weeks[0];
+    if (!s.currentWeekId) return null;
+    return s.weeks.find((w) => w.id === s.currentWeekId) || null;
   }
 
   function getActivePlayers() {

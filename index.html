@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20260810-train-ux-a14" />
+  <link rel="stylesheet" href="css/styles.css?v=20260911-export1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -72,13 +72,12 @@
 
     <nav class="tabs" role="tablist" aria-label="Navigation principale">
       <button type="button" class="tab is-active" data-tab="command" role="tab" aria-selected="true">Poste de Commandement</button>
-      <button type="button" class="tab" data-tab="players" role="tab" aria-selected="false">Gestion des membres</button>
+      <button type="button" class="tab" data-tab="suivi" role="tab" aria-selected="false">Gestion des membres</button>
       <button type="button" class="tab" data-tab="vs" role="tab" aria-selected="false">VS</button>
-      <button type="button" class="tab" data-tab="train" role="tab" aria-selected="false">Train</button>
-      <button type="button" class="tab" data-tab="recrutement" role="tab" aria-selected="false">Recrutement</button>
-      <button type="button" class="tab" data-tab="ruche" role="tab" aria-selected="false">Ruche</button>
       <button type="button" class="tab" data-tab="tempete" role="tab" aria-selected="false">Tempête du Désert</button>
-      <button type="button" class="tab" data-tab="archives" role="tab" aria-selected="false">Archives</button>
+      <button type="button" class="tab" data-tab="train" role="tab" aria-selected="false">Train</button>
+      <button type="button" class="tab" data-tab="ruche" role="tab" aria-selected="false">Ruche</button>
+      <button type="button" class="tab" data-tab="players" role="tab" aria-selected="false">Liste des membres</button>
       <button type="button" class="tab hidden" data-tab="settings" role="tab" aria-selected="false" hidden aria-hidden="true">Paramètres</button>
     </nav>
 
@@ -122,11 +121,11 @@
         </section>
       </section>
 
-      <!-- GESTION DES MEMBRES (administration) -->
+      <!-- LISTE DES MEMBRES (administration) -->
       <section id="panel-players" class="panel" role="tabpanel" hidden>
         <div class="panel-header">
           <div>
-            <h2>Gestion des membres</h2>
+            <h2>Liste des membres</h2>
             <p class="panel-subtitle">Administration des fiches — sans statistiques VS</p>
           </div>
           <button type="button" id="btnAddPlayer" class="btn btn-primary">Ajouter un joueur</button>
@@ -155,9 +154,6 @@
         <p id="playersPowerCounter" class="members-power-counter" aria-live="polite">
           Puissances renseignées : 0 / 0 joueurs actifs
         </p>
-        <p id="playersCoachingCounter" class="members-power-counter" aria-live="polite">
-          Coaching : 0 à contacter · 0 concernés
-        </p>
 
         <div id="playersList" class="member-list"></div>
         <p id="playersEmpty" class="empty-state hidden">Aucun joueur ne correspond aux filtres.</p>
@@ -168,26 +164,19 @@
         <div class="panel-header">
           <div>
             <h2>VS hebdomadaire</h2>
-            <p class="panel-subtitle">Lundi → Vendredi · barème points · dons d’alliance</p>
+            <p class="panel-subtitle">Semaines VS à fond · clôture sans historique · scores de la semaine active uniquement</p>
           </div>
           <div class="panel-header-actions">
-            <button type="button" id="btnVsSettings" class="btn btn-ghost">Paramètres VS</button>
-            <button type="button" id="btnNewWeek" class="btn btn-primary">+ Nouvelle semaine</button>
+            <button type="button" id="btnCloseWeek" class="btn btn-ghost">Clôturer la semaine</button>
+            <button type="button" id="btnNewWeek" class="btn btn-primary">+ Nouvelle semaine VS</button>
           </div>
         </div>
 
         <div id="vsMainView">
-          <div id="vsModeBar" class="vs-mode-bar vs-mode-eco">
-            <span id="vsModeLabel" class="vs-mode-label">🟢 Mode actuel : <strong>VS ÉCO</strong></span>
-            <button type="button" id="vsToggleMode" class="btn btn-ghost" data-target-mode="afond">
-              Passer en VS À FOND
-            </button>
-          </div>
-
           <div class="vs-week-bar">
             <div class="vs-week-active">
               <span class="vs-week-label">Semaine active</span>
-              <strong id="vsActiveWeekTitle">Semaine 1</strong>
+              <strong id="vsActiveWeekTitle">Aucune</strong>
               <span id="vsActiveWeekDates" class="vs-week-dates"></span>
             </div>
             <label class="vs-week-select-wrap">
@@ -198,20 +187,17 @@
           <p id="vsArchiveNotice" class="vs-archive-notice hidden">
             Semaine archivée — consultation seule. Les archives ne sont jamais modifiées.
           </p>
-
-          <label id="vsDonationsVerifiedWrap" class="vs-donations-check">
-            <input type="checkbox" id="vsDonationsVerified" />
-            <span>Vérification des dons effectuée</span>
-          </label>
+          <p id="vsNoActiveNotice" class="vs-archive-notice hidden">
+            Aucune semaine VS active. Créez une semaine lorsque vous jouez le VS à fond.
+          </p>
 
           <div class="legend" id="vsLegend">
-            <span class="legend-item"><span class="swatch score-0"></span> Plus de 7,2 M · 0 pt</span>
-            <span class="legend-item"><span class="swatch score-5"></span> 3,7 à 7,2 M · 5 pts</span>
-            <span class="legend-item"><span class="swatch score-10"></span> 0 à 3,6 M · 10 pts</span>
-            <span class="legend-item"><span class="swatch score-don"></span> Dons non réalisés · 5 pts</span>
-            <span class="legend-item"><span class="dot color-green"></span> 0–20</span>
-            <span class="legend-item"><span class="dot color-orange"></span> 25–30</span>
-            <span class="legend-item"><span class="dot color-red"></span> ≥ 35</span>
+            <span class="legend-item"><span class="swatch score-0"></span> Score fait</span>
+            <span class="legend-item"><span class="swatch score-5"></span> Entre seuils</span>
+            <span class="legend-item"><span class="swatch score-10"></span> Sous seuil bas</span>
+            <span class="legend-item"><span class="dot color-green"></span> 0–1 j sous</span>
+            <span class="legend-item"><span class="dot color-orange"></span> 2–3 j sous</span>
+            <span class="legend-item"><span class="dot color-red"></span> ≥ 4 j sous</span>
           </div>
 
           <div class="table-wrap">
@@ -225,101 +211,14 @@
                   <th>Mer</th>
                   <th>Jeu</th>
                   <th>Ven</th>
-                  <th>Dons non réalisés</th>
                   <th>Jours sous objectif</th>
                   <th>Objectifs atteints</th>
-                  <th>Total</th>
                 </tr>
               </thead>
               <tbody id="vsTableBody"></tbody>
             </table>
           </div>
           <p id="vsEmpty" class="empty-state hidden">Aucun joueur actif. Ajoutez des joueurs pour saisir le VS.</p>
-        </div>
-
-        <div id="vsSettingsView" class="hidden">
-          <div class="panel-header" style="padding:0;margin-bottom:1rem">
-            <div>
-              <h3>Paramètres VS</h3>
-              <p class="panel-subtitle">Barèmes modifiables — aucune valeur codée en dur</p>
-            </div>
-            <div class="panel-header-actions">
-              <button type="button" id="btnVsBackFromSettings" class="btn btn-ghost">← Retour au VS</button>
-            </div>
-          </div>
-
-          <div class="settings-subtabs" role="tablist" aria-label="Barèmes VS">
-            <button type="button" class="chip-filter is-active" data-vs-settings-tab="afond" aria-selected="true">
-              VS À FOND
-            </button>
-            <button type="button" class="chip-filter" data-vs-settings-tab="eco" aria-selected="false">
-              VS ÉCO
-            </button>
-          </div>
-
-          <form id="vsSettingsForm" class="vs-settings-form">
-            <div id="vsSettingsPaneAfond" class="block">
-              <header class="block-header">
-                <h3>VS À FOND</h3>
-                <p>Barème intensif</p>
-              </header>
-              <div class="vs-settings-grid">
-                <label class="field">
-                  <span>Objectif quotidien</span>
-                  <input type="number" id="vsAfondDailyGoal" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Seuil bas (entre ce seuil et objectif − 1)</span>
-                  <input type="number" id="vsAfondMidMin" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Points (entre seuil bas et objectif)</span>
-                  <input type="number" id="vsAfondMidPoints" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Points (moins que le seuil bas)</span>
-                  <input type="number" id="vsAfondLowPoints" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Dons non faits</span>
-                  <input type="number" id="vsAfondDonation" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Rouge à partir de</span>
-                  <input type="number" id="vsAfondRedFrom" class="input" min="1" step="1" required />
-                </label>
-              </div>
-            </div>
-
-            <div id="vsSettingsPaneEco" class="block hidden">
-              <header class="block-header">
-                <h3>VS ÉCO</h3>
-                <p>Barème économique (mode par défaut)</p>
-              </header>
-              <div class="vs-settings-grid">
-                <label class="field">
-                  <span>Objectif quotidien</span>
-                  <input type="number" id="vsEcoDailyGoal" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Points sous objectif</span>
-                  <input type="number" id="vsEcoUnderPoints" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Dons non faits</span>
-                  <input type="number" id="vsEcoDonation" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Rouge à partir de</span>
-                  <input type="number" id="vsEcoRedFrom" class="input" min="1" step="1" required />
-                </label>
-              </div>
-            </div>
-
-            <div class="settings-actions" style="margin-top:1rem">
-              <button type="submit" class="btn btn-primary">Enregistrer les paramètres</button>
-            </div>
-          </form>
         </div>
       </section>
 
@@ -328,7 +227,7 @@
         <div class="panel-header">
           <div>
             <h2>Train</h2>
-            <p class="panel-subtitle">Planning hebdomadaire Conducteurs &amp; VIP — module indépendant</p>
+            <p class="panel-subtitle">Organiser rapidement les conducteurs de la semaine</p>
           </div>
         </div>
 
@@ -352,27 +251,31 @@
               </header>
               <div class="train-weekly-main">
                 <div id="trainWeekPlan" class="train-week-plan"></div>
-                <section class="block" style="margin-top:0.85rem">
+                <section class="block train-org-block" style="margin-top:0.85rem">
                   <header class="block-header">
-                    <h3>VIP — Tirage au sort</h3>
-                    <p>Un joueur éligible proposé · choix manuel toujours possible dans le planning</p>
+                    <h3>Organisation VIP &amp; conducteurs</h3>
+                    <p>Tirage VIP et candidats Premiers — même zone pour organiser la semaine</p>
                   </header>
-                  <label class="field">
-                    <span>Jour cible</span>
-                    <select id="trainVipDrawDay" class="input" aria-label="Jour pour le tirage VIP"></select>
-                  </label>
-                  <div class="settings-actions" style="margin-top:0.65rem">
-                    <button type="button" id="trainVipDraw" class="btn btn-ghost">🎲 Tirage au sort</button>
+                  <div class="train-org-grid">
+                    <div class="train-org-panel" id="trainVipOrgPanel">
+                      <h4 class="train-org-title">VIP — Tirage au sort</h4>
+                      <p class="train-org-hint">Un joueur éligible proposé · choix manuel toujours possible dans le planning</p>
+                      <label class="field">
+                        <span>Jour cible</span>
+                        <select id="trainVipDrawDay" class="input" aria-label="Jour pour le tirage VIP"></select>
+                      </label>
+                      <div class="settings-actions" style="margin-top:0.65rem">
+                        <button type="button" id="trainVipDraw" class="btn btn-ghost">🎲 Tirage au sort</button>
+                      </div>
+                      <div id="trainVipDrawPanel" style="margin-top:0.75rem"></div>
+                      <div id="trainVipExclusionStats" class="train-exclusion-stats" aria-live="polite"></div>
+                    </div>
+                    <div class="train-org-panel" id="trainCandidatesOrgPanel">
+                      <h4 class="train-org-title">Candidats conducteurs</h4>
+                      <p class="train-org-hint">Joueurs classés Premiers — jour via liste (Lun–Sam, pas Dimanche)</p>
+                      <div id="trainWeekCandidates" class="train-week-candidates"></div>
+                    </div>
                   </div>
-                  <div id="trainVipDrawPanel" style="margin-top:0.75rem"></div>
-                  <div id="trainVipExclusionStats" class="train-exclusion-stats" aria-live="polite"></div>
-                </section>
-                <section class="block" style="margin-top:0.85rem">
-                  <header class="block-header">
-                    <h3>Candidats conducteurs</h3>
-                    <p>Joueurs classés Premiers — jour via liste (Lun–Sam, pas Dimanche)</p>
-                  </header>
-                  <div id="trainWeekCandidates" class="train-week-candidates"></div>
                 </section>
               </div>
             </div>
@@ -409,86 +312,66 @@
           </section>
 
           <section class="block train-history-block">
-            <details class="train-collapsible" id="trainHistoryDetails">
+            <details class="train-collapsible train-secondary-panel" id="trainSecondaryDetails">
               <summary class="train-collapsible-summary">
-                <span class="train-collapsible-title">Historique</span>
-                <span class="train-collapsible-hint" id="trainHistorySince">Aucun historique officiel pour le moment.</span>
+                <span class="train-collapsible-title">Historique &amp; équité</span>
+                <span class="train-collapsible-hint">Replié par défaut — consultation hors organisation de la semaine</span>
                 <span class="train-collapsible-toggle" aria-hidden="true"></span>
               </summary>
               <div class="train-collapsible-body">
-                <p class="panel-subtitle" style="margin-bottom:0.75rem">
-                  Consultation et correction manuelle Conducteur / VIP. L’initialisation / gestion administrative se fait dans Paramètres → Train (R5).
-                </p>
-                <div id="trainHistoryBody" class="train-official-history-list"></div>
-                <p id="trainHistoryEmpty" class="empty-state hidden">Aucun historique Train pour le moment.</p>
-              </div>
-            </details>
+                <details class="train-collapsible" id="trainHistoryDetails">
+                  <summary class="train-collapsible-summary">
+                    <span class="train-collapsible-title">Historique</span>
+                    <span class="train-collapsible-hint" id="trainHistorySince">Aucun historique officiel pour le moment.</span>
+                    <span class="train-collapsible-toggle" aria-hidden="true"></span>
+                  </summary>
+                  <div class="train-collapsible-body">
+                    <p class="panel-subtitle" style="margin-bottom:0.75rem">
+                      Consultation et correction manuelle Conducteur / VIP. L’initialisation / gestion administrative se fait dans Paramètres → Train (R5).
+                    </p>
+                    <div id="trainHistoryBody" class="train-official-history-list"></div>
+                    <p id="trainHistoryEmpty" class="empty-state hidden">Aucun historique Train pour le moment.</p>
+                  </div>
+                </details>
 
-            <details class="train-collapsible" id="trainEquityDetails" style="margin-top:0.85rem">
-              <summary class="train-collapsible-summary">
-                <span class="train-collapsible-title">Tableau d’équité</span>
-                <span class="train-collapsible-hint">Depuis le début de l’historique WarOps</span>
-                <span class="train-collapsible-toggle" aria-hidden="true"></span>
-              </summary>
-              <div class="train-collapsible-body">
-                <p class="panel-subtitle" style="margin-bottom:0.65rem">
-                  Occurrences depuis le début (calculées, jamais remises à zéro chaque mois)
-                </p>
-                <label class="field" style="max-width:16rem;margin-bottom:0.65rem">
-                  <span>Trier</span>
-                  <select id="trainEquitySort" class="input" aria-label="Tri tableau d’équité Train">
-                    <option value="alpha">Ordre alphabétique</option>
-                    <option value="conductor-asc">Conducteur croissant</option>
-                    <option value="conductor-desc">Conducteur décroissant</option>
-                    <option value="vip-asc">VIP croissant</option>
-                    <option value="vip-desc">VIP décroissant</option>
-                  </select>
-                </label>
-                <div class="table-wrap">
-                  <table class="archive-table">
-                    <thead>
-                      <tr>
-                        <th>Joueur</th>
-                        <th>Conducteur</th>
-                        <th>VIP</th>
-                      </tr>
-                    </thead>
-                    <tbody id="trainEquityBody"></tbody>
-                  </table>
-                </div>
+                <details class="train-collapsible" id="trainEquityDetails" style="margin-top:0.85rem">
+                  <summary class="train-collapsible-summary">
+                    <span class="train-collapsible-title">Tableau d’équité</span>
+                    <span class="train-collapsible-hint">Depuis le début de l’historique WarOps</span>
+                    <span class="train-collapsible-toggle" aria-hidden="true"></span>
+                  </summary>
+                  <div class="train-collapsible-body">
+                    <p class="panel-subtitle" style="margin-bottom:0.65rem">
+                      Occurrences depuis le début (calculées, jamais remises à zéro chaque mois)
+                    </p>
+                    <label class="field" style="max-width:16rem;margin-bottom:0.65rem">
+                      <span>Trier</span>
+                      <select id="trainEquitySort" class="input" aria-label="Tri tableau d’équité Train">
+                        <option value="alpha">Ordre alphabétique</option>
+                        <option value="conductor-asc">Conducteur croissant</option>
+                        <option value="conductor-desc">Conducteur décroissant</option>
+                        <option value="vip-asc">VIP croissant</option>
+                        <option value="vip-desc">VIP décroissant</option>
+                      </select>
+                    </label>
+                    <div class="table-wrap">
+                      <table class="archive-table">
+                        <thead>
+                          <tr>
+                            <th>Joueur</th>
+                            <th>Conducteur</th>
+                            <th>VIP</th>
+                          </tr>
+                        </thead>
+                        <tbody id="trainEquityBody"></tbody>
+                      </table>
+                    </div>
+                  </div>
+                </details>
               </div>
             </details>
           </section>
         </div>
-      </section>
-
-      <!-- RECRUTEMENT -->
-      <section id="panel-recrutement" class="panel" role="tabpanel" hidden>
-        <div class="panel-header">
-          <div>
-            <h2>Recrutement</h2>
-            <p class="panel-subtitle">Joueurs à remplacer — score automatique selon les critères</p>
-          </div>
-        </div>
-        <section class="block">
-          <header class="block-header">
-            <h3>Joueurs à remplacer</h3>
-            <p>Historique pondéré + puissance globale — minimum 15 points</p>
-          </header>
-          <div class="toolbar" style="margin-bottom:0.75rem">
-            <label class="field" style="margin:0;min-width:14rem">
-              <span>Trier par</span>
-              <select id="recrutementSort" class="input" aria-label="Tri Recrutement">
-                <option value="score">Score décroissant</option>
-                <option value="global-power">Puissance globale croissante</option>
-                <option value="hero-power">Puissance héros croissante</option>
-                <option value="alpha">Ordre alphabétique</option>
-              </select>
-            </label>
-          </div>
-          <div id="recrutementList" class="stack-list"></div>
-          <p id="recrutementEmpty" class="empty-state hidden">Aucun joueur à proposer pour le moment.</p>
-        </section>
       </section>
 
       <!-- RUCHE -->
@@ -683,31 +566,71 @@
         </div>
       </section>
 
-      <!-- ARCHIVES -->
-      <section id="panel-archives" class="panel" role="tabpanel" hidden>
+      <!-- GESTION DES MEMBRES (suivi joueurs) -->
+      <section id="panel-suivi" class="panel" role="tabpanel" hidden>
         <div class="panel-header">
           <div>
-            <h2>Archives</h2>
-            <p class="panel-subtitle">Tous les joueurs · couleur par semaine · clic pour le détail</p>
+            <h2>Gestion des membres</h2>
+            <p class="panel-subtitle">
+              Suivi : VS sous seuil, à féliciter, puissance héros, ou aide manuelle
+            </p>
+            <p id="suiviScopeHint" class="panel-subtitle hidden"></p>
+          </div>
+          <p id="suiviCounter" class="panel-subtitle">0 joueur(s)</p>
+        </div>
+
+        <div class="toolbar toolbar-members">
+          <input
+            type="search"
+            id="suiviSearch"
+            class="input"
+            placeholder="Rechercher par pseudo…"
+            autocomplete="off"
+          />
+          <select id="suiviFilterStatus" class="input" aria-label="Filtrer par statut">
+            <option value="">Tous les statuts</option>
+            <option value="to_contact">À contacter</option>
+            <option value="contacted">Contacté</option>
+            <option value="in_progress">En suivi</option>
+            <option value="done">Suivi terminé</option>
+          </select>
+          <select id="suiviFilterReason" class="input" aria-label="Filtrer par motif">
+            <option value="">Tous les motifs</option>
+            <option value="vs">VS sous seuil</option>
+            <option value="praise">À féliciter</option>
+            <option value="hero">Puissance héros</option>
+            <option value="manual">Aide / manuel</option>
+          </select>
+          <label class="checkbox-field suivi-show-done">
+            <span class="checkbox-line">
+              <input type="checkbox" id="suiviShowDone" />
+              Afficher les suivis terminés
+            </span>
+          </label>
+          <select id="suiviFilterAssignee" class="input" aria-label="Filtrer par R4 assigné">
+            <option value="">Tous les R4</option>
+            <option value="unassigned">Non assigné</option>
+          </select>
+          <button type="button" id="btnSuiviCopyList" class="btn btn-ghost">
+            Copier pour Discord
+          </button>
+        </div>
+
+        <div id="suiviAddWrap" class="suivi-add-wrap">
+          <select id="suiviAddPlayer" class="input" aria-label="Ajouter un joueur au suivi"></select>
+          <button type="button" id="btnSuiviAdd" class="btn btn-primary">Ajouter au suivi</button>
+        </div>
+
+        <div class="suivi-layout">
+          <div class="suivi-list-col">
+            <div id="suiviList" class="suivi-list" role="list"></div>
+            <p id="suiviEmpty" class="empty-state">Aucun joueur à suivre pour le moment.</p>
+          </div>
+          <div class="suivi-detail-col">
+            <p id="suiviDetailEmpty" class="empty-state">Sélectionnez un joueur pour voir le détail.</p>
+            <div id="suiviDetail" class="suivi-detail block hidden"></div>
           </div>
         </div>
-
-        <div class="toolbar">
-          <input type="search" id="archiveSearch" class="input" placeholder="Rechercher dans les archives…" autocomplete="off" />
-          <select id="archiveStatusFilter" class="input">
-            <option value="">Tous les statuts</option>
-            <option value="Actif">Actifs</option>
-            <option value="Parti">Partis</option>
-          </select>
-        </div>
-
-        <div class="table-wrap">
-          <table class="archive-table" id="archiveTable">
-            <thead id="archiveTableHead"></thead>
-            <tbody id="archiveTableBody"></tbody>
-          </table>
-        </div>
-        <p id="archivesEmpty" class="empty-state hidden">Aucune donnée d’archive pour le moment.</p>
       </section>
 
       <!-- PARAMÈTRES -->
@@ -715,13 +638,16 @@
         <div class="panel-header">
           <div>
             <h2>Paramètres</h2>
-            <p class="panel-subtitle">Identité, Train, accès (R5), sauvegarde et maintenance</p>
+            <p class="panel-subtitle">Identité, VS, Train, suivi membres, accès (R5), sauvegarde et maintenance</p>
           </div>
         </div>
 
         <div class="settings-subtabs" role="tablist" aria-label="Sections paramètres">
           <button type="button" class="chip-filter is-active" data-settings-tab="general" aria-selected="true">
             Général
+          </button>
+          <button type="button" class="chip-filter" data-settings-tab="vs" aria-selected="false">
+            VS
           </button>
           <button type="button" class="chip-filter" data-settings-tab="train" aria-selected="false">
             Train
@@ -735,6 +661,36 @@
           >
             Gestion des accès
           </button>
+        </div>
+
+        <div id="settingsPaneVs" class="hidden">
+          <section class="block settings-block-wide" id="settingsVsBlock">
+            <header class="block-header">
+              <h3>Paramètres VS</h3>
+              <p>Barème des semaines VS suivies — réservé R5</p>
+            </header>
+            <form id="vsSettingsForm" class="vs-settings-form">
+              <div id="vsSettingsPaneAfond" class="block" style="padding:0;border:none;box-shadow:none;background:transparent">
+                <div class="vs-settings-grid">
+                  <label class="field">
+                    <span>Objectif quotidien (Score fait)</span>
+                    <input type="number" id="vsAfondDailyGoal" class="input" min="0" step="1" required />
+                  </label>
+                  <label class="field">
+                    <span>Seuil gros score — à féliciter (ex. 20 000 000)</span>
+                    <input type="number" id="vsAfondPraiseGoal" class="input" min="0" step="1" required />
+                  </label>
+                  <label class="field">
+                    <span>Seuil bas (entre ce seuil et objectif − 1)</span>
+                    <input type="number" id="vsAfondMidMin" class="input" min="0" step="1" required />
+                  </label>
+                </div>
+              </div>
+              <div class="settings-actions" style="margin-top:1rem">
+                <button type="submit" class="btn btn-primary">Enregistrer les paramètres VS</button>
+              </div>
+            </form>
+          </section>
         </div>
 
         <div id="settingsPaneTrain" class="hidden">
@@ -778,9 +734,12 @@
               </label>
             </div>
             <div id="trainInitDays" class="train-init-days"></div>
-            <div class="settings-actions" style="margin-top:0.85rem">
+            <div class="settings-actions" style="margin-top:0.85rem;gap:0.5rem;flex-wrap:wrap">
               <button type="button" id="trainSaveHistoryWeek" class="btn btn-primary">
                 Enregistrer cette semaine dans l’historique
+              </button>
+              <button type="button" id="trainExportHistoryExcel" class="btn btn-ghost">
+                Exporter historique Excel
               </button>
             </div>
             <p id="settingsTrainHistoryNote" class="panel-subtitle" style="margin-top:0.75rem"></p>
@@ -909,23 +868,61 @@
 
           <section class="block settings-block-wide">
             <header class="block-header">
-              <h3>Seuil coaching</h3>
-              <p>Plage de puissance utilisée pour la liste de coaching (Gestion des membres)</p>
+              <h3>Seuils — Gestion des membres</h3>
+              <p>
+                Déclencheurs automatiques du suivi (onglet Gestion des membres) — réservé R5
+              </p>
             </header>
             <div class="vs-settings-grid">
               <label class="field">
-                <span>Minimum (M)</span>
-                <input type="number" id="coachingThresholdMin" class="input" min="0" step="1" required />
+                <span>VS : jours sous objectif (min.) — à suivre</span>
+                <input type="number" id="followUpVsMinDays" class="input" min="1" step="1" required />
               </label>
               <label class="field">
-                <span>Maximum (M)</span>
-                <input type="number" id="coachingThresholdMax" class="input" min="0" step="1" required />
+                <span>À féliciter : jours « Score fait » (min.)</span>
+                <input type="number" id="followUpVsPraiseMinDaysMet" class="input" min="1" max="5" step="1" required />
+              </label>
+              <label class="field">
+                <span>À féliciter : jours gros score (min.)</span>
+                <input type="number" id="followUpVsPraiseMinHighDays" class="input" min="0" max="5" step="1" required />
+              </label>
+              <label class="field">
+                <span>Héros : puissance max (M)</span>
+                <input type="number" id="followUpHeroMax" class="input" min="0" step="1" required />
               </label>
             </div>
-            <p id="coachingThresholdPreview" class="panel-subtitle" style="margin-top:0.65rem">Seuil actuel : 25 M à 30 M</p>
+            <p id="followUpSettingsPreview" class="panel-subtitle" style="margin-top:0.65rem">
+              VS suivi : ≥ 2 j · À féliciter : ≥ 5 j score fait + ≥ 1 j gros score · Héros : ≤ 30 M
+            </p>
+
+            <header class="block-header" style="margin-top:1.25rem">
+              <h3>Référents R4 par motif</h3>
+              <p>
+                Chaque R4 ne voit que ses motifs (et les fiches qu’on lui assigne). Le R5 voit tout.
+              </p>
+            </header>
+            <div class="vs-settings-grid" id="followUpSpecialistsGrid">
+              <label class="field">
+                <span>VS sous seuil</span>
+                <select id="followUpSpecialistVs" class="input"></select>
+              </label>
+              <label class="field">
+                <span>À féliciter</span>
+                <select id="followUpSpecialistPraise" class="input"></select>
+              </label>
+              <label class="field">
+                <span>Puissance héros</span>
+                <select id="followUpSpecialistHero" class="input"></select>
+              </label>
+              <label class="field">
+                <span>Aide / manuel</span>
+                <select id="followUpSpecialistManual" class="input"></select>
+              </label>
+            </div>
+
             <div class="settings-actions" style="margin-top:0.85rem">
-              <button type="button" id="btnSaveCoachingThreshold" class="btn btn-primary">
-                Enregistrer le seuil coaching
+              <button type="button" id="btnSaveFollowUpSettings" class="btn btn-primary">
+                Enregistrer les seuils et référents
               </button>
             </div>
           </section>
@@ -1006,24 +1003,12 @@
             <span>Volant préféré</span>
           </span>
         </label>
-        <fieldset class="field" id="playerCoachingExceptionField">
-          <legend>Exception coaching</legend>
-          <label class="checkbox-line" style="margin-top:0.35rem">
-            <input type="radio" name="playerCoachingException" id="playerCoachingAlways" value="always" checked />
-            <span>✅ Toujours inclure (si seuil)</span>
-          </label>
-          <label class="checkbox-line" style="margin-top:0.35rem">
-            <input type="radio" name="playerCoachingException" id="playerCoachingNever" value="never" />
-            <span>🚫 Ne jamais inclure</span>
-          </label>
-          <small class="field-hint">Par défaut : apparaît dans le coaching s’il est dans le seuil défini en Paramètres</small>
-        </fieldset>
         <label class="field checkbox-field" id="playerInactiveField">
           <span class="checkbox-line">
             <input type="checkbox" id="playerInactive" />
             <span>Inactif</span>
           </span>
-          <small class="field-hint">Signalé pour le module Recrutement — n’exclut pas du VS</small>
+          <small class="field-hint">Marqueur informatif — n’exclut pas du VS</small>
         </label>
         <label class="field checkbox-field" id="playerAbsentField">
           <span class="checkbox-line">
@@ -1335,25 +1320,24 @@
     })();
   </script>
   <script src="js/supabase-client.js?v=20260804-4"></script>
-  <script src="js/profiles.js?v=20260808-train-hist2"></script>
-  <script src="js/supabase-sync.js?v=20260812-gp-harden1"></script>
-  <script src="js/models.js?v=20260812-gp-harden1"></script>
+  <script src="js/profiles.js?v=20260910-vssettings1"></script>
+  <script src="js/supabase-sync.js?v=20260910-localguard1"></script>
+  <script src="js/models.js?v=20260911-noabs1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
-  <script src="js/player-identity.js?v=20260802-4"></script>
-  <script src="js/storage.js?v=20260812-gp-harden1"></script>
+  <script src="js/player-identity.js?v=20260911-vscounter1"></script>
+  <script src="js/storage.js?v=20260910-vsclose1"></script>
   <script src="js/ui-helpers.js?v=20260802-4"></script>
-  <script src="js/insights.js?v=20260806-cmd1"></script>
+  <script src="js/insights.js?v=20260910-vsclose1"></script>
   <script src="js/player-stats.js?v=20260802-4"></script>
-  <script src="js/players.js?v=20260812-gp-harden1"></script>
+  <script src="js/players.js?v=20260911-nodon1"></script>
+  <script src="js/suivi.js?v=20260911-noabs1"></script>
   <script src="js/command.js?v=20260806-cmd1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
-  <script src="js/vs.js?v=20260810-week1"></script>
-  <script src="js/archives.js?v=20260802-4"></script>
-  <script src="js/train.js?v=20260812-vip-force1"></script>
-  <script src="js/recrutement.js?v=20260808-pw1"></script>
+  <script src="js/vs.js?v=20260911-nodon1"></script>
+  <script src="js/train.js?v=20260911-export1"></script>
   <script src="js/ruche.js?v=20260809-scoped1"></script>
   <script src="js/tempete.js?v=20260809-scoped1"></script>
   <script src="js/backups.js?v=20260812-gp-harden1"></script>
-  <script src="js/app.js?v=20260812-gp-harden1"></script>
+  <script src="js/app.js?v=20260911-nohist1"></script>
 </body>
 </html>

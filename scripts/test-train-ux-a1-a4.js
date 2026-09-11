@@ -25,12 +25,18 @@ function assert(cond, msg) {
 console.log('\n=== A1 — Historique + Équité repliés ===');
 assert(html.includes('id="trainHistoryDetails"'), 'details Historique');
 assert(html.includes('id="trainEquityDetails"'), 'details Équité');
+assert(html.includes('id="trainSecondaryDetails"'), 'panneau secondaire Historique & équité');
 assert(!/id="trainHistoryDetails"[^>]*\sopen\b/.test(html), 'Historique fermé par défaut');
 assert(!/id="trainEquityDetails"[^>]*\sopen\b/.test(html), 'Équité fermée par défaut');
+assert(!/id="trainSecondaryDetails"[^>]*\sopen\b/.test(html), 'panneau secondaire fermé par défaut');
 assert(html.includes('class="train-collapsible"'), 'classe collapsible');
 assert(css.includes('.train-collapsible'), 'styles collapsible');
 assert(css.includes("content: 'Ouvrir'") || css.includes('content: "Ouvrir"'), 'libellé Ouvrir');
 assert(css.includes("content: 'Fermer'") || css.includes('content: "Fermer"'), 'libellé Fermer');
+assert(html.includes('train-org-grid'), 'Tirage + Candidats regroupés');
+assert(html.includes('id="trainVipDraw"'), 'bouton tirage conservé');
+assert(html.includes('id="trainWeekCandidates"'), 'zone candidats conservée');
+assert(css.includes('.train-org-grid'), 'styles grille organisation');
 
 console.log('\n=== A2 — Format compteurs uniforme ===');
 assert(train.includes('function formatChoiceCounters'), 'formatChoiceCounters');

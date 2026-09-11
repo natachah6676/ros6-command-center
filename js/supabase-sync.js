@@ -37,9 +37,27 @@
     synced: { label: 'Synchronisé', css: 'is-synced' },
     saving: { label: 'Enregistrement', css: 'is-saving' },
     offline: { label: 'Hors connexion', css: 'is-offline' },
+    local: { label: 'Mode local', css: 'is-offline' },
     error: { label: 'Erreur de synchronisation', css: 'is-error' },
     idle: { label: '—', css: '' },
   };
+
+  /**
+   * Hosts de développement : localStorage OK, aucune écriture ros6_state vers Supabase.
+   * Production (warops.vercel.app, etc.) conserve le comportement actuel.
+   */
+  function isLocalRuntime() {
+    try {
+      const host = String((global.location && global.location.hostname) || '').toLowerCase();
+      return host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function cloudWritesAllowed() {
+    return !isLocalRuntime();
+  }
 
   const els = {};
   let client = null;
@@ -534,6 +552,10 @@
   async function ensureRemoteRow() {
     const existing = await fetchRemoteRow();
     if (existing) return existing;
+    // Mode local : ne jamais créer / écrire la ligne distante.
+    if (!cloudWritesAllowed()) {
+      throw new Error('Mode local : écriture Supabase désactivée');
+    }
     const { data, error } = await client
       .from('ros6_state')
       .insert({ id: ROW_ID, data: {}, version: 0, updated_by: session.user.id })
@@ -544,6 +566,7 @@
   }
 
   async function pushToSupabase({ force = false, allStores = false, allowFewerGlobalPowers = false } = {}) {
+    if (!cloudWritesAllowed()) return { ok: false, reason: 'local-runtime' };
     if (!session || !client || suppressPush) return { ok: false, reason: 'noop' };
     if (!navigator.onLine) {
       setSyncStatus('offline');
@@ -704,6 +727,11 @@
    * Sans clé : ne marque rien ; relance seulement s’il reste des dirty en attente.
    */
   function schedulePush(storeKey) {
+    if (!cloudWritesAllowed()) {
+      if (storeKey) markDirty(storeKey);
+      setSyncStatus('local', 'sans push Supabase');
+      return;
+    }
     if (!bootstrapped || !session || suppressPush) return;
     if (storeKey) markDirty(storeKey);
     if (!pendingDirty.size) return;
@@ -717,6 +745,10 @@
 
   /** Annule le debounce et pousse immédiatement les stores dirty. */
   async function flushPush() {
+    if (!cloudWritesAllowed()) {
+      setSyncStatus('local', 'sans push Supabase');
+      return { ok: false, reason: 'local-runtime' };
+    }
     if (!bootstrapped || !session || suppressPush) return { ok: false, reason: 'noop' };
     clearTimeout(pushTimer);
     pushTimer = null;
@@ -725,6 +757,7 @@
   }
 
   async function migrateLocalIfNeeded(remote) {
+    if (!cloudWritesAllowed()) return false;
     if (!remoteIsEmpty(remote?.data) || !localHasUsefulData()) return false;
 
     const ok = await AppUI.confirm({
@@ -804,6 +837,16 @@
     setSyncStatus('saving', 'chargement');
     const meta = readMeta();
     localVersion = meta.version;
+
+    // Localhost : auth OK, app sur localStorage uniquement — aucun pull/push ros6_state.
+    if (!cloudWritesAllowed()) {
+      setSyncStatus('local', 'localStorage uniquement');
+      bootstrapped = true;
+      if (global.AppUI) {
+        AppUI.toast('Mode local : aucun envoi vers Supabase (localStorage uniquement).');
+      }
+      return;
+    }
 
     if (!navigator.onLine) {
       setSyncStatus('offline', 'cache local');
@@ -1011,11 +1054,20 @@
   function bindOnline() {
     window.addEventListener('online', () => {
       if (!session) return;
+      if (!cloudWritesAllowed()) {
+        setSyncStatus('local', 'sans push Supabase');
+        return;
+      }
       setSyncStatus('saving', 'reconnexion');
       schedulePush();
     });
     window.addEventListener('offline', () => {
-      if (session) setSyncStatus('offline');
+      if (!session) return;
+      if (!cloudWritesAllowed()) {
+        setSyncStatus('local', 'sans push Supabase');
+        return;
+      }
+      setSyncStatus('offline');
     });
   }
 
@@ -1079,6 +1131,8 @@
     flushPush,
     pushNow: () => flushPush(),
     getSession: () => session,
+    isLocalRuntime,
+    cloudWritesAllowed,
     refreshUserLabel: updateUserLabel,
     markPlayerFieldCleared,
     clearPlayerFieldCleared,

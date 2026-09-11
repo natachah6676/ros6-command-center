@@ -504,6 +504,7 @@
 
   function switchSettingsTab(tabName) {
     const generalPane = document.getElementById('settingsPaneGeneral');
+    const vsPane = document.getElementById('settingsPaneVs');
     const trainPane = document.getElementById('settingsPaneTrain');
     const accessPane = document.getElementById('settingsPaneAccess');
     document.querySelectorAll('[data-settings-tab]').forEach((btn) => {
@@ -512,8 +513,12 @@
       btn.setAttribute('aria-selected', active ? 'true' : 'false');
     });
     if (generalPane) generalPane.classList.toggle('hidden', tabName !== 'general');
+    if (vsPane) vsPane.classList.toggle('hidden', tabName !== 'vs');
     if (trainPane) trainPane.classList.toggle('hidden', tabName !== 'train');
     if (accessPane) accessPane.classList.toggle('hidden', tabName !== 'access');
+    if (tabName === 'vs' && global.VSModule && typeof VSModule.renderSettings === 'function') {
+      VSModule.renderSettings();
+    }
     if (tabName === 'train' && global.TrainModule) {
       if (typeof TrainModule.renderSettingsHistoryAdmin === 'function') {
         TrainModule.renderSettingsHistoryAdmin();

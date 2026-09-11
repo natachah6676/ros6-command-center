@@ -14,7 +14,6 @@
     els.filterRole = document.getElementById('filterRoleAdmin');
     els.filterPower = document.getElementById('filterPowerAdmin');
     els.powerCounter = document.getElementById('playersPowerCounter');
-    els.coachingCounter = document.getElementById('playersCoachingCounter');
     els.btnAdd = document.getElementById('btnAddPlayer');
     els.modal = document.getElementById('playerModal');
     els.form = document.getElementById('playerForm');
@@ -32,8 +31,6 @@
     els.globalPower = document.getElementById('playerGlobalPower');
     els.globalPowerHint = document.getElementById('playerGlobalPowerHint');
     els.preferredVolant = document.getElementById('playerPreferredVolant');
-    els.coachingAlways = document.getElementById('playerCoachingAlways');
-    els.coachingNever = document.getElementById('playerCoachingNever');
     els.overlay = document.getElementById('playerDetailOverlay');
     els.drawer = document.getElementById('playerDetailDrawer');
     els.detailTitle = document.getElementById('playerDetailTitle');
@@ -107,24 +104,11 @@
     els.powerCounter.textContent = `Puissances renseignées : ${filled} / ${actives.length} joueurs actifs`;
   }
 
-  function renderCoachingCounter() {
-    if (!els.coachingCounter) return;
-    const state = ROSStorage.getState();
-    const list = (state.players || []).filter((p) => ROSModels.isPlayerInCoachingList(p, state));
-    const toContact = list.filter((p) => !ROSModels.getCoachingContact(state, p.id)?.contacted).length;
-    const th = ROSModels.formatCoachingThresholdLabel(state.coachingThreshold);
-    els.coachingCounter.textContent = `Coaching (${th}) : ${toContact} à contacter · ${list.length} concernés`;
-  }
-
-  function getCoachingExceptionValue() {
-    if (els.coachingNever?.checked) return 'never';
-    return 'always';
-  }
-
-  function setCoachingExceptionValue(value) {
-    const never = value === 'never';
-    if (els.coachingAlways) els.coachingAlways.checked = !never;
-    if (els.coachingNever) els.coachingNever.checked = never;
+  function getActiveVsWeek(state = ROSStorage.getState()) {
+    if (!state?.currentWeekId) return null;
+    const week = (state.weeks || []).find((w) => w.id === state.currentWeekId);
+    if (!week || week.archived) return null;
+    return week;
   }
 
   function actorStamp() {
@@ -139,18 +123,6 @@
       actorPlayerId: null,
       actorLabel: email || ROSStorage.getState().appRole || 'R4',
     };
-  }
-
-  function coachingContactLabel(state, playerId) {
-    const contact = ROSModels.getCoachingContact(state, playerId);
-    if (!contact?.contacted) return '';
-    const who =
-      global.ROSProfiles && typeof ROSProfiles.resolveActor === 'function'
-        ? ROSProfiles.resolveActor(contact)
-        : contact.actorLabel || contact.contactedBy || '—';
-    const when = ROSModels.formatCoachingDateTime(contact.contactedAt);
-    if (!when) return `Contacté par ${who}`;
-    return `Contacté par ${who}\n${when}`;
   }
 
   function canEditGlobalPower() {
@@ -186,7 +158,6 @@
     fillHeroPowerSelect('');
     fillGlobalPowerSelect('');
     if (els.preferredVolant) els.preferredVolant.checked = false;
-    setCoachingExceptionValue('always');
     els.statusField.hidden = true;
     els.absentField.hidden = false;
     if (els.inactiveField) els.inactiveField.hidden = false;
@@ -207,7 +178,6 @@
     fillHeroPowerSelect(player.heroPowerTierId || '');
     fillGlobalPowerSelect(player.globalPowerTierId || '');
     if (els.preferredVolant) els.preferredVolant.checked = Boolean(player.preferredVolant);
-    setCoachingExceptionValue(player.coachingException);
     els.statusField.hidden = false;
     els.absentField.hidden = player.status === 'Parti';
     if (els.inactiveField) els.inactiveField.hidden = player.status === 'Parti';
@@ -228,61 +198,40 @@
 
   function renderHistoryTable(playerId) {
     const state = ROSStorage.getState();
-    const weeks = ROSModels.getSortedWeeks(state);
-
-    if (!weeks.length) {
-      return '<p class="empty-state">Aucun historique de semaine.</p>';
+    const week = ROSModels.getCurrentWeekFromState(state);
+    if (!week) {
+      return '<p class="empty-state">Aucune semaine VS active — pas d’historique conservé.</p>';
     }
 
-    const rows = weeks
-      .map((week) => {
-        const summary = ROSModels.getWeekScoreSummary(week, playerId);
-        const note = ROSUI.getPlayerWeekNote(state, playerId, week.id);
-        const points = summary.hasRecord ? String(summary.total) : '—';
-        const color = summary.hasRecord
-          ? `<span class="score-pill ${summary.color}">${ROSUI.escapeHtml(summary.colorLabel)}</span>`
-          : '—';
-        const dons = !summary.hasRecord
-          ? '—'
-          : summary.donationMissed
-            ? 'Non réalisés'
-            : 'OK';
-
-        const commentCell = detailAllowEdit
-          ? `<input class="input input-sm" data-note-field="comment" data-week="${week.id}" value="${ROSUI.escapeHtml(note.comment)}" placeholder="Commentaire…" />`
-          : ROSUI.escapeHtml(note.comment || '—');
-
-        return `
-          <tr>
-            <td>${ROSUI.escapeHtml(week.label)}</td>
-            <td>${points}</td>
-            <td>${color}</td>
-            <td>${dons}</td>
-            <td>${commentCell}</td>
-            <td class="muted-cell">${ROSUI.escapeHtml(note.conducteur || '—')}</td>
-            <td class="muted-cell">${ROSUI.escapeHtml(note.vip || '—')}</td>
-            <td class="muted-cell">${ROSUI.escapeHtml(note.saison || '—')}</td>
-          </tr>
-        `;
-      })
-      .join('');
+    const summary = ROSModels.getWeekScoreSummary(week, playerId);
+    const note = ROSUI.getPlayerWeekNote(state, playerId, week.id);
+    const points = summary.hasRecord ? String(summary.total) : '—';
+    const color = summary.hasRecord
+      ? `<span class="score-pill ${summary.color}">${ROSUI.escapeHtml(summary.colorLabel)}</span>`
+      : '—';
+    const commentCell = detailAllowEdit
+      ? `<input class="input input-sm" data-note-field="comment" data-week="${week.id}" value="${ROSUI.escapeHtml(note.comment)}" placeholder="Commentaire…" />`
+      : ROSUI.escapeHtml(note.comment || '—');
 
     return `
       <div class="table-wrap">
         <table class="fiche-table">
           <thead>
             <tr>
-              <th>Semaine</th>
+              <th>Semaine active</th>
               <th>Points</th>
               <th>Couleur</th>
-              <th>Dons</th>
               <th>Commentaires</th>
-              <th>Conducteur</th>
-              <th>VIP</th>
-              <th>Saison</th>
             </tr>
           </thead>
-          <tbody>${rows}</tbody>
+          <tbody>
+            <tr>
+              <td>${ROSUI.escapeHtml(week.label)}</td>
+              <td>${points}</td>
+              <td>${color}</td>
+              <td>${commentCell}</td>
+            </tr>
+          </tbody>
         </table>
       </div>
     `;
@@ -304,9 +253,9 @@
     const absentBadge = player.absent ? '<span class="badge badge-absent">Absent</span>' : '';
     const inactiveBadge = player.inactive ? '<span class="badge badge-status-parti">Inactif</span>' : '';
     const vsNote = player.absent
-      ? 'Ignoré des calculs VS tant qu’il est absent (historique des semaines précédentes inchangé).'
+      ? 'Hors VS (absent) — non compté dans les seuils / compteurs.'
       : summary.hasRecord
-        ? `${summary.total} pts · ${ROSUI.escapeHtml(summary.colorLabel)}`
+        ? `${summary.daysUnderObjective} j sous objectif · ${summary.objectivesMet} j score fait · ${ROSUI.escapeHtml(summary.colorLabel)}`
         : 'aucune donnée VS';
 
     const trainLabel =
@@ -346,35 +295,6 @@
         <strong>Volant préféré</strong>
         <div>${player.preferredVolant ? 'Oui' : 'Non'}</div>
       </div>
-      <div class="detail-item">
-        <strong>Exception coaching</strong>
-        ${
-          detailAllowEdit
-            ? `<div class="coaching-exception-edit" data-player-id="${player.id}">
-                <label class="checkbox-line">
-                  <input type="radio" name="detailCoachingException-${player.id}" value="always" data-action="coaching-exception" data-id="${player.id}" ${
-                    ROSModels.normalizeCoachingException(player.coachingException) !== 'never'
-                      ? 'checked'
-                      : ''
-                  } />
-                  <span>✅ Toujours inclure</span>
-                </label>
-                <label class="checkbox-line" style="margin-top:0.35rem">
-                  <input type="radio" name="detailCoachingException-${player.id}" value="never" data-action="coaching-exception" data-id="${player.id}" ${
-                    ROSModels.normalizeCoachingException(player.coachingException) === 'never'
-                      ? 'checked'
-                      : ''
-                  } />
-                  <span>🚫 Ne jamais inclure</span>
-                </label>
-              </div>`
-            : `<div>${
-                ROSModels.normalizeCoachingException(player.coachingException) === 'never'
-                  ? '🚫 Ne jamais inclure'
-                  : '✅ Toujours inclure'
-              }</div>`
-        }
-      </div>
       ${
         trainLabel
           ? `<div class="detail-item">
@@ -390,9 +310,9 @@
       }
 
       <div>
-        <strong class="section-label">Historique complet</strong>
+        <strong class="section-label">Semaine VS active</strong>
         <p class="panel-subtitle" style="margin:0.35rem 0 0.7rem">
-          Semaine courante : ${vsNote}
+          ${vsNote} · aucun historique VS détaillé conservé après clôture
         </p>
         ${renderHistoryTable(playerId)}
       </div>
@@ -441,7 +361,6 @@
       els.globalPower?.value || ''
     );
     const preferredVolant = Boolean(els.preferredVolant?.checked);
-    const coachingException = getCoachingExceptionValue();
     const mayEditGlobal = canEditGlobalPower();
 
     if (heroPowerTierId && !ROSModels.getPowerTierById(ROSStorage.getState(), heroPowerTierId)) {
@@ -454,7 +373,7 @@
       if (existing && existing.status === 'Actif' && status === 'Parti') {
         const ok = await AppUI.confirm({
           title: 'Passer en « Parti »',
-          message: `Confirmer le départ de « ${existing.pseudo} » ? Son historique VS sera conservé dans les archives.`,
+          message: `Confirmer le départ de « ${existing.pseudo} » ?`,
           confirmLabel: 'Passer en Parti',
         });
         if (!ok) return;
@@ -500,7 +419,6 @@
           });
         }
         player.preferredVolant = preferredVolant;
-        player.coachingException = coachingException;
         if (previousStatus === 'Actif' && status === 'Parti') {
           player.leftAt = new Date().toISOString();
           player.absent = false;
@@ -535,7 +453,6 @@
           heroPowerTierId,
           globalPowerTierId: mayEditGlobal ? requestedGlobalPowerTierId : null,
           preferredVolant,
-          coachingException,
         });
         state.players.push(created);
         if (mayEditGlobal && requestedGlobalPowerTierId) {
@@ -575,7 +492,7 @@
 
     const ok = await AppUI.confirm({
       title: 'Passer en « Parti »',
-      message: `Confirmer le départ de « ${player.pseudo} » ? Son historique VS sera conservé dans les archives.`,
+      message: `Confirmer le départ de « ${player.pseudo} » ?`,
       confirmLabel: 'Passer en Parti',
     });
     if (!ok) return;
@@ -614,9 +531,20 @@
       const target = state.players.find((p) => p.id === playerId);
       if (!target || target.status !== 'Actif') return state;
       target.absent = Boolean(absent);
-      // Historique des semaines précédentes : jamais modifié.
+      const week =
+        state.currentWeekId &&
+        (state.weeks || []).find((w) => w.id === state.currentWeekId && !w.archived);
+      if (week && week.scores) {
+        if (absent) {
+          delete week.scores[playerId];
+        } else if (!week.scores[playerId]) {
+          week.scores[playerId] = ROSModels.createEmptyScore();
+        }
+      }
       return state;
     });
+    if (global.VSModule && typeof VSModule.render === 'function') VSModule.render();
+    if (global.SuiviModule && typeof SuiviModule.render === 'function') SuiviModule.render();
     AppUI.toast(absent ? 'Joueur marqué Absent (hors VS).' : 'Joueur de nouveau présent dans le VS.');
   }
 
@@ -722,55 +650,6 @@
     AppUI.toast('Puissance globale : Non renseignée.');
   }
 
-  function setCoachingContacted(playerId, contacted) {
-    ROSStorage.update((state) => {
-      if (!state.ui) state.ui = ROSModels.createBlankUiState();
-      if (!state.ui.coachingContacts || typeof state.ui.coachingContacts !== 'object') {
-        state.ui.coachingContacts = {};
-      }
-      const player = state.players.find((p) => p.id === playerId);
-      if (!player || !ROSModels.isPlayerInCoachingList(player, state)) return state;
-      const tier = ROSModels.getPlayerPowerTier(player, state);
-      if (contacted) {
-        const actor = actorStamp();
-        state.ui.coachingContacts[playerId] = {
-          tierId: tier?.id || '',
-          contacted: true,
-          contactedBy: actor.actorLabel,
-          contactedAt: new Date().toISOString(),
-          actorUserId: actor.actorUserId,
-          actorPlayerId: actor.actorPlayerId,
-          actorLabel: actor.actorLabel,
-        };
-      } else {
-        state.ui.coachingContacts[playerId] = {
-          tierId: tier?.id || '',
-          contacted: false,
-          contactedBy: '',
-          contactedAt: '',
-          actorUserId: '',
-          actorPlayerId: null,
-          actorLabel: '',
-        };
-      }
-      return state;
-    });
-  }
-
-  function setCoachingException(playerId, value) {
-    ROSStorage.update((state) => {
-      const target = state.players.find((p) => p.id === playerId);
-      if (!target) return state;
-      target.coachingException = ROSModels.normalizeCoachingException(value);
-      return state;
-    });
-    AppUI.toast(
-      value === 'never'
-        ? 'Exception coaching : ne jamais inclure.'
-        : 'Exception coaching : toujours inclure (si seuil).'
-    );
-  }
-
   function renderCard(player) {
     const state = ROSStorage.getState();
     const powerMissing = !hasHeroPowerTier(player);
@@ -778,10 +657,6 @@
     const powerMissingBadge = powerMissing
       ? '<span class="badge badge-power-missing">Puissance non renseignée</span>'
       : '';
-    const inCoaching = ROSModels.isPlayerInCoachingList(player, state);
-    const contact = ROSModels.getCoachingContact(state, player.id);
-    const contacted = Boolean(contact?.contacted);
-    const contactText = coachingContactLabel(state, player.id);
     const absentToggle =
       player.status === 'Actif'
         ? `
@@ -846,36 +721,6 @@
           </div>
         `;
 
-    const coachingCell = inCoaching
-      ? `
-        <div class="member-coaching-field" title="Coaching">
-          <span class="member-power-label">Coaching</span>
-          <label class="coaching-contact-toggle">
-            <input
-              type="checkbox"
-              data-action="coaching-contact"
-              data-id="${player.id}"
-              ${contacted ? 'checked' : ''}
-            />
-            <span>Contacté</span>
-          </label>
-          ${
-            contacted && contactText
-              ? `<small class="coaching-contact-meta">${ROSUI.escapeHtml(contactText).replace(
-                  /\n/g,
-                  '<br />'
-                )}</small>`
-              : ''
-          }
-        </div>
-      `
-      : `
-        <div class="member-coaching-field member-coaching-empty">
-          <span class="member-power-label">Coaching</span>
-          <span class="member-power-value">—</span>
-        </div>
-      `;
-
     const actions =
       player.status === 'Actif'
         ? `
@@ -889,9 +734,7 @@
         `;
 
     return `
-      <article class="member-row${powerMissing ? ' member-row--power-missing' : ''}${
-        inCoaching && !contacted ? ' member-row--coaching' : ''
-      }" data-open-player="${player.id}">
+      <article class="member-row${powerMissing ? ' member-row--power-missing' : ''}" data-open-player="${player.id}">
         <div class="member-row-main">
           <h3 class="player-name">${ROSUI.escapeHtml(player.pseudo)}</h3>
           <div class="player-meta">
@@ -903,7 +746,6 @@
         </div>
         ${globalPowerSelect}
         ${powerSelect}
-        ${coachingCell}
         <div class="player-actions">${actions}</div>
       </article>
     `;
@@ -914,7 +756,6 @@
     els.list.innerHTML = players.map(renderCard).join('');
     els.empty.classList.toggle('hidden', players.length > 0);
     renderPowerCounter();
-    renderCoachingCounter();
 
     if (detailPlayerId && els.drawer.classList.contains('is-open')) {
       openDetail(detailPlayerId, { allowEdit: detailAllowEdit });
@@ -924,8 +765,7 @@
   function onListClick(event) {
     if (
       event.target.closest('.absent-toggle') ||
-      event.target.closest('.member-power-field') ||
-      event.target.closest('.member-coaching-field')
+      event.target.closest('.member-power-field')
     ) {
       event.stopPropagation();
       return;
@@ -952,12 +792,6 @@
       return;
     }
 
-    const coachingInput = event.target.closest('input[data-action="coaching-contact"]');
-    if (coachingInput) {
-      setCoachingContacted(coachingInput.dataset.id, coachingInput.checked);
-      return;
-    }
-
     const powerSelect = event.target.closest('select[data-action="hero-power"]');
     if (powerSelect) {
       setHeroPowerTier(powerSelect.dataset.id, powerSelect.value);
@@ -971,11 +805,6 @@
   }
 
   function onDetailChange(event) {
-    const exceptionInput = event.target.closest('input[data-action="coaching-exception"]');
-    if (exceptionInput) {
-      setCoachingException(exceptionInput.dataset.id, exceptionInput.value);
-      return;
-    }
     const input = event.target.closest('[data-note-field]');
     if (!input) return;
     saveWeekNote(input.dataset.week, input.dataset.noteField, input.value);
