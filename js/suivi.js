@@ -156,7 +156,6 @@
       vs: Boolean(detected.vs || follow?.reasons?.vs),
       hero: Boolean(detected.hero || follow?.reasons?.hero),
       praise: Boolean(detected.praise || follow?.reasons?.praise),
-      absent: Boolean(detected.absent || follow?.reasons?.absent),
       manual: Boolean(follow?.manual || follow?.reasons?.manual || detected.manual),
     };
   }
@@ -166,10 +165,28 @@
     let changed = false;
     (state.players || []).forEach((player) => {
       if (!player || player.status !== 'Actif') return;
+      if (player.absent) {
+        // Hors suivi : l’absence se gère dans Liste des membres uniquement.
+        const existing = state.playerFollowUps?.[player.id];
+        if (existing && existing.status !== 'done' && !existing.manual && !existing.reasons?.manual) {
+          const onlyLegacyAbsent =
+            !existing.reasons?.vs &&
+            !existing.reasons?.hero &&
+            !existing.reasons?.praise &&
+            !existing.reasons?.manual;
+          if (onlyLegacyAbsent) {
+            existing.status = 'done';
+            existing.closedAt = new Date().toISOString();
+            existing.updatedAt = new Date().toISOString();
+            changed = true;
+          }
+        }
+        return;
+      }
       const detected = ROSModels.detectFollowUpReasons(player, state);
       const existing = state.playerFollowUps?.[player.id];
       const hasOpen = existing && existing.status !== 'done';
-      const autoHit = detected.vs || detected.hero || detected.praise || detected.absent;
+      const autoHit = detected.vs || detected.hero || detected.praise;
       if (!autoHit && !hasOpen && !detected.manual) return;
       if (existing?.status === 'done') return;
 
@@ -178,7 +195,6 @@
           vs: detected.vs,
           hero: detected.hero,
           praise: detected.praise,
-          absent: detected.absent,
           manual: Boolean(detected.manual),
         };
         const row = ensureCase(state, player.id, {
@@ -193,12 +209,16 @@
       const row = ensureCase(state, player.id);
       if (row.status === 'done') return;
       let rowChanged = false;
-      ['vs', 'hero', 'praise', 'absent'].forEach((key) => {
+      ['vs', 'hero', 'praise'].forEach((key) => {
         if (detected[key] && !row.reasons[key]) {
           row.reasons[key] = true;
           rowChanged = true;
         }
       });
+      if (row.reasons?.absent) {
+        row.reasons.absent = false;
+        rowChanged = true;
+      }
       if (row.manual && !row.reasons.manual) {
         row.reasons.manual = true;
         rowChanged = true;
@@ -233,7 +253,6 @@
           !displayReasons.vs &&
           !displayReasons.hero &&
           !displayReasons.praise &&
-          !displayReasons.absent &&
           !displayReasons.manual
         ) {
           return null;
@@ -242,7 +261,6 @@
         if (reasonFilter === 'vs' && !displayReasons.vs) return null;
         if (reasonFilter === 'hero' && !displayReasons.hero) return null;
         if (reasonFilter === 'praise' && !displayReasons.praise) return null;
-        if (reasonFilter === 'absent' && !displayReasons.absent) return null;
         if (reasonFilter === 'manual' && !displayReasons.manual) return null;
         if (assigneeFilter === 'unassigned' && follow.assigneePlayerId) return null;
         if (
@@ -602,7 +620,6 @@
       });
 
     const groups = [
-      { title: 'Absents', rows: take((r) => r.reasons.absent) },
       { title: 'À féliciter', rows: take((r) => r.reasons.praise) },
       { title: 'À contacter', rows: take((r) => r.follow.status === 'to_contact') },
       { title: 'Autres suivis', rows: take(() => true) },
@@ -676,7 +693,6 @@
             vs: Boolean(detected.vs || row.reasons.vs),
             hero: Boolean(detected.hero || row.reasons.hero),
             praise: Boolean(detected.praise || row.reasons.praise),
-            absent: Boolean(detected.absent || row.reasons.absent),
             manual: Boolean(row.manual || row.reasons.manual),
           });
         }
@@ -700,7 +716,6 @@
         vs: Boolean(detected.vs || row.reasons.vs),
         hero: Boolean(detected.hero || row.reasons.hero),
         praise: Boolean(detected.praise || row.reasons.praise),
-        absent: Boolean(detected.absent || row.reasons.absent),
         manual: Boolean(row.manual || row.reasons.manual),
       });
       if (row.status === 'to_contact') row.status = 'contacted';
@@ -790,7 +805,6 @@
     const map = {
       vs: 'followUpSpecialistVs',
       praise: 'followUpSpecialistPraise',
-      absent: 'followUpSpecialistAbsent',
       hero: 'followUpSpecialistHero',
       manual: 'followUpSpecialistManual',
     };
@@ -841,7 +855,7 @@
         const officer = (state.players || []).find((p) => p.id === pid);
         return `${label}: ${officer?.pseudo || pid}`;
       }).filter(Boolean);
-      preview.textContent = `VS suivi : ≥ ${settings.vsMinUnderDays} j sous objectif · À féliciter : ≥ ${settings.vsPraiseMinDaysMet} j score fait + ≥ ${settings.vsPraiseMinHighDays} j ≥ ${praiseGoal} · Héros : ≤ ${settings.heroMaxM} M · Absents : auto${
+      preview.textContent = `VS suivi : ≥ ${settings.vsMinUnderDays} j sous objectif · À féliciter : ≥ ${settings.vsPraiseMinDaysMet} j score fait + ≥ ${settings.vsPraiseMinHighDays} j ≥ ${praiseGoal} · Héros : ≤ ${settings.heroMaxM} M${
         specialistBits.length ? ` · Référents : ${specialistBits.join(' · ')}` : ''
       }`;
     }

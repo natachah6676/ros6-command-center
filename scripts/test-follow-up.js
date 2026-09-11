@@ -118,12 +118,19 @@ assert(rPraise.praise === true && rPraise.vs === false, '5 j score fait + 1 gros
 
 const absentP = state.players.find((p) => p.id === 'p_absent');
 const rAbs = M.detectFollowUpReasons(absentP, state);
-assert(rAbs.absent === true && !rAbs.vs && !rAbs.praise, 'détection absent');
+assert(
+  !rAbs.vs && !rAbs.praise && !rAbs.hero && !rAbs.manual,
+  'absent hors suivi (aucun motif)'
+);
 
 assert(M.normalizeFollowUpSettings({}).vsPraiseMinDaysMet === 5, 'défaut félicitations = 5 j score fait');
 assert(M.normalizeFollowUpSettings({}).vsPraiseMinHighDays === 1, 'défaut félicitations = 1 j gros score');
 assert(M.createDefaultVsSettings().afond.praiseGoal === 20000000, 'défaut seuil gros score = 20 M');
 assert(M.normalizeFollowUpSettings({}).specialists.vs === null, 'spécialiste VS défaut null');
+assert(
+  !M.FOLLOW_UP_SPECIALIST_KEYS.some((k) => k.id === 'absent'),
+  'pas de référent absent'
+);
 
 const specsState = {
   players: [
@@ -175,7 +182,7 @@ assert(opts[0].bracket === 'high' && opts[1].bracket === 'ok', 'options VS : gro
 assert(opts[1].label.includes('Score fait'), 'libellé Score fait');
 
 const rAbsent = M.detectFollowUpReasons(state.players[4], state);
-assert(rAbsent.absent === true, 'absent → motif absent');
+assert(!rAbsent.vs && !rAbsent.hero && !rAbsent.praise, 'absent → aucun motif suivi');
 
 const caseNorm = M.normalizeFollowUpCase({
   status: 'contacted',
@@ -211,6 +218,8 @@ assert(html.includes('id="trainExportHistoryExcel"'), 'export Excel Train');
 assert(html.includes('id="followUpVsPraiseMinDaysMet"'), 'seuil félicitations jours faits');
 assert(html.includes('id="vsAfondPraiseGoal"'), 'seuil gros score VS paramètres');
 assert(html.includes('id="followUpHeroMax"'), 'seuil héros paramètres');
+assert(!html.includes('id="followUpSpecialistAbsent"'), 'pas de référent Absents');
+assert(!html.includes('option value="absent"'), 'pas de filtre motif Absent');
 assert(html.includes('id="followUpSpecialistVs"'), 'référent VS paramètres');
 assert(html.includes('id="suiviScopeHint"'), 'hint périmètre R4');
 assert(suiviCode.includes('isFollowUpVisibleToViewer'), 'filtre visibilité R4');

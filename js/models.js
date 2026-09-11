@@ -948,7 +948,6 @@
   const FOLLOW_UP_SPECIALIST_KEYS = [
     { id: 'vs', label: 'VS sous seuil' },
     { id: 'praise', label: 'À féliciter' },
-    { id: 'absent', label: 'Absents' },
     { id: 'hero', label: 'Puissance héros' },
     { id: 'manual', label: 'Aide / manuel' },
   ];
@@ -957,7 +956,6 @@
     return {
       vs: seed.vs || null,
       praise: seed.praise || null,
-      absent: seed.absent || null,
       hero: seed.hero || null,
       manual: seed.manual || null,
     };
@@ -1006,12 +1004,12 @@
   }
 
   /**
-   * Choisit un référent selon les motifs actifs (priorité VS → absent → féliciter → héros → manuel).
+   * Choisit un référent selon les motifs actifs (priorité VS → féliciter → héros → manuel).
    */
   function pickFollowUpSpecialist(reasons, state) {
     const settings = getFollowUpSettings(state);
     const specs = settings.specialists || emptyFollowUpSpecialists();
-    const priority = ['vs', 'absent', 'praise', 'hero', 'manual'];
+    const priority = ['vs', 'praise', 'hero', 'manual'];
     for (let i = 0; i < priority.length; i += 1) {
       const key = priority[i];
       if (!reasons?.[key] || !specs[key]) continue;
@@ -1054,7 +1052,6 @@
       vs: Boolean(seed.vs),
       hero: Boolean(seed.hero),
       praise: Boolean(seed.praise),
-      absent: Boolean(seed.absent),
       manual: Boolean(seed.manual),
     };
   }
@@ -1152,14 +1149,11 @@
     const settings = getFollowUpSettings(state);
     const reasons = emptyFollowUpReasons();
     if (!player || player.status !== 'Actif') return reasons;
+    // Absent = hors VS uniquement (Liste des membres) — pas un motif de suivi.
+    if (player.absent) return reasons;
 
     const existing = state?.playerFollowUps?.[player.id];
     if (existing?.manual || existing?.reasons?.manual) reasons.manual = true;
-
-    if (player.absent) {
-      reasons.absent = true;
-      return reasons;
-    }
 
     const week = getFollowUpReferenceWeek(state);
     if (week) {
@@ -1186,7 +1180,6 @@
     const parts = [];
     if (reasons?.vs) parts.push('VS sous seuil');
     if (reasons?.praise) parts.push('À féliciter');
-    if (reasons?.absent) parts.push('Absent');
     if (reasons?.hero) parts.push('Puissance héros');
     if (reasons?.manual) parts.push('Aide / manuel');
     return parts.length ? parts.join(' · ') : '—';
