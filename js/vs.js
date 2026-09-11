@@ -528,6 +528,14 @@
 
       s.weeks.unshift(week);
       s.currentWeekId = week.id;
+      // Nouvelle semaine : réactive la détection VS / félicitations après un reset.
+      const prevFollow = ROSModels.getFollowUpSettings(s);
+      if (prevFollow.vsFollowUpMutedWeekId) {
+        s.followUpSettings = ROSModels.normalizeFollowUpSettings({
+          ...prevFollow,
+          vsFollowUpMutedWeekId: null,
+        });
+      }
       return s;
     });
 

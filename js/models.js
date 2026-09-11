@@ -1166,20 +1166,21 @@
     if (existing?.manual || existing?.reasons?.manual) reasons.manual = true;
 
     const week = getFollowUpReferenceWeek(state);
-    const mutedForWeek =
-      week && settings.vsFollowUpMutedWeekId && week.id === settings.vsFollowUpMutedWeekId;
+    const mutedWeekId = settings.vsFollowUpMutedWeekId;
+    const mutedForWeek = Boolean(week && mutedWeekId && week.id === mutedWeekId);
+    // Mute actif sans semaine (ex. après clôture) : ne pas relire l’historique VS.
+    const mutedHistory = Boolean(mutedWeekId) && (!week || mutedForWeek);
     if (week && !mutedForWeek) {
       const underDays = countPlayerVsUnderDays(week, player.id);
       const score = week.scores?.[player.id];
       const hasScore = Boolean(score && !isScoreAbsent(score));
       if (hasScore && underDays >= settings.vsMinUnderDays) reasons.vs = true;
       if (hasScore && isPraiseWeekScore(score, state)) reasons.praise = true;
-    } else if (!week) {
+    } else if (!week && !mutedHistory) {
       const last = getPlayerVsUnderStats(state, player.id).entries[0];
       if (last?.under) reasons.vs = true;
       if (last?.praise) reasons.praise = true;
     }
-    // Semaine muette (après reset compteurs) : pas de VS / félicitations auto.
 
     const heroSort = getPlayerPowerSortValue(player, state);
     if (heroSort >= 0 && heroSort <= settings.heroMaxM) {
@@ -1271,6 +1272,10 @@
   function recordVsUnderSnapshotsForWeek(state, week) {
     if (!state || !week) return state;
     const settings = getFollowUpSettings(state);
+    // Reset compteurs : ne pas réécrire d’historique pour la semaine muette.
+    if (settings.vsFollowUpMutedWeekId && week.id === settings.vsFollowUpMutedWeekId) {
+      return state;
+    }
     if (!state.playerVsUnderStats || typeof state.playerVsUnderStats !== 'object') {
       state.playerVsUnderStats = {};
     }
@@ -1283,6 +1288,8 @@
       const underDays = countDaysUnderObjective(score);
       const under = underDays >= settings.vsMinUnderDays;
       const praise = isPraiseWeekScore(score, state);
+      // Ne mémorise que les semaines « utiles » (sous seuil ou à féliciter).
+      if (!under && !praise) return;
       const prev = getPlayerVsUnderStats(state, player.id);
       const withoutDup = prev.entries.filter((e) => e.weekId !== week.id);
       withoutDup.unshift({
