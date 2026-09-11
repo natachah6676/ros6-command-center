@@ -214,6 +214,11 @@
           row.reasons[key] = true;
           rowChanged = true;
         }
+        // Retire les motifs auto qui ne sont plus vrais (évite les fiches « fantômes »).
+        if (!detected[key] && row.reasons[key] && key !== 'manual') {
+          row.reasons[key] = false;
+          rowChanged = true;
+        }
       });
       if (row.reasons?.absent) {
         row.reasons.absent = false;
@@ -223,7 +228,18 @@
         row.reasons.manual = true;
         rowChanged = true;
       }
-      if (applySpecialistIfNeeded(row, { ...row.reasons, ...detected }, state)) {
+      const stillRelevant =
+        row.reasons.vs ||
+        row.reasons.hero ||
+        row.reasons.praise ||
+        row.manual ||
+        row.reasons.manual;
+      if (!stillRelevant && row.status !== 'done') {
+        row.status = 'done';
+        row.closedAt = new Date().toISOString();
+        rowChanged = true;
+      }
+      if (stillRelevant && applySpecialistIfNeeded(row, { ...row.reasons, ...detected }, state)) {
         rowChanged = true;
       }
       if (rowChanged) {
@@ -890,6 +906,50 @@
     AppUI.toast('Seuils et référents enregistrés.');
   }
 
+  async function resetVsUnderCounters() {
+    if (!(global.ROSProfiles && ROSProfiles.isActiveR5 && ROSProfiles.isActiveR5())) {
+      AppUI.toast('Seul le R5 peut remettre les compteurs VS à zéro.');
+      return;
+    }
+    const ok = await AppUI.confirm({
+      title: 'Remettre les compteurs VS à zéro',
+      message:
+        'Effacer les compteurs « VS sous seuil / À féliciter » et retirer des suivis ouverts les motifs VS / félicitations qui ne sont plus justifiés par la semaine actuelle ? Tempête, Train et membres ne sont pas touchés.',
+      confirmLabel: 'Remettre à zéro',
+    });
+    if (!ok) return;
+    ROSStorage.update((s) => {
+      s.playerVsUnderStats = {};
+      // Nettoie aussi les fiches de suivi encore marquées VS / féliciter à tort.
+      Object.keys(s.playerFollowUps || {}).forEach((playerId) => {
+        const row = s.playerFollowUps[playerId];
+        if (!row || row.status === 'done') return;
+        const player = (s.players || []).find((p) => p.id === playerId);
+        const detected = ROSModels.detectFollowUpReasons(player, {
+          ...s,
+          playerVsUnderStats: {},
+        });
+        row.reasons = ROSModels.emptyFollowUpReasons({
+          vs: Boolean(detected.vs),
+          hero: Boolean(detected.hero || row.reasons?.hero),
+          praise: Boolean(detected.praise),
+          manual: Boolean(row.manual || row.reasons?.manual),
+        });
+        row.manual = Boolean(row.manual || row.reasons.manual);
+        const stillRelevant =
+          row.reasons.vs || row.reasons.hero || row.reasons.praise || row.manual;
+        if (!stillRelevant) {
+          row.status = 'done';
+          row.closedAt = new Date().toISOString();
+        }
+        row.updatedAt = new Date().toISOString();
+      });
+      return s;
+    });
+    render();
+    AppUI.toast('Compteurs et suivis VS nettoyés.');
+  }
+
   function init() {
     cacheDom();
     els.search?.addEventListener('input', () => render());
@@ -905,6 +965,9 @@
     els.root?.addEventListener('change', onRootChange);
     els.root?.addEventListener('submit', onRootSubmit);
     document.getElementById('btnSaveFollowUpSettings')?.addEventListener('click', saveSettings);
+    document.getElementById('btnResetVsUnderCounters')?.addEventListener('click', () => {
+      void resetVsUnderCounters();
+    });
   }
 
   global.SuiviModule = {
