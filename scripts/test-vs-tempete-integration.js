@@ -75,7 +75,7 @@ console.log('\n=== Flux VS : migration + mode + paramètres + clôture ===');
   const state = M.normalizeState(legacy);
   sandbox.__state = state;
 
-  assert(state.vsSettings.mode === 'eco', 'Migration → mode ÉCO');
+  assert(state.vsSettings.mode === 'afond', 'Migration → mode à fond');
   assert(state.weeks.find((w) => w.id === 'w-active').donationsVerified === false, 'Dons non vérifiés par défaut');
 
   const archived = state.weeks.find((w) => w.id === 'w-old');
@@ -83,12 +83,18 @@ console.log('\n=== Flux VS : migration + mode + paramètres + clôture ===');
   assert(archived.scores.p1.allianceDonMissed === true, 'Archive : don manqué conservé');
 
   const active = state.weeks.find((w) => w.id === 'w-active');
-  // Première migration ÉCO : mid → 0, low → 10
-  assert(active.scores.p1.days.mardi === 0, 'Semaine active : mid recalculé en ÉCO (0)');
-  assert(active.scores.p1.days.mercredi === 10, 'Semaine active : low = 10 en ÉCO');
+  // Première migration (barème à fond) : mid → 5, low → 12
+  assert(active.scores.p1.days.mardi === 5, 'Semaine active : mid recalculé à fond (5)');
+  assert(active.scores.p1.days.mercredi === 12, 'Semaine active : low = 12 à fond');
   assert(active.scores.p1.dayBrackets.mardi === 'mid', 'Bracket mid conservé pour bascule future');
 
-  // Bascule À FOND + recalcul
+  // Bascule ÉCO + recalcul (compat barème stocké)
+  state.vsSettings.mode = 'eco';
+  M.recalculateWeekWithBareme(active, state);
+  assert(active.scores.p1.days.mardi === 0, 'Bascule ÉCO : mid → 0');
+  assert(active.scores.p1.days.mercredi === 10, 'Bascule ÉCO : low → 10');
+
+  // Retour À FOND + recalcul
   state.vsSettings.mode = 'afond';
   M.recalculateWeekWithBareme(active, state);
   assert(active.scores.p1.days.mardi === 5, 'Bascule À FOND : mid → 5');
@@ -110,10 +116,9 @@ console.log('\n=== Flux VS : migration + mode + paramètres + clôture ===');
   assert(M.getColorClass(36, state) === 'color-red', 'Rouge ≥ 36');
   assert(M.getColorClass(30, state) === 'color-orange', 'Orange sous le seuil rouge');
 
-  // Gate clôture
-  assert(!active.donationsVerified, 'Impossible de clôturer sans case dons');
-  active.donationsVerified = true;
-  assert(active.donationsVerified === true, 'Clôture autorisée après vérification dons');
+  // Clôture libre : plus de gate donationsVerified (champ conservé en données)
+  assert(Object.prototype.hasOwnProperty.call(active, 'donationsVerified'), 'donationsVerified toujours présent (compat)');
+  assert(typeof active.donationsVerified === 'boolean', 'donationsVerified booléen');
 
   // Re-normalisation ne doit pas écraser vsSettings ni archives
   const again = M.normalizeState(state);

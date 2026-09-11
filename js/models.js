@@ -1012,6 +1012,8 @@
       : [];
 
     const vsSettings = normalizeVsSettings(raw.vsSettings);
+    // WarOps ne suit plus que le VS à fond ; conserve eco.* pour compat historique.
+    vsSettings.mode = 'afond';
     const allowedDayPoints = new Set([0, 5, 10, 12]);
     [vsSettings.afond.midPoints, vsSettings.afond.lowPoints, vsSettings.eco.underPoints].forEach((p) => {
       allowedDayPoints.add(Number(p) || 0);

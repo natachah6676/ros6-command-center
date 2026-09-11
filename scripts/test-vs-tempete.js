@@ -43,7 +43,7 @@ function assert(cond, msg) {
 console.log('\n=== VS Settings & bareme ===');
 {
   const settings = M.createDefaultVsSettings();
-  assert(settings.mode === 'eco', 'Mode par défaut = eco');
+  assert(settings.mode === 'afond', 'Mode par défaut = afond');
   assert(settings.eco.dailyGoal === 3600000, 'ÉCO objectif 3 600 000');
   assert(settings.eco.underPoints === 10, 'ÉCO under 10 pts');
   assert(settings.eco.redFrom === 30, 'ÉCO rouge ≥ 30');
@@ -74,12 +74,12 @@ console.log('\n=== Migration anciennes données ===');
     currentWeekId: 'w1',
   };
   const state = M.normalizeState(raw);
-  assert(state.vsSettings.mode === 'eco', 'vsSettings migré (défaut eco)');
+  assert(state.vsSettings.mode === 'afond', 'vsSettings migré (défaut afond)');
   const score = state.weeks[0].scores.p1;
   assert(score.dayBrackets.lundi === 'ok', '0 → bracket ok');
   assert(score.dayBrackets.mardi === 'mid', '5 → bracket mid');
   assert(score.dayBrackets.mercredi === 'low', '10 → bracket low');
-  assert(score.days.mercredi === 10, 'Points historiques conservés');
+  assert(score.days.mercredi === 12, 'Points mid/low remappés au barème à fond');
   assert(state.weeks[0].donationsVerified === false, 'donationsVerified défaut false');
 }
 

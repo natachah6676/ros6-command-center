@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20260810-train-ux-a14" />
+  <link rel="stylesheet" href="css/styles.css?v=20260910-train-ui1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -72,12 +72,12 @@
 
     <nav class="tabs" role="tablist" aria-label="Navigation principale">
       <button type="button" class="tab is-active" data-tab="command" role="tab" aria-selected="true">Poste de Commandement</button>
-      <button type="button" class="tab" data-tab="players" role="tab" aria-selected="false">Gestion des membres</button>
       <button type="button" class="tab" data-tab="vs" role="tab" aria-selected="false">VS</button>
       <button type="button" class="tab" data-tab="train" role="tab" aria-selected="false">Train</button>
       <button type="button" class="tab" data-tab="recrutement" role="tab" aria-selected="false">Recrutement</button>
       <button type="button" class="tab" data-tab="ruche" role="tab" aria-selected="false">Ruche</button>
       <button type="button" class="tab" data-tab="tempete" role="tab" aria-selected="false">Tempête du Désert</button>
+      <button type="button" class="tab" data-tab="players" role="tab" aria-selected="false">Liste des membres</button>
       <button type="button" class="tab" data-tab="archives" role="tab" aria-selected="false">Archives</button>
       <button type="button" class="tab hidden" data-tab="settings" role="tab" aria-selected="false" hidden aria-hidden="true">Paramètres</button>
     </nav>
@@ -126,7 +126,7 @@
       <section id="panel-players" class="panel" role="tabpanel" hidden>
         <div class="panel-header">
           <div>
-            <h2>Gestion des membres</h2>
+            <h2>Liste des membres</h2>
             <p class="panel-subtitle">Administration des fiches — sans statistiques VS</p>
           </div>
           <button type="button" id="btnAddPlayer" class="btn btn-primary">Ajouter un joueur</button>
@@ -171,20 +171,12 @@
             <p class="panel-subtitle">Semaines VS à fond · clôture indépendante · historique conservé</p>
           </div>
           <div class="panel-header-actions">
-            <button type="button" id="btnVsSettings" class="btn btn-ghost">Paramètres VS</button>
             <button type="button" id="btnCloseWeek" class="btn btn-ghost">Clôturer la semaine</button>
             <button type="button" id="btnNewWeek" class="btn btn-primary">+ Nouvelle semaine VS</button>
           </div>
         </div>
 
         <div id="vsMainView">
-          <div id="vsModeBar" class="vs-mode-bar vs-mode-afond">
-            <span id="vsModeLabel" class="vs-mode-label">🔴 Mode actuel : <strong>VS À FOND</strong></span>
-            <button type="button" id="vsToggleMode" class="btn btn-ghost" data-target-mode="eco">
-              Revenir en VS ÉCO
-            </button>
-          </div>
-
           <div class="vs-week-bar">
             <div class="vs-week-active">
               <span class="vs-week-label">Semaine active</span>
@@ -202,11 +194,6 @@
           <p id="vsNoActiveNotice" class="vs-archive-notice hidden">
             Aucune semaine VS active. Créez une semaine lorsque vous jouez le VS à fond.
           </p>
-
-          <label id="vsDonationsVerifiedWrap" class="vs-donations-check">
-            <input type="checkbox" id="vsDonationsVerified" />
-            <span>Vérification des dons effectuée</span>
-          </label>
 
           <div class="legend" id="vsLegend">
             <span class="legend-item"><span class="swatch score-0"></span> Plus de 7,2 M · 0 pt</span>
@@ -240,91 +227,6 @@
           </div>
           <p id="vsEmpty" class="empty-state hidden">Aucun joueur actif. Ajoutez des joueurs pour saisir le VS.</p>
         </div>
-
-        <div id="vsSettingsView" class="hidden">
-          <div class="panel-header" style="padding:0;margin-bottom:1rem">
-            <div>
-              <h3>Paramètres VS</h3>
-              <p class="panel-subtitle">Barèmes modifiables — aucune valeur codée en dur</p>
-            </div>
-            <div class="panel-header-actions">
-              <button type="button" id="btnVsBackFromSettings" class="btn btn-ghost">← Retour au VS</button>
-            </div>
-          </div>
-
-          <div class="settings-subtabs" role="tablist" aria-label="Barèmes VS">
-            <button type="button" class="chip-filter is-active" data-vs-settings-tab="afond" aria-selected="true">
-              VS À FOND
-            </button>
-            <button type="button" class="chip-filter" data-vs-settings-tab="eco" aria-selected="false">
-              VS ÉCO
-            </button>
-          </div>
-
-          <form id="vsSettingsForm" class="vs-settings-form">
-            <div id="vsSettingsPaneAfond" class="block">
-              <header class="block-header">
-                <h3>VS À FOND</h3>
-                <p>Barème intensif</p>
-              </header>
-              <div class="vs-settings-grid">
-                <label class="field">
-                  <span>Objectif quotidien</span>
-                  <input type="number" id="vsAfondDailyGoal" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Seuil bas (entre ce seuil et objectif − 1)</span>
-                  <input type="number" id="vsAfondMidMin" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Points (entre seuil bas et objectif)</span>
-                  <input type="number" id="vsAfondMidPoints" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Points (moins que le seuil bas)</span>
-                  <input type="number" id="vsAfondLowPoints" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Dons non faits</span>
-                  <input type="number" id="vsAfondDonation" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Rouge à partir de</span>
-                  <input type="number" id="vsAfondRedFrom" class="input" min="1" step="1" required />
-                </label>
-              </div>
-            </div>
-
-            <div id="vsSettingsPaneEco" class="block hidden">
-              <header class="block-header">
-                <h3>VS ÉCO</h3>
-                <p>Barème économique (mode par défaut)</p>
-              </header>
-              <div class="vs-settings-grid">
-                <label class="field">
-                  <span>Objectif quotidien</span>
-                  <input type="number" id="vsEcoDailyGoal" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Points sous objectif</span>
-                  <input type="number" id="vsEcoUnderPoints" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Dons non faits</span>
-                  <input type="number" id="vsEcoDonation" class="input" min="0" step="1" required />
-                </label>
-                <label class="field">
-                  <span>Rouge à partir de</span>
-                  <input type="number" id="vsEcoRedFrom" class="input" min="1" step="1" required />
-                </label>
-              </div>
-            </div>
-
-            <div class="settings-actions" style="margin-top:1rem">
-              <button type="submit" class="btn btn-primary">Enregistrer les paramètres</button>
-            </div>
-          </form>
-        </div>
       </section>
 
       <!-- TRAIN -->
@@ -332,7 +234,7 @@
         <div class="panel-header">
           <div>
             <h2>Train</h2>
-            <p class="panel-subtitle">Planning hebdomadaire Conducteurs &amp; VIP — module indépendant</p>
+            <p class="panel-subtitle">Organiser rapidement les conducteurs de la semaine</p>
           </div>
         </div>
 
@@ -356,27 +258,31 @@
               </header>
               <div class="train-weekly-main">
                 <div id="trainWeekPlan" class="train-week-plan"></div>
-                <section class="block" style="margin-top:0.85rem">
+                <section class="block train-org-block" style="margin-top:0.85rem">
                   <header class="block-header">
-                    <h3>VIP — Tirage au sort</h3>
-                    <p>Un joueur éligible proposé · choix manuel toujours possible dans le planning</p>
+                    <h3>Organisation VIP &amp; conducteurs</h3>
+                    <p>Tirage VIP et candidats Premiers — même zone pour organiser la semaine</p>
                   </header>
-                  <label class="field">
-                    <span>Jour cible</span>
-                    <select id="trainVipDrawDay" class="input" aria-label="Jour pour le tirage VIP"></select>
-                  </label>
-                  <div class="settings-actions" style="margin-top:0.65rem">
-                    <button type="button" id="trainVipDraw" class="btn btn-ghost">🎲 Tirage au sort</button>
+                  <div class="train-org-grid">
+                    <div class="train-org-panel" id="trainVipOrgPanel">
+                      <h4 class="train-org-title">VIP — Tirage au sort</h4>
+                      <p class="train-org-hint">Un joueur éligible proposé · choix manuel toujours possible dans le planning</p>
+                      <label class="field">
+                        <span>Jour cible</span>
+                        <select id="trainVipDrawDay" class="input" aria-label="Jour pour le tirage VIP"></select>
+                      </label>
+                      <div class="settings-actions" style="margin-top:0.65rem">
+                        <button type="button" id="trainVipDraw" class="btn btn-ghost">🎲 Tirage au sort</button>
+                      </div>
+                      <div id="trainVipDrawPanel" style="margin-top:0.75rem"></div>
+                      <div id="trainVipExclusionStats" class="train-exclusion-stats" aria-live="polite"></div>
+                    </div>
+                    <div class="train-org-panel" id="trainCandidatesOrgPanel">
+                      <h4 class="train-org-title">Candidats conducteurs</h4>
+                      <p class="train-org-hint">Joueurs classés Premiers — jour via liste (Lun–Sam, pas Dimanche)</p>
+                      <div id="trainWeekCandidates" class="train-week-candidates"></div>
+                    </div>
                   </div>
-                  <div id="trainVipDrawPanel" style="margin-top:0.75rem"></div>
-                  <div id="trainVipExclusionStats" class="train-exclusion-stats" aria-live="polite"></div>
-                </section>
-                <section class="block" style="margin-top:0.85rem">
-                  <header class="block-header">
-                    <h3>Candidats conducteurs</h3>
-                    <p>Joueurs classés Premiers — jour via liste (Lun–Sam, pas Dimanche)</p>
-                  </header>
-                  <div id="trainWeekCandidates" class="train-week-candidates"></div>
                 </section>
               </div>
             </div>
@@ -413,53 +319,62 @@
           </section>
 
           <section class="block train-history-block">
-            <details class="train-collapsible" id="trainHistoryDetails">
+            <details class="train-collapsible train-secondary-panel" id="trainSecondaryDetails">
               <summary class="train-collapsible-summary">
-                <span class="train-collapsible-title">Historique</span>
-                <span class="train-collapsible-hint" id="trainHistorySince">Aucun historique officiel pour le moment.</span>
+                <span class="train-collapsible-title">Historique &amp; équité</span>
+                <span class="train-collapsible-hint">Replié par défaut — consultation hors organisation de la semaine</span>
                 <span class="train-collapsible-toggle" aria-hidden="true"></span>
               </summary>
               <div class="train-collapsible-body">
-                <p class="panel-subtitle" style="margin-bottom:0.75rem">
-                  Consultation et correction manuelle Conducteur / VIP. L’initialisation / gestion administrative se fait dans Paramètres → Train (R5).
-                </p>
-                <div id="trainHistoryBody" class="train-official-history-list"></div>
-                <p id="trainHistoryEmpty" class="empty-state hidden">Aucun historique Train pour le moment.</p>
-              </div>
-            </details>
+                <details class="train-collapsible" id="trainHistoryDetails">
+                  <summary class="train-collapsible-summary">
+                    <span class="train-collapsible-title">Historique</span>
+                    <span class="train-collapsible-hint" id="trainHistorySince">Aucun historique officiel pour le moment.</span>
+                    <span class="train-collapsible-toggle" aria-hidden="true"></span>
+                  </summary>
+                  <div class="train-collapsible-body">
+                    <p class="panel-subtitle" style="margin-bottom:0.75rem">
+                      Consultation et correction manuelle Conducteur / VIP. L’initialisation / gestion administrative se fait dans Paramètres → Train (R5).
+                    </p>
+                    <div id="trainHistoryBody" class="train-official-history-list"></div>
+                    <p id="trainHistoryEmpty" class="empty-state hidden">Aucun historique Train pour le moment.</p>
+                  </div>
+                </details>
 
-            <details class="train-collapsible" id="trainEquityDetails" style="margin-top:0.85rem">
-              <summary class="train-collapsible-summary">
-                <span class="train-collapsible-title">Tableau d’équité</span>
-                <span class="train-collapsible-hint">Depuis le début de l’historique WarOps</span>
-                <span class="train-collapsible-toggle" aria-hidden="true"></span>
-              </summary>
-              <div class="train-collapsible-body">
-                <p class="panel-subtitle" style="margin-bottom:0.65rem">
-                  Occurrences depuis le début (calculées, jamais remises à zéro chaque mois)
-                </p>
-                <label class="field" style="max-width:16rem;margin-bottom:0.65rem">
-                  <span>Trier</span>
-                  <select id="trainEquitySort" class="input" aria-label="Tri tableau d’équité Train">
-                    <option value="alpha">Ordre alphabétique</option>
-                    <option value="conductor-asc">Conducteur croissant</option>
-                    <option value="conductor-desc">Conducteur décroissant</option>
-                    <option value="vip-asc">VIP croissant</option>
-                    <option value="vip-desc">VIP décroissant</option>
-                  </select>
-                </label>
-                <div class="table-wrap">
-                  <table class="archive-table">
-                    <thead>
-                      <tr>
-                        <th>Joueur</th>
-                        <th>Conducteur</th>
-                        <th>VIP</th>
-                      </tr>
-                    </thead>
-                    <tbody id="trainEquityBody"></tbody>
-                  </table>
-                </div>
+                <details class="train-collapsible" id="trainEquityDetails" style="margin-top:0.85rem">
+                  <summary class="train-collapsible-summary">
+                    <span class="train-collapsible-title">Tableau d’équité</span>
+                    <span class="train-collapsible-hint">Depuis le début de l’historique WarOps</span>
+                    <span class="train-collapsible-toggle" aria-hidden="true"></span>
+                  </summary>
+                  <div class="train-collapsible-body">
+                    <p class="panel-subtitle" style="margin-bottom:0.65rem">
+                      Occurrences depuis le début (calculées, jamais remises à zéro chaque mois)
+                    </p>
+                    <label class="field" style="max-width:16rem;margin-bottom:0.65rem">
+                      <span>Trier</span>
+                      <select id="trainEquitySort" class="input" aria-label="Tri tableau d’équité Train">
+                        <option value="alpha">Ordre alphabétique</option>
+                        <option value="conductor-asc">Conducteur croissant</option>
+                        <option value="conductor-desc">Conducteur décroissant</option>
+                        <option value="vip-asc">VIP croissant</option>
+                        <option value="vip-desc">VIP décroissant</option>
+                      </select>
+                    </label>
+                    <div class="table-wrap">
+                      <table class="archive-table">
+                        <thead>
+                          <tr>
+                            <th>Joueur</th>
+                            <th>Conducteur</th>
+                            <th>VIP</th>
+                          </tr>
+                        </thead>
+                        <tbody id="trainEquityBody"></tbody>
+                      </table>
+                    </div>
+                  </div>
+                </details>
               </div>
             </details>
           </section>
@@ -719,13 +634,16 @@
         <div class="panel-header">
           <div>
             <h2>Paramètres</h2>
-            <p class="panel-subtitle">Identité, Train, accès (R5), sauvegarde et maintenance</p>
+            <p class="panel-subtitle">Identité, VS, Train, accès (R5), sauvegarde et maintenance</p>
           </div>
         </div>
 
         <div class="settings-subtabs" role="tablist" aria-label="Sections paramètres">
           <button type="button" class="chip-filter is-active" data-settings-tab="general" aria-selected="true">
             Général
+          </button>
+          <button type="button" class="chip-filter" data-settings-tab="vs" aria-selected="false">
+            VS
           </button>
           <button type="button" class="chip-filter" data-settings-tab="train" aria-selected="false">
             Train
@@ -739,6 +657,48 @@
           >
             Gestion des accès
           </button>
+        </div>
+
+        <div id="settingsPaneVs" class="hidden">
+          <section class="block settings-block-wide" id="settingsVsBlock">
+            <header class="block-header">
+              <h3>Paramètres VS</h3>
+              <p>Barème des semaines VS suivies — réservé R5</p>
+            </header>
+            <form id="vsSettingsForm" class="vs-settings-form">
+              <div id="vsSettingsPaneAfond" class="block" style="padding:0;border:none;box-shadow:none;background:transparent">
+                <div class="vs-settings-grid">
+                  <label class="field">
+                    <span>Objectif quotidien</span>
+                    <input type="number" id="vsAfondDailyGoal" class="input" min="0" step="1" required />
+                  </label>
+                  <label class="field">
+                    <span>Seuil bas (entre ce seuil et objectif − 1)</span>
+                    <input type="number" id="vsAfondMidMin" class="input" min="0" step="1" required />
+                  </label>
+                  <label class="field">
+                    <span>Points (entre seuil bas et objectif)</span>
+                    <input type="number" id="vsAfondMidPoints" class="input" min="0" step="1" required />
+                  </label>
+                  <label class="field">
+                    <span>Points (moins que le seuil bas)</span>
+                    <input type="number" id="vsAfondLowPoints" class="input" min="0" step="1" required />
+                  </label>
+                  <label class="field">
+                    <span>Dons non faits</span>
+                    <input type="number" id="vsAfondDonation" class="input" min="0" step="1" required />
+                  </label>
+                  <label class="field">
+                    <span>Rouge à partir de</span>
+                    <input type="number" id="vsAfondRedFrom" class="input" min="1" step="1" required />
+                  </label>
+                </div>
+              </div>
+              <div class="settings-actions" style="margin-top:1rem">
+                <button type="submit" class="btn btn-primary">Enregistrer les paramètres VS</button>
+              </div>
+            </form>
+          </section>
         </div>
 
         <div id="settingsPaneTrain" class="hidden">
@@ -914,7 +874,7 @@
           <section class="block settings-block-wide">
             <header class="block-header">
               <h3>Seuil coaching</h3>
-              <p>Plage de puissance utilisée pour la liste de coaching (Gestion des membres)</p>
+              <p>Plage de puissance utilisée pour la liste de coaching (Liste des membres)</p>
             </header>
             <div class="vs-settings-grid">
               <label class="field">
@@ -1339,9 +1299,9 @@
     })();
   </script>
   <script src="js/supabase-client.js?v=20260804-4"></script>
-  <script src="js/profiles.js?v=20260808-train-hist2"></script>
+  <script src="js/profiles.js?v=20260910-vssettings1"></script>
   <script src="js/supabase-sync.js?v=20260910-localguard1"></script>
-  <script src="js/models.js?v=20260910-vsclose1"></script>
+  <script src="js/models.js?v=20260910-vsnomode1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
   <script src="js/player-identity.js?v=20260802-4"></script>
   <script src="js/storage.js?v=20260910-vsclose1"></script>
@@ -1351,7 +1311,7 @@
   <script src="js/players.js?v=20260812-gp-harden1"></script>
   <script src="js/command.js?v=20260806-cmd1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
-  <script src="js/vs.js?v=20260910-vsclose1"></script>
+  <script src="js/vs.js?v=20260910-vssettings1"></script>
   <script src="js/archives.js?v=20260802-4"></script>
   <script src="js/train.js?v=20260910-vsclose1"></script>
   <script src="js/recrutement.js?v=20260808-pw1"></script>

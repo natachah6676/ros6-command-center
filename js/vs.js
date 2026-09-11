@@ -1,10 +1,9 @@
 /**
- * Module VS — semaines à fond à la demande · clôture / création séparées
+ * Module VS — semaines suivies à la demande · clôture / création séparées
  */
 (function (global) {
   const els = {};
   let rendering = false;
-  let settingsTab = 'afond';
 
   function cacheDom() {
     els.weekSelector = document.getElementById('weekSelector');
@@ -17,19 +16,9 @@
     els.activeDates = document.getElementById('vsActiveWeekDates');
     els.archiveNotice = document.getElementById('vsArchiveNotice');
     els.noActiveNotice = document.getElementById('vsNoActiveNotice');
-    els.modeBar = document.getElementById('vsModeBar');
-    els.modeLabel = document.getElementById('vsModeLabel');
-    els.btnToggleMode = document.getElementById('vsToggleMode');
-    els.btnOpenSettings = document.getElementById('btnVsSettings');
-    els.btnBackFromSettings = document.getElementById('btnVsBackFromSettings');
-    els.mainView = document.getElementById('vsMainView');
-    els.settingsView = document.getElementById('vsSettingsView');
     els.legend = document.getElementById('vsLegend');
-    els.donationsCheck = document.getElementById('vsDonationsVerified');
-    els.donationsWrap = document.getElementById('vsDonationsVerifiedWrap');
-    els.settingsPaneAfond = document.getElementById('vsSettingsPaneAfond');
-    els.settingsPaneEco = document.getElementById('vsSettingsPaneEco');
     els.settingsForm = document.getElementById('vsSettingsForm');
+    els.settingsBlock = document.getElementById('settingsVsBlock');
   }
 
   function escapeHtml(value) {
@@ -38,6 +27,10 @@
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  function canEditVsSettings() {
+    return Boolean(global.ROSProfiles && typeof ROSProfiles.isActiveR5 === 'function' && ROSProfiles.isActiveR5());
   }
 
   function getSelectedWeek() {
@@ -58,33 +51,6 @@
   function isSelectedEditable() {
     const state = ROSStorage.getState();
     return ROSModels.isWeekEditable(getSelectedWeek(), state.currentWeekId);
-  }
-
-  function modeLabel(mode) {
-    return mode === 'afond' ? 'VS À FOND' : 'VS ÉCO';
-  }
-
-  function showSettingsView(show) {
-    if (els.mainView) els.mainView.classList.toggle('hidden', show);
-    if (els.settingsView) els.settingsView.classList.toggle('hidden', !show);
-  }
-
-  function renderModeBar(state) {
-    const settings = ROSModels.getVsSettings(state);
-    const isAfond = settings.mode === 'afond';
-    if (els.modeLabel) {
-      els.modeLabel.innerHTML = isAfond
-        ? '🔴 Mode actuel : <strong>VS À FOND</strong>'
-        : '🟢 Mode actuel : <strong>VS ÉCO</strong>';
-    }
-    if (els.btnToggleMode) {
-      els.btnToggleMode.textContent = isAfond ? 'Revenir en VS ÉCO' : 'Passer en VS À FOND';
-      els.btnToggleMode.dataset.targetMode = isAfond ? 'eco' : 'afond';
-    }
-    if (els.modeBar) {
-      els.modeBar.classList.toggle('vs-mode-afond', isAfond);
-      els.modeBar.classList.toggle('vs-mode-eco', !isAfond);
-    }
   }
 
   function renderLegend(state) {
@@ -184,14 +150,6 @@
         by && by !== '—'
           ? `Archive VS — clôturée par ${by} (consultation seule)`
           : 'Archive VS — consultation seule (non modifiable)';
-    }
-
-    if (els.donationsWrap) {
-      els.donationsWrap.classList.toggle('hidden', !editable);
-    }
-    if (els.donationsCheck) {
-      els.donationsCheck.checked = Boolean(selected?.donationsVerified);
-      els.donationsCheck.disabled = !editable;
     }
   }
 
@@ -299,21 +257,26 @@
     setVal('vsAfondLowPoints', settings.afond.lowPoints);
     setVal('vsAfondDonation', settings.afond.donationPenalty);
     setVal('vsAfondRedFrom', settings.afond.redFrom);
-    setVal('vsEcoDailyGoal', settings.eco.dailyGoal);
-    setVal('vsEcoUnderPoints', settings.eco.underPoints);
-    setVal('vsEcoDonation', settings.eco.donationPenalty);
-    setVal('vsEcoRedFrom', settings.eco.redFrom);
+
+    const editable = canEditVsSettings();
+    [
+      'vsAfondDailyGoal',
+      'vsAfondMidMin',
+      'vsAfondMidPoints',
+      'vsAfondLowPoints',
+      'vsAfondDonation',
+      'vsAfondRedFrom',
+    ].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = !editable;
+    });
+    const submit = els.settingsForm?.querySelector('button[type="submit"]');
+    if (submit) submit.disabled = !editable;
   }
 
-  function switchSettingsTab(tab) {
-    settingsTab = tab === 'eco' ? 'eco' : 'afond';
-    document.querySelectorAll('[data-vs-settings-tab]').forEach((btn) => {
-      const active = btn.dataset.vsSettingsTab === settingsTab;
-      btn.classList.toggle('is-active', active);
-      btn.setAttribute('aria-selected', active ? 'true' : 'false');
-    });
-    els.settingsPaneAfond?.classList.toggle('hidden', settingsTab !== 'afond');
-    els.settingsPaneEco?.classList.toggle('hidden', settingsTab !== 'eco');
+  function renderSettings() {
+    if (!canEditVsSettings()) return;
+    fillSettingsForm(ROSStorage.getState());
   }
 
   function render() {
@@ -322,11 +285,16 @@
 
     try {
       const state = ROSStorage.getState();
-      renderModeBar(state);
       renderLegend(state);
       renderWeekBar();
-      fillSettingsForm(state);
-      switchSettingsTab(settingsTab);
+      const settingsPane = document.getElementById('settingsPaneVs');
+      if (
+        settingsPane &&
+        typeof settingsPane.classList?.contains === 'function' &&
+        !settingsPane.classList.contains('hidden')
+      ) {
+        fillSettingsForm(state);
+      }
 
       const week = getSelectedWeek();
       const editable = ROSModels.isWeekEditable(week, state.currentWeekId);
@@ -560,15 +528,6 @@
       return;
     }
 
-    if (!current.donationsVerified) {
-      await AppUI.confirm({
-        title: 'Vérification des dons',
-        message: 'Les dons d’alliance ont-ils bien été vérifiés pour tous les joueurs ?',
-        confirmLabel: 'Retour au tableau',
-      });
-      return;
-    }
-
     const ok = await AppUI.confirm({
       title: 'Clôturer la semaine VS',
       message:
@@ -604,7 +563,7 @@
     const ok = await AppUI.confirm({
       title: 'Nouvelle semaine VS',
       message:
-        'Créer une nouvelle semaine VS à fond ? Elle sera la seule semaine active et éditable.',
+        'Créer une nouvelle semaine VS suivie ? Elle sera la seule semaine active et éditable.',
       confirmLabel: 'Créer',
     });
     if (!ok) return;
@@ -636,47 +595,21 @@
     els.weekSelector.value = ROSStorage.getState().currentWeekId;
     render();
     syncSideViews();
-    AppUI.toast('Nouvelle semaine VS à fond créée.');
-  }
-
-  async function toggleMode() {
-    const state = ROSStorage.getState();
-    const settings = ROSModels.getVsSettings(state);
-    const target = els.btnToggleMode?.dataset.targetMode === 'afond' ? 'afond' : 'eco';
-    const fromLabel = modeLabel(settings.mode);
-    const toLabel = modeLabel(target);
-
-    const ok = await AppUI.confirm({
-      title: `Passer en ${toLabel}`,
-      message: `Confirmer le passage de ${fromLabel} vers ${toLabel} ? Les pénalités de la semaine active seront recalculées avec le barème ${toLabel}.`,
-      confirmLabel: 'Confirmer',
-    });
-    if (!ok) return;
-
-    ROSStorage.update((s) => {
-      s.vsSettings = ROSModels.normalizeVsSettings({
-        ...ROSModels.getVsSettings(s),
-        mode: target,
-      });
-      const active = s.weeks.find((w) => w.id === s.currentWeekId);
-      if (active && !active.archived) {
-        ROSModels.recalculateWeekWithBareme(active, s);
-      }
-      return s;
-    });
-
-    AppUI.toast(`Mode ${toLabel} activé — pénalités recalculées.`);
-    render();
-    syncSideViews();
+    AppUI.toast('Nouvelle semaine VS créée.');
   }
 
   function saveSettings(event) {
     event.preventDefault();
+    if (!canEditVsSettings()) {
+      AppUI.toast('Seul le R5 peut modifier les paramètres VS.');
+      return;
+    }
     const num = (id) => Number(document.getElementById(id)?.value);
 
     ROSStorage.update((s) => {
+      const previous = ROSModels.getVsSettings(s);
       s.vsSettings = ROSModels.normalizeVsSettings({
-        mode: ROSModels.getVsSettings(s).mode,
+        mode: 'afond',
         afond: {
           dailyGoal: num('vsAfondDailyGoal'),
           midMin: num('vsAfondMidMin'),
@@ -685,12 +618,8 @@
           donationPenalty: num('vsAfondDonation'),
           redFrom: num('vsAfondRedFrom'),
         },
-        eco: {
-          dailyGoal: num('vsEcoDailyGoal'),
-          underPoints: num('vsEcoUnderPoints'),
-          donationPenalty: num('vsEcoDonation'),
-          redFrom: num('vsEcoRedFrom'),
-        },
+        // Conserve le barème ECO stocké (lecture historique) sans l’exposer dans l’UI.
+        eco: previous.eco,
       });
       const active = s.weeks.find((w) => w.id === s.currentWeekId);
       if (active && !active.archived) {
@@ -720,24 +649,6 @@
     }
   }
 
-  function onDonationsVerifiedChange() {
-    if (!isSelectedEditable()) {
-      render();
-      return;
-    }
-    const checked = Boolean(els.donationsCheck?.checked);
-    const weekId = els.weekSelector.value;
-    ROSStorage.update(
-      (s) => {
-        const target = s.weeks.find((w) => w.id === weekId);
-        if (!ROSModels.isWeekEditable(target, s.currentWeekId)) return s;
-        target.donationsVerified = checked;
-        return s;
-      },
-      { silent: true }
-    );
-  }
-
   function onTableChange(event) {
     const daySelect = event.target.closest('[data-vs-day]');
     if (daySelect) {
@@ -757,27 +668,18 @@
     els.btnCloseWeek?.addEventListener('click', closeActiveWeek);
     els.weekSelector?.addEventListener('change', render);
     els.tbody?.addEventListener('change', onTableChange);
-    els.btnToggleMode?.addEventListener('click', toggleMode);
-    els.btnOpenSettings?.addEventListener('click', () => {
-      fillSettingsForm(ROSStorage.getState());
-      showSettingsView(true);
-    });
-    els.btnBackFromSettings?.addEventListener('click', () => showSettingsView(false));
-    els.donationsCheck?.addEventListener('change', onDonationsVerifiedChange);
     els.settingsForm?.addEventListener('submit', saveSettings);
-    document.querySelectorAll('[data-vs-settings-tab]').forEach((btn) => {
-      btn.addEventListener('click', () => switchSettingsTab(btn.dataset.vsSettingsTab));
-    });
-    showSettingsView(false);
   }
 
   global.VSModule = {
     init,
     render,
+    renderSettings,
     getSelectedWeek,
     getActiveWeek,
     createNewWeek,
     closeActiveWeek,
     snapshotAbsencesOnClose,
+    canEditVsSettings,
   };
 })(window);

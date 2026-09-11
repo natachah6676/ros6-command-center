@@ -1281,6 +1281,52 @@ button.tempete-presence-pct:hover {
   gap: 0.55rem;
 }
 
+.train-org-block {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.train-org-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.train-org-panel {
+  min-width: 0;
+  padding: 0.85rem;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.train-org-title {
+  margin: 0 0 0.2rem;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.train-org-hint {
+  margin: 0 0 0.75rem;
+  color: var(--steel-light, #9aa3af);
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.train-secondary-panel {
+  margin: 0;
+}
+
+.train-history-block {
+  opacity: 0.96;
+}
+
+@media (max-width: 980px) {
+  .train-org-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .train-candidate-card {
   display: flex;
   justify-content: space-between;
