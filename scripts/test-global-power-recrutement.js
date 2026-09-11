@@ -1,5 +1,6 @@
 /**
- * Tests puissance globale + groupes Recrutement + droits R5/R4 (édition).
+ * Tests puissance globale + droits R5/R4 (édition).
+ * (Module Recrutement retiré — groupes/score recrutement non testés ici.)
  * node scripts/test-global-power-recrutement.js
  */
 const fs = require('fs');
@@ -8,7 +9,6 @@ const vm = require('vm');
 
 const root = path.join(__dirname, '..');
 const modelsCode = fs.readFileSync(path.join(root, 'js/models.js'), 'utf8');
-const recrutementCode = fs.readFileSync(path.join(root, 'js/recrutement.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 
 let passed = 0;
@@ -25,8 +25,9 @@ function assert(cond, msg) {
 
 console.log('\n=== UI ===');
 assert(html.includes('playerGlobalPower'), 'select puissance globale');
-assert(html.includes('recrutementSort'), 'tri recrutement');
-assert(html.includes('minimum 15 points'), 'seuil 15 UI');
+assert(!html.includes('data-tab="recrutement"'), 'onglet Recrutement retiré');
+assert(!html.includes('id="panel-recrutement"'), 'panneau Recrutement retiré');
+assert(!html.includes('recrutementSort'), 'tri recrutement retiré');
 
 const sandbox = {
   window: {},
@@ -59,10 +60,7 @@ const sandbox = {
 sandbox.window = sandbox;
 vm.createContext(sandbox);
 vm.runInContext(modelsCode, sandbox);
-sandbox.ROSModels = sandbox.window.ROSModels;
-vm.runInContext(recrutementCode, sandbox);
 const ROSModels = sandbox.window.ROSModels;
-const Recrutement = sandbox.window.RecrutementModule;
 
 console.log('\n=== Tranches puissance globale ===');
 const tiers = ROSModels.getGlobalPowerTiers();
@@ -87,154 +85,26 @@ assert(ROSModels.canEditGlobalPower() === false, 'R4 inactif ne peut pas modifie
 sandbox.ROSProfiles.status = 'Actif';
 sandbox.ROSProfiles.role = 'R5';
 
-function makeWeek(id, number, startDate, archived) {
-  const week = ROSModels.createWeek(new Date(startDate), { number, archived });
-  week.id = id;
-  week.archived = archived;
-  week.startDate = startDate;
-  return week;
-}
-
-function setPoints(score, total) {
-  ROSModels.DAYS.forEach((d) => {
-    score.days[d.key] = 0;
-  });
-  score.days.lundi = total;
-}
-
-// 10 membres héros+globale pour tester 30/40/30 (score 70/30) + égalités
 const powerTiers = ROSModels.createDefaultPowerTiers();
-const heroIds = [
-  'tier_75_80',
-  'tier_75_80',
-  'tier_70_75',
-  'tier_65_70',
-  'tier_60_65',
-  'tier_55_60',
-  'tier_50_55',
-  'tier_45_50',
-  'tier_40_45',
-  'tier_25_30',
-];
-const players = [];
-const tierIds = [
-  'gp_ge_200',
-  'gp_ge_200',
-  'gp_100_105',
-  'gp_90_95',
-  'gp_80_85',
-  'gp_70_75',
-  'gp_60_65',
-  'gp_50_55',
-  'gp_45_50',
-  'gp_lt_45',
-];
-tierIds.forEach((tierId, i) => {
-  players.push(
-    ROSModels.createPlayer({
-      pseudo: `P${String(i + 1).padStart(2, '0')}`,
-      role: 'Membre',
-      globalPowerTierId: tierId,
-      heroPowerTierId: heroIds[i],
-    })
-  );
-});
-const unset = ROSModels.createPlayer({
-  pseudo: 'SansPuissance',
+const player = ROSModels.createPlayer({
+  pseudo: 'P01',
   role: 'Membre',
-  inactive: true,
+  globalPowerTierId: 'gp_60_65',
+  heroPowerTierId: 'tier_50_55',
 });
-const r4 = ROSModels.createPlayer({
-  pseudo: 'R4Lock',
-  role: 'R4',
-  globalPowerTierId: 'gp_ge_200',
-  heroPowerTierId: 'tier_75_80',
-});
-const absent = ROSModels.createPlayer({
-  pseudo: 'Abs',
-  role: 'Membre',
-  absent: true,
-  globalPowerTierId: 'gp_lt_45',
-  heroPowerTierId: 'tier_25_30',
-  inactive: true,
-});
-
-const w1 = makeWeek('w1', 1, '2026-07-01', true);
-players.forEach((p) => {
-  w1.scores[p.id] = ROSModels.createEmptyScore();
-  setPoints(w1.scores[p.id], 10);
-});
-w1.scores[unset.id] = ROSModels.createEmptyScore();
-setPoints(w1.scores[unset.id], 0);
-
-const wCurrent = makeWeek('wCur', 2, '2026-07-08', false);
 
 sandbox.__state = {
   ...ROSModels.createBlankState(),
   powerTiers,
-  currentWeekId: wCurrent.id,
-  weeks: [w1, wCurrent],
-  coachingThreshold: { min: 25, max: 30 },
-  vsSettings: {
-    mode: 'eco',
-    eco: { redFrom: 30, dailyGoal: 3600000, underPoints: 10, donationPenalty: 5 },
-    afond: { redFrom: 36, dailyGoal: 7200000, donationPenalty: 5 },
-  },
-  players: [...players, unset, r4, absent],
+  players: [player],
 };
-
-console.log('\n=== Groupes 30/40/30 + egalites (score 70/30) ===');
-const pop = Recrutement.getPowerRankingPopulation(sandbox.__state);
-assert(pop.length === 10, 'population 10 (hors R4/absent/unset)');
-const map = Recrutement.buildPowerGroupAssignments(sandbox.__state);
-const g1 = map.get(players[0].id);
-const g2 = map.get(players[1].id);
-assert(g1 && g2 && g1.group === g2.group, 'meme score reste ensemble');
-assert(g1.group === 'strong', 'top score en strong');
-assert(map.get(players[9].id).group === 'weak', 'plus faible en weak');
-assert(map.get(players[9].id).points === 20, 'weak +20');
-assert(!map.has(unset.id), 'unset hors classement');
-
-console.log('\n=== Score cumulatif ===');
-const weakRow = Recrutement.scorePlayer(players[9], sandbox.__state, map);
-// historique 10*100% = 10 + power 20 = 30
-assert(weakRow.historyPoints === 10, 'historique 10');
-assert(weakRow.powerPoints === 20, 'power +20');
-assert(
-  Math.round(weakRow.realScore) ===
-    10 + 20 + weakRow.coachingPoints + weakRow.inactivePoints,
-  'total cumulatif'
-);
-assert(weakRow.priority.level === 'medium' || weakRow.priority.level === 'high', 'prio moyenne/élevée');
-
-unset.inactive = true;
-const unsetRow = Recrutement.scorePlayer(unset, sandbox.__state, map);
-assert(unsetRow.powerPoints === 0, 'unset power 0');
-assert(unsetRow.inactivePoints === 40, 'unset inactif 40');
-assert(unsetRow.hasGlobalPower === false, 'flag sans puissance');
-assert(unsetRow.realScore === 40, 'unset score 40 >= 15');
-
-console.log('\n=== Exclusions & seuil ===');
-assert(Recrutement.isExcludedFromRecruitment(r4), 'R4 exclu');
-assert(Recrutement.isExcludedFromRecruitment(absent), 'Absent exclu');
-assert(Recrutement.MIN_SCORE === 15, 'MIN_SCORE 15');
-const candidates = Recrutement.getReplacementCandidates(sandbox.__state, 'score');
-assert(candidates.every((r) => r.realScore >= 15), 'seuil 15');
-assert(!candidates.some((r) => r.player.role === 'R4'), 'pas de R4');
-assert(candidates.some((r) => r.player.pseudo === 'SansPuissance'), 'unset listable via autres criteres');
-
-const byAlpha = Recrutement.getReplacementCandidates(sandbox.__state, 'alpha');
-assert(
-  byAlpha[0].player.pseudo.localeCompare(byAlpha[1].player.pseudo, 'fr') <= 0,
-  'tri alpha'
-);
 
 console.log('\n=== Persist normalize ===');
 const normalized = ROSModels.normalizeState({
   ...sandbox.__state,
   players: [
     {
-      ...players[0],
+      ...player,
       globalPowerTierId: 'gp_60_65',
     },
   ],

@@ -852,6 +852,8 @@
       powerTiers: createDefaultPowerTiers(),
       vsSettings: createDefaultVsSettings(),
       coachingThreshold: createDefaultCoachingThreshold(),
+      followUpSettings: createDefaultFollowUpSettings(),
+      playerFollowUps: {},
       alliance: createDefaultAllianceSettings(),
       /** Journal minimal des changements de Puissance globale (sync / audit). */
       globalPowerAudit: [],
@@ -895,6 +897,167 @@
     return normalizeCoachingThreshold(state?.coachingThreshold);
   }
 
+  function createDefaultFollowUpSettings() {
+    return {
+      /** Nombre de jours sous objectif VS (ex. &lt; 7,2 M) pour déclencher un suivi. */
+      vsMinUnderDays: 2,
+      /** Puissance héros max (M) : tranche.max ≤ cette valeur → suivi héros. */
+      heroMaxM: 30,
+    };
+  }
+
+  function normalizeFollowUpSettings(raw) {
+    const defaults = createDefaultFollowUpSettings();
+    const vsMin = Number(raw?.vsMinUnderDays);
+    const heroMax = Number(raw?.heroMaxM);
+    return {
+      vsMinUnderDays: Number.isFinite(vsMin) && vsMin >= 1 ? Math.round(vsMin) : defaults.vsMinUnderDays,
+      heroMaxM: Number.isFinite(heroMax) && heroMax >= 0 ? heroMax : defaults.heroMaxM,
+    };
+  }
+
+  function getFollowUpSettings(state) {
+    return normalizeFollowUpSettings(state?.followUpSettings);
+  }
+
+  const FOLLOW_UP_STATUSES = [
+    { id: 'to_contact', label: 'À contacter' },
+    { id: 'contacted', label: 'Contacté' },
+    { id: 'in_progress', label: 'En suivi' },
+    { id: 'done', label: 'Suivi terminé' },
+  ];
+
+  function normalizeFollowUpStatus(value) {
+    const id = String(value || '').trim();
+    return FOLLOW_UP_STATUSES.some((s) => s.id === id) ? id : 'to_contact';
+  }
+
+  function getFollowUpStatusLabel(statusId) {
+    return FOLLOW_UP_STATUSES.find((s) => s.id === statusId)?.label || 'À contacter';
+  }
+
+  function createEmptyFollowUpCase(options = {}) {
+    const now = new Date().toISOString();
+    return {
+      status: normalizeFollowUpStatus(options.status),
+      reasons: {
+        vs: Boolean(options.reasons?.vs),
+        hero: Boolean(options.reasons?.hero),
+        manual: Boolean(options.reasons?.manual),
+      },
+      manual: Boolean(options.manual || options.reasons?.manual),
+      contactedAt: options.contactedAt || null,
+      contactReasons: {
+        vs: Boolean(options.contactReasons?.vs),
+        hero: Boolean(options.contactReasons?.hero),
+        manual: Boolean(options.contactReasons?.manual),
+      },
+      notes: Array.isArray(options.notes) ? options.notes : [],
+      createdAt: options.createdAt || now,
+      updatedAt: options.updatedAt || now,
+      closedAt: options.closedAt || null,
+    };
+  }
+
+  function normalizeFollowUpNote(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const text = String(raw.text || '').trim();
+    if (!text) return null;
+    return {
+      id: raw.id || uid('funote'),
+      at: raw.at || new Date().toISOString(),
+      text,
+      authorLabel: raw.authorLabel != null ? String(raw.authorLabel) : '',
+      authorUserId: raw.authorUserId != null ? String(raw.authorUserId) : '',
+    };
+  }
+
+  function normalizeFollowUpCase(raw) {
+    if (!raw || typeof raw !== 'object') return createEmptyFollowUpCase();
+    const notes = Array.isArray(raw.notes)
+      ? raw.notes.map(normalizeFollowUpNote).filter(Boolean).slice(0, 200)
+      : [];
+    return {
+      status: normalizeFollowUpStatus(raw.status),
+      reasons: {
+        vs: Boolean(raw.reasons?.vs),
+        hero: Boolean(raw.reasons?.hero),
+        manual: Boolean(raw.reasons?.manual || raw.manual),
+      },
+      manual: Boolean(raw.manual || raw.reasons?.manual),
+      contactedAt: raw.contactedAt || null,
+      contactReasons: {
+        vs: Boolean(raw.contactReasons?.vs),
+        hero: Boolean(raw.contactReasons?.hero),
+        manual: Boolean(raw.contactReasons?.manual),
+      },
+      notes,
+      createdAt: raw.createdAt || new Date().toISOString(),
+      updatedAt: raw.updatedAt || raw.createdAt || new Date().toISOString(),
+      closedAt: raw.closedAt || null,
+    };
+  }
+
+  function normalizePlayerFollowUps(raw) {
+    if (!raw || typeof raw !== 'object') return {};
+    const out = {};
+    Object.keys(raw).forEach((playerId) => {
+      if (!playerId) return;
+      out[playerId] = normalizeFollowUpCase(raw[playerId]);
+    });
+    return out;
+  }
+
+  /** Semaine VS de référence pour le suivi : active, sinon dernière clôturée. */
+  function getFollowUpReferenceWeek(state) {
+    const weeks = state?.weeks || [];
+    if (state?.currentWeekId) {
+      const active = weeks.find((w) => w.id === state.currentWeekId);
+      if (active) return active;
+    }
+    const closed = weeks
+      .filter((w) => w && w.archived)
+      .slice()
+      .sort((a, b) => (a.startDate < b.startDate ? 1 : -1));
+    return closed[0] || null;
+  }
+
+  function countPlayerVsUnderDays(week, playerId) {
+    if (!week?.scores || !playerId) return 0;
+    const score = week.scores[playerId];
+    if (!score || isScoreAbsent(score)) return 0;
+    return countDaysUnderObjective(score);
+  }
+
+  function detectFollowUpReasons(player, state) {
+    const settings = getFollowUpSettings(state);
+    const reasons = { vs: false, hero: false, manual: false };
+    if (!player || player.status !== 'Actif' || player.absent) return reasons;
+
+    const week = getFollowUpReferenceWeek(state);
+    if (week) {
+      const underDays = countPlayerVsUnderDays(week, player.id);
+      if (underDays >= settings.vsMinUnderDays) reasons.vs = true;
+    }
+
+    const heroSort = getPlayerPowerSortValue(player, state);
+    if (heroSort >= 0 && heroSort <= settings.heroMaxM) {
+      reasons.hero = true;
+    }
+
+    const existing = state?.playerFollowUps?.[player.id];
+    if (existing?.manual || existing?.reasons?.manual) reasons.manual = true;
+    return reasons;
+  }
+
+  function formatFollowUpReasonsLabel(reasons) {
+    const parts = [];
+    if (reasons?.vs) parts.push('VS');
+    if (reasons?.hero) parts.push('Puissance héros');
+    if (reasons?.manual) parts.push('Aide / manuel');
+    return parts.length ? parts.join(' · ') : '—';
+  }
+
   function formatCoachingThresholdLabel(threshold) {
     const th = normalizeCoachingThreshold(threshold);
     const fmt = (n) => {
@@ -928,17 +1091,10 @@
     return out;
   }
 
-  /** Joueur éligible au coaching : Actif, pas « Ne jamais inclure », tranche dans le seuil. */
+  /** Alias historique : joueur sous le seuil héros de Gestion des membres. */
   function isPlayerInCoachingList(player, state) {
-    if (!player || player.status !== 'Actif') return false;
-    if (normalizeCoachingException(player.coachingException) === 'never') return false;
-    const tier = getPlayerPowerTier(player, state);
-    if (!tier) return false;
-    const th = getCoachingThreshold(state);
-    const min = Number(tier.min);
-    const max = Number(tier.max);
-    if (!Number.isFinite(min) || !Number.isFinite(max)) return false;
-    return min >= th.min && max <= th.max;
+    if (!player || player.status !== 'Actif' || player.absent) return false;
+    return detectFollowUpReasons(player, state).hero;
   }
 
   function formatCoachingDateTime(iso) {
@@ -1137,6 +1293,8 @@
       raw.playerWeekNotes && typeof raw.playerWeekNotes === 'object' ? raw.playerWeekNotes : {};
 
     const coachingThreshold = normalizeCoachingThreshold(raw.coachingThreshold);
+    const followUpSettings = normalizeFollowUpSettings(raw.followUpSettings);
+    const playerFollowUps = normalizePlayerFollowUps(raw.playerFollowUps);
     const alliance = normalizeAllianceSettings(raw.alliance);
 
     const normalized = {
@@ -1155,6 +1313,8 @@
       powerTiers,
       vsSettings,
       coachingThreshold,
+      followUpSettings,
+      playerFollowUps,
       alliance,
       globalPowerAudit: normalizeGlobalPowerAudit(raw.globalPowerAudit),
     };
@@ -1276,6 +1436,19 @@
     isPlayerInCoachingList,
     formatCoachingDateTime,
     getCoachingContact,
+    createDefaultFollowUpSettings,
+    normalizeFollowUpSettings,
+    getFollowUpSettings,
+    FOLLOW_UP_STATUSES,
+    normalizeFollowUpStatus,
+    getFollowUpStatusLabel,
+    createEmptyFollowUpCase,
+    normalizeFollowUpCase,
+    normalizePlayerFollowUps,
+    getFollowUpReferenceWeek,
+    countPlayerVsUnderDays,
+    detectFollowUpReasons,
+    formatFollowUpReasonsLabel,
     createDefaultAllianceSettings,
     normalizeAllianceSettings,
     getAllianceSettings,

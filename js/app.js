@@ -115,15 +115,16 @@
 
     if (tabName === 'command') CommandModule.render();
     if (tabName === 'players') PlayersModule.render();
+    if (tabName === 'suivi' && globalThis.SuiviModule) SuiviModule.render();
     if (tabName === 'vs') VSModule.render();
     if (tabName === 'train' && globalThis.TrainModule) TrainModule.render();
-    if (tabName === 'recrutement' && globalThis.RecrutementModule) RecrutementModule.render();
     if (tabName === 'ruche' && globalThis.RucheModule) RucheModule.render();
     if (tabName === 'tempete' && globalThis.TempeteModule) TempeteModule.render();
     if (tabName === 'archives') ArchivesModule.render();
     if (tabName === 'settings' && canAccessSettings()) {
       applyRolePermissions();
       renderPowerTiersSettings();
+      if (globalThis.SuiviModule) SuiviModule.renderSettings();
       if (globalThis.RucheModule) RucheModule.renderSettings();
       if (globalThis.BackupsModule) BackupsModule.render();
       if (globalThis.TrainModule) TrainModule.render();
@@ -160,36 +161,7 @@
         `;
       })
       .join('');
-    renderCoachingThresholdSettings(state);
     renderAllianceSettings(state);
-  }
-
-  function renderCoachingThresholdSettings(state = ROSStorage.getState()) {
-    const th = ROSModels.getCoachingThreshold(state);
-    const minEl = document.getElementById('coachingThresholdMin');
-    const maxEl = document.getElementById('coachingThresholdMax');
-    const preview = document.getElementById('coachingThresholdPreview');
-    if (minEl) minEl.value = String(th.min);
-    if (maxEl) maxEl.value = String(th.max);
-    if (preview) {
-      preview.textContent = `Seuil actuel : ${ROSModels.formatCoachingThresholdLabel(th)}`;
-    }
-  }
-
-  function saveCoachingThreshold() {
-    const min = Number(document.getElementById('coachingThresholdMin')?.value);
-    const max = Number(document.getElementById('coachingThresholdMax')?.value);
-    if (!Number.isFinite(min) || !Number.isFinite(max)) {
-      toast('Le seuil coaching doit être numérique.');
-      return;
-    }
-    ROSStorage.update((state) => {
-      state.coachingThreshold = ROSModels.normalizeCoachingThreshold({ min, max });
-      return state;
-    });
-    renderCoachingThresholdSettings();
-    if (global.PlayersModule) PlayersModule.render();
-    void confirmParameterSaved('Seuil coaching enregistré.');
   }
 
   function renderAllianceSettings(state = ROSStorage.getState()) {
@@ -442,15 +414,16 @@
     applyRolePermissions();
     CommandModule.render();
     PlayersModule.render();
+    if (globalThis.SuiviModule) SuiviModule.render();
     VSModule.render();
     if (globalThis.TrainModule) TrainModule.render();
-    if (globalThis.RecrutementModule) RecrutementModule.render();
     if (globalThis.RucheModule) RucheModule.render();
     if (globalThis.TempeteModule) TempeteModule.render();
     ArchivesModule.render();
     NotificationsModule.render();
     renderAllianceSettings();
     applyBrandIdentity();
+    if (globalThis.SuiviModule) SuiviModule.renderSettings();
     if (globalThis.RucheModule?.renderSettings) RucheModule.renderSettings();
     if (globalThis.BackupsModule) BackupsModule.render();
   }
@@ -586,10 +559,6 @@
     if (ui.btnAddPowerTier) {
       ui.btnAddPowerTier.addEventListener('click', () => openPowerTierModal(null));
     }
-    const btnSaveCoaching = document.getElementById('btnSaveCoachingThreshold');
-    if (btnSaveCoaching) {
-      btnSaveCoaching.addEventListener('click', saveCoachingThreshold);
-    }
     const btnSaveAlliance = document.getElementById('btnSaveAlliance');
     if (btnSaveAlliance) {
       btnSaveAlliance.addEventListener('click', saveAllianceSettings);
@@ -635,12 +604,12 @@
   function startCommandCenter() {
     ROSStorage.load();
     PlayersModule.init();
+    if (globalThis.SuiviModule) SuiviModule.init();
     CommandModule.init();
     NotificationsModule.init();
     VSModule.init();
     ArchivesModule.init();
     if (globalThis.TrainModule) TrainModule.init();
-    if (globalThis.RecrutementModule) RecrutementModule.init();
     if (globalThis.RucheModule) RucheModule.init();
     if (globalThis.TempeteModule) TempeteModule.init();
     if (globalThis.BackupsModule) BackupsModule.init();
@@ -651,9 +620,9 @@
       applyBrandIdentity();
       CommandModule.render();
       PlayersModule.render();
+      if (globalThis.SuiviModule) SuiviModule.render();
       VSModule.render();
       if (globalThis.TrainModule) TrainModule.render();
-      if (globalThis.RecrutementModule) RecrutementModule.render();
       if (globalThis.RucheModule) RucheModule.render();
       if (globalThis.TempeteModule) TempeteModule.render();
       ArchivesModule.render();
@@ -661,6 +630,7 @@
       const settingsPanel = document.getElementById('panel-settings');
       if (settingsPanel && !settingsPanel.hidden) {
         renderPowerTiersSettings();
+        if (globalThis.SuiviModule) SuiviModule.renderSettings();
         if (globalThis.ROSProfiles) {
           ROSProfiles.renderOwnAccessSummary?.();
           ROSProfiles.renderAccessPanel?.();

@@ -26,7 +26,7 @@ function assert(cond, msg) {
 }
 
 console.log('\n=== Emplacement UI ===');
-const trainPanel = html.slice(html.indexOf('id="panel-train"'), html.indexOf('id="panel-recrutement"'));
+const trainPanel = html.slice(html.indexOf('id="panel-train"'), html.indexOf('id="panel-ruche"'));
 const settingsPanel = html.slice(html.indexOf('id="panel-settings"'), html.indexOf('id="playerModal"'));
 
 assert(!trainPanel.includes('id="trainCategoriesList"'), 'Catégories absentes du module Train');

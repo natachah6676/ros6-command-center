@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20260910-train-ui1" />
+  <link rel="stylesheet" href="css/styles.css?v=20260911-norecruit1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -74,10 +74,10 @@
       <button type="button" class="tab is-active" data-tab="command" role="tab" aria-selected="true">Poste de Commandement</button>
       <button type="button" class="tab" data-tab="vs" role="tab" aria-selected="false">VS</button>
       <button type="button" class="tab" data-tab="train" role="tab" aria-selected="false">Train</button>
-      <button type="button" class="tab" data-tab="recrutement" role="tab" aria-selected="false">Recrutement</button>
       <button type="button" class="tab" data-tab="ruche" role="tab" aria-selected="false">Ruche</button>
       <button type="button" class="tab" data-tab="tempete" role="tab" aria-selected="false">Tempête du Désert</button>
       <button type="button" class="tab" data-tab="players" role="tab" aria-selected="false">Liste des membres</button>
+      <button type="button" class="tab" data-tab="suivi" role="tab" aria-selected="false">Gestion des membres</button>
       <button type="button" class="tab" data-tab="archives" role="tab" aria-selected="false">Archives</button>
       <button type="button" class="tab hidden" data-tab="settings" role="tab" aria-selected="false" hidden aria-hidden="true">Paramètres</button>
     </nav>
@@ -122,7 +122,7 @@
         </section>
       </section>
 
-      <!-- GESTION DES MEMBRES (administration) -->
+      <!-- LISTE DES MEMBRES (administration) -->
       <section id="panel-players" class="panel" role="tabpanel" hidden>
         <div class="panel-header">
           <div>
@@ -154,9 +154,6 @@
 
         <p id="playersPowerCounter" class="members-power-counter" aria-live="polite">
           Puissances renseignées : 0 / 0 joueurs actifs
-        </p>
-        <p id="playersCoachingCounter" class="members-power-counter" aria-live="polite">
-          Coaching : 0 à contacter · 0 concernés
         </p>
 
         <div id="playersList" class="member-list"></div>
@@ -381,35 +378,6 @@
         </div>
       </section>
 
-      <!-- RECRUTEMENT -->
-      <section id="panel-recrutement" class="panel" role="tabpanel" hidden>
-        <div class="panel-header">
-          <div>
-            <h2>Recrutement</h2>
-            <p class="panel-subtitle">Joueurs à remplacer — score automatique selon les critères</p>
-          </div>
-        </div>
-        <section class="block">
-          <header class="block-header">
-            <h3>Joueurs à remplacer</h3>
-            <p>Historique pondéré + puissance globale — minimum 15 points</p>
-          </header>
-          <div class="toolbar" style="margin-bottom:0.75rem">
-            <label class="field" style="margin:0;min-width:14rem">
-              <span>Trier par</span>
-              <select id="recrutementSort" class="input" aria-label="Tri Recrutement">
-                <option value="score">Score décroissant</option>
-                <option value="global-power">Puissance globale croissante</option>
-                <option value="hero-power">Puissance héros croissante</option>
-                <option value="alpha">Ordre alphabétique</option>
-              </select>
-            </label>
-          </div>
-          <div id="recrutementList" class="stack-list"></div>
-          <p id="recrutementEmpty" class="empty-state hidden">Aucun joueur à proposer pour le moment.</p>
-        </section>
-      </section>
-
       <!-- RUCHE -->
       <section id="panel-ruche" class="panel" role="tabpanel" hidden>
         <div class="panel-header">
@@ -629,12 +597,70 @@
         <p id="archivesEmpty" class="empty-state hidden">Aucune donnée d’archive pour le moment.</p>
       </section>
 
+      <!-- GESTION DES MEMBRES (suivi joueurs) -->
+      <section id="panel-suivi" class="panel" role="tabpanel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Gestion des membres</h2>
+            <p class="panel-subtitle">
+              Suivi des joueurs sous objectif VS, puissance héros faible, ou aide manuelle
+            </p>
+          </div>
+          <p id="suiviCounter" class="panel-subtitle">0 joueur(s)</p>
+        </div>
+
+        <div class="toolbar toolbar-members">
+          <input
+            type="search"
+            id="suiviSearch"
+            class="input"
+            placeholder="Rechercher par pseudo…"
+            autocomplete="off"
+          />
+          <select id="suiviFilterStatus" class="input" aria-label="Filtrer par statut">
+            <option value="">Tous les statuts</option>
+            <option value="to_contact">À contacter</option>
+            <option value="contacted">Contacté</option>
+            <option value="in_progress">En suivi</option>
+            <option value="done">Suivi terminé</option>
+          </select>
+          <select id="suiviFilterReason" class="input" aria-label="Filtrer par motif">
+            <option value="">Tous les motifs</option>
+            <option value="vs">VS</option>
+            <option value="hero">Puissance héros</option>
+            <option value="manual">Aide / manuel</option>
+          </select>
+          <label class="checkbox-field suivi-show-done">
+            <span class="checkbox-line">
+              <input type="checkbox" id="suiviShowDone" />
+              Afficher les suivis terminés
+            </span>
+          </label>
+        </div>
+
+        <div id="suiviAddWrap" class="suivi-add-wrap">
+          <select id="suiviAddPlayer" class="input" aria-label="Ajouter un joueur au suivi"></select>
+          <button type="button" id="btnSuiviAdd" class="btn btn-primary">Ajouter au suivi</button>
+        </div>
+
+        <div class="suivi-layout">
+          <div class="suivi-list-col">
+            <div id="suiviList" class="suivi-list" role="list"></div>
+            <p id="suiviEmpty" class="empty-state">Aucun joueur à suivre pour le moment.</p>
+          </div>
+          <div class="suivi-detail-col">
+            <p id="suiviDetailEmpty" class="empty-state">Sélectionnez un joueur pour voir le détail.</p>
+            <div id="suiviDetail" class="suivi-detail block hidden"></div>
+          </div>
+        </div>
+      </section>
+
       <!-- PARAMÈTRES -->
       <section id="panel-settings" class="panel" role="tabpanel" hidden>
         <div class="panel-header">
           <div>
             <h2>Paramètres</h2>
-            <p class="panel-subtitle">Identité, VS, Train, accès (R5), sauvegarde et maintenance</p>
+            <p class="panel-subtitle">Identité, VS, Train, suivi membres, accès (R5), sauvegarde et maintenance</p>
           </div>
         </div>
 
@@ -873,23 +899,27 @@
 
           <section class="block settings-block-wide">
             <header class="block-header">
-              <h3>Seuil coaching</h3>
-              <p>Plage de puissance utilisée pour la liste de coaching (Liste des membres)</p>
+              <h3>Seuils — Gestion des membres</h3>
+              <p>
+                Déclencheurs automatiques du suivi (onglet Gestion des membres) — réservé R5
+              </p>
             </header>
             <div class="vs-settings-grid">
               <label class="field">
-                <span>Minimum (M)</span>
-                <input type="number" id="coachingThresholdMin" class="input" min="0" step="1" required />
+                <span>VS : jours sous objectif (min.)</span>
+                <input type="number" id="followUpVsMinDays" class="input" min="1" step="1" required />
               </label>
               <label class="field">
-                <span>Maximum (M)</span>
-                <input type="number" id="coachingThresholdMax" class="input" min="0" step="1" required />
+                <span>Héros : puissance max (M)</span>
+                <input type="number" id="followUpHeroMax" class="input" min="0" step="1" required />
               </label>
             </div>
-            <p id="coachingThresholdPreview" class="panel-subtitle" style="margin-top:0.65rem">Seuil actuel : 25 M à 30 M</p>
+            <p id="followUpSettingsPreview" class="panel-subtitle" style="margin-top:0.65rem">
+              VS : ≥ 2 jour(s) sous objectif · Héros : ≤ 30 M
+            </p>
             <div class="settings-actions" style="margin-top:0.85rem">
-              <button type="button" id="btnSaveCoachingThreshold" class="btn btn-primary">
-                Enregistrer le seuil coaching
+              <button type="button" id="btnSaveFollowUpSettings" class="btn btn-primary">
+                Enregistrer les seuils de suivi
               </button>
             </div>
           </section>
@@ -970,24 +1000,12 @@
             <span>Volant préféré</span>
           </span>
         </label>
-        <fieldset class="field" id="playerCoachingExceptionField">
-          <legend>Exception coaching</legend>
-          <label class="checkbox-line" style="margin-top:0.35rem">
-            <input type="radio" name="playerCoachingException" id="playerCoachingAlways" value="always" checked />
-            <span>✅ Toujours inclure (si seuil)</span>
-          </label>
-          <label class="checkbox-line" style="margin-top:0.35rem">
-            <input type="radio" name="playerCoachingException" id="playerCoachingNever" value="never" />
-            <span>🚫 Ne jamais inclure</span>
-          </label>
-          <small class="field-hint">Par défaut : apparaît dans le coaching s’il est dans le seuil défini en Paramètres</small>
-        </fieldset>
         <label class="field checkbox-field" id="playerInactiveField">
           <span class="checkbox-line">
             <input type="checkbox" id="playerInactive" />
             <span>Inactif</span>
           </span>
-          <small class="field-hint">Signalé pour le module Recrutement — n’exclut pas du VS</small>
+          <small class="field-hint">Marqueur informatif — n’exclut pas du VS</small>
         </label>
         <label class="field checkbox-field" id="playerAbsentField">
           <span class="checkbox-line">
@@ -1301,23 +1319,23 @@
   <script src="js/supabase-client.js?v=20260804-4"></script>
   <script src="js/profiles.js?v=20260910-vssettings1"></script>
   <script src="js/supabase-sync.js?v=20260910-localguard1"></script>
-  <script src="js/models.js?v=20260910-vsnomode1"></script>
+  <script src="js/models.js?v=20260911-nocoach1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
   <script src="js/player-identity.js?v=20260802-4"></script>
   <script src="js/storage.js?v=20260910-vsclose1"></script>
   <script src="js/ui-helpers.js?v=20260802-4"></script>
   <script src="js/insights.js?v=20260910-vsclose1"></script>
   <script src="js/player-stats.js?v=20260802-4"></script>
-  <script src="js/players.js?v=20260812-gp-harden1"></script>
+  <script src="js/players.js?v=20260911-nocoach1"></script>
+  <script src="js/suivi.js?v=20260911-suivi1"></script>
   <script src="js/command.js?v=20260806-cmd1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260910-vssettings1"></script>
   <script src="js/archives.js?v=20260802-4"></script>
   <script src="js/train.js?v=20260910-vsclose1"></script>
-  <script src="js/recrutement.js?v=20260808-pw1"></script>
   <script src="js/ruche.js?v=20260809-scoped1"></script>
   <script src="js/tempete.js?v=20260809-scoped1"></script>
   <script src="js/backups.js?v=20260812-gp-harden1"></script>
-  <script src="js/app.js?v=20260812-gp-harden1"></script>
+  <script src="js/app.js?v=20260911-norecruit1"></script>
 </body>
 </html>

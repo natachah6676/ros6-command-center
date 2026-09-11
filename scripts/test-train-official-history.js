@@ -49,7 +49,7 @@ assert(trainCode.includes('canManageTrainHistorySettings'), 'garde R5 historique
 assert(trainCode.includes('submitSettingsHistoryWeek'), 'enregistrement depuis Paramètres');
 assert(trainCode.includes('isActiveR5'), 'contrôle permission R5 actif');
 
-const trainPanel = html.slice(html.indexOf('id="panel-train"'), html.indexOf('id="panel-recrutement"'));
+const trainPanel = html.slice(html.indexOf('id="panel-train"'), html.indexOf('id="panel-ruche"'));
 const settingsPanel = html.slice(html.indexOf('id="panel-settings"'), html.indexOf('id="playerModal"'));
 assert(!trainPanel.includes('settingsTrainHistoryBlock'), 'historique admin absent du Train');
 assert(!trainPanel.includes('trainHistorySourceWeek'), 'sélecteur semaine absent du Train');
