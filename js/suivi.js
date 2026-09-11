@@ -890,6 +890,26 @@
     AppUI.toast('Seuils et référents enregistrés.');
   }
 
+  async function resetVsUnderCounters() {
+    if (!(global.ROSProfiles && ROSProfiles.isActiveR5 && ROSProfiles.isActiveR5())) {
+      AppUI.toast('Seul le R5 peut remettre les compteurs VS à zéro.');
+      return;
+    }
+    const ok = await AppUI.confirm({
+      title: 'Remettre les compteurs VS à zéro',
+      message:
+        'Effacer tous les compteurs « VS sous seuil » et « À féliciter » (historique des semaines clôturées) ? La semaine VS active et les autres données (Tempête, Train, membres) ne sont pas touchées.',
+      confirmLabel: 'Remettre à zéro',
+    });
+    if (!ok) return;
+    ROSStorage.update((s) => {
+      s.playerVsUnderStats = {};
+      return s;
+    });
+    render();
+    AppUI.toast('Compteurs VS remis à zéro.');
+  }
+
   function init() {
     cacheDom();
     els.search?.addEventListener('input', () => render());
@@ -905,6 +925,9 @@
     els.root?.addEventListener('change', onRootChange);
     els.root?.addEventListener('submit', onRootSubmit);
     document.getElementById('btnSaveFollowUpSettings')?.addEventListener('click', saveSettings);
+    document.getElementById('btnResetVsUnderCounters')?.addEventListener('click', () => {
+      void resetVsUnderCounters();
+    });
   }
 
   global.SuiviModule = {

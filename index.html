@@ -920,11 +920,18 @@
               </label>
             </div>
 
-            <div class="settings-actions" style="margin-top:0.85rem">
+            <div class="settings-actions" style="margin-top:0.85rem;gap:0.5rem;flex-wrap:wrap">
               <button type="button" id="btnSaveFollowUpSettings" class="btn btn-primary">
                 Enregistrer les seuils et référents
               </button>
+              <button type="button" id="btnResetVsUnderCounters" class="btn btn-ghost">
+                Remettre les compteurs VS à zéro
+              </button>
             </div>
+            <p class="panel-subtitle" style="margin-top:0.5rem">
+              Les compteurs « VS sous seuil / À féliciter » viennent des semaines clôturées. Ce bouton les efface
+              sans toucher aux scores de la semaine active ni aux autres modules.
+            </p>
           </section>
 
           <section class="block settings-block-wide">
@@ -1330,7 +1337,7 @@
   <script src="js/insights.js?v=20260910-vsclose1"></script>
   <script src="js/player-stats.js?v=20260802-4"></script>
   <script src="js/players.js?v=20260911-nodon1"></script>
-  <script src="js/suivi.js?v=20260911-noabs1"></script>
+  <script src="js/suivi.js?v=20260911-resetvs1"></script>
   <script src="js/command.js?v=20260806-cmd1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260911-nodon1"></script>
