@@ -79,6 +79,56 @@
     );
   }
 
+  function viewerIsR5() {
+    return Boolean(
+      global.ROSProfiles && typeof ROSProfiles.isActiveR5 === 'function' && ROSProfiles.isActiveR5()
+    );
+  }
+
+  /** Joueur alliance lié au compte connecté (pour spécialités / assignation). */
+  function viewerPlayerId() {
+    const profile =
+      global.ROSProfiles && typeof ROSProfiles.getCurrentProfile === 'function'
+        ? ROSProfiles.getCurrentProfile()
+        : null;
+    return profile?.playerId || null;
+  }
+
+  function applySpecialistIfNeeded(row, reasons, state) {
+    if (!row || row.assigneePlayerId) return false;
+    const pick = ROSModels.pickFollowUpSpecialist(reasons, state);
+    if (!pick) return false;
+    row.assigneePlayerId = pick.assigneePlayerId;
+    row.assigneeLabel = pick.assigneeLabel;
+    row.assignedAt = new Date().toISOString();
+    row.assignedByLabel = 'Référent motif';
+    return true;
+  }
+
+  function updateScopeHint(state) {
+    const hint = document.getElementById('suiviScopeHint');
+    if (!hint) return;
+    if (viewerIsR5()) {
+      hint.classList.add('hidden');
+      hint.textContent = '';
+      return;
+    }
+    const keys = ROSModels.getFollowUpSpecialistKeysForPlayer(
+      ROSModels.getFollowUpSettings(state),
+      viewerPlayerId()
+    );
+    if (!keys.length) {
+      hint.classList.add('hidden');
+      hint.textContent = '';
+      return;
+    }
+    const labels = ROSModels.FOLLOW_UP_SPECIALIST_KEYS.filter((k) => keys.includes(k.id)).map(
+      (k) => k.label
+    );
+    hint.textContent = `Votre périmètre : ${labels.join(' · ')} (+ fiches qui vous sont assignées)`;
+    hint.classList.remove('hidden');
+  }
+
   function stampActor() {
     if (global.ROSProfiles && typeof ROSProfiles.stampActor === 'function') {
       return ROSProfiles.stampActor();
@@ -124,16 +174,18 @@
       if (existing?.status === 'done') return;
 
       if (!existing) {
-        ensureCase(state, player.id, {
-          reasons: {
-            vs: detected.vs,
-            hero: detected.hero,
-            praise: detected.praise,
-            absent: detected.absent,
-            manual: Boolean(detected.manual),
-          },
+        const seedReasons = {
+          vs: detected.vs,
+          hero: detected.hero,
+          praise: detected.praise,
+          absent: detected.absent,
+          manual: Boolean(detected.manual),
+        };
+        const row = ensureCase(state, player.id, {
+          reasons: seedReasons,
           manual: Boolean(detected.manual),
         });
+        applySpecialistIfNeeded(row, seedReasons, state);
         changed = true;
         return;
       }
@@ -149,6 +201,9 @@
       });
       if (row.manual && !row.reasons.manual) {
         row.reasons.manual = true;
+        rowChanged = true;
+      }
+      if (applySpecialistIfNeeded(row, { ...row.reasons, ...detected }, state)) {
         rowChanged = true;
       }
       if (rowChanged) {
@@ -201,6 +256,9 @@
         return { player, follow, reasons: displayReasons };
       })
       .filter(Boolean)
+      .filter((row) =>
+        ROSModels.isFollowUpVisibleToViewer(row, state, viewerPlayerId(), viewerIsR5())
+      )
       .sort((a, b) => {
         const order = { to_contact: 0, contacted: 1, in_progress: 2, done: 3 };
         const oa = order[a.follow.status] ?? 9;
@@ -237,6 +295,7 @@
     }
     const fresh = ROSStorage.getState();
     fillAssigneeFilter(fresh);
+    updateScopeHint(fresh);
     const rows = getActiveFollowUpRows(fresh);
     fillAddSelect(fresh, rows);
 
@@ -482,6 +541,7 @@
       });
       row.manual = true;
       row.reasons.manual = true;
+      applySpecialistIfNeeded(row, row.reasons, s);
       if (row.status === 'done') {
         row.status = 'to_contact';
         row.closedAt = null;
@@ -726,6 +786,38 @@
     renderList();
   }
 
+  function specialistSelectId(key) {
+    const map = {
+      vs: 'followUpSpecialistVs',
+      praise: 'followUpSpecialistPraise',
+      absent: 'followUpSpecialistAbsent',
+      hero: 'followUpSpecialistHero',
+      manual: 'followUpSpecialistManual',
+    };
+    return map[key] || '';
+  }
+
+  function fillSpecialistSelects(state) {
+    const officers = getAssignableOfficers(state);
+    const settings = ROSModels.getFollowUpSettings(state);
+    const optionsHtml =
+      `<option value="">— Non assigné —</option>` +
+      officers
+        .map(
+          (p) =>
+            `<option value="${escapeHtml(p.id)}">${escapeHtml(p.pseudo)} (${escapeHtml(
+              p.role
+            )})</option>`
+        )
+        .join('');
+    ROSModels.FOLLOW_UP_SPECIALIST_KEYS.forEach(({ id }) => {
+      const el = document.getElementById(specialistSelectId(id));
+      if (!el) return;
+      el.innerHTML = optionsHtml;
+      el.value = settings.specialists?.[id] || '';
+    });
+  }
+
   function renderSettings() {
     const state = ROSStorage.getState();
     const settings = ROSModels.getFollowUpSettings(state);
@@ -738,11 +830,20 @@
     if (praiseMetEl) praiseMetEl.value = settings.vsPraiseMinDaysMet;
     if (praiseHighEl) praiseHighEl.value = settings.vsPraiseMinHighDays;
     if (heroEl) heroEl.value = settings.heroMaxM;
+    fillSpecialistSelects(state);
     if (preview) {
       const praiseGoal = ROSModels.formatVsMillionsShort(
         ROSModels.getVsSettings(state).afond.praiseGoal
       );
-      preview.textContent = `VS suivi : ≥ ${settings.vsMinUnderDays} j sous objectif · À féliciter : ≥ ${settings.vsPraiseMinDaysMet} j score fait + ≥ ${settings.vsPraiseMinHighDays} j ≥ ${praiseGoal} · Héros : ≤ ${settings.heroMaxM} M · Absents : auto`;
+      const specialistBits = ROSModels.FOLLOW_UP_SPECIALIST_KEYS.map(({ id, label }) => {
+        const pid = settings.specialists?.[id];
+        if (!pid) return null;
+        const officer = (state.players || []).find((p) => p.id === pid);
+        return `${label}: ${officer?.pseudo || pid}`;
+      }).filter(Boolean);
+      preview.textContent = `VS suivi : ≥ ${settings.vsMinUnderDays} j sous objectif · À féliciter : ≥ ${settings.vsPraiseMinDaysMet} j score fait + ≥ ${settings.vsPraiseMinHighDays} j ≥ ${praiseGoal} · Héros : ≤ ${settings.heroMaxM} M · Absents : auto${
+        specialistBits.length ? ` · Référents : ${specialistBits.join(' · ')}` : ''
+      }`;
     }
   }
 
@@ -755,18 +856,24 @@
     const praiseMet = Number(document.getElementById('followUpVsPraiseMinDaysMet')?.value);
     const praiseHigh = Number(document.getElementById('followUpVsPraiseMinHighDays')?.value);
     const heroMax = Number(document.getElementById('followUpHeroMax')?.value);
+    const specialists = {};
+    ROSModels.FOLLOW_UP_SPECIALIST_KEYS.forEach(({ id }) => {
+      const el = document.getElementById(specialistSelectId(id));
+      specialists[id] = el?.value || null;
+    });
     ROSStorage.update((s) => {
       s.followUpSettings = ROSModels.normalizeFollowUpSettings({
         vsMinUnderDays: vsMin,
         vsPraiseMinDaysMet: praiseMet,
         vsPraiseMinHighDays: praiseHigh,
         heroMaxM: heroMax,
+        specialists,
       });
       return s;
     });
     renderSettings();
     render();
-    AppUI.toast('Seuils de suivi enregistrés.');
+    AppUI.toast('Seuils et référents enregistrés.');
   }
 
   function init() {

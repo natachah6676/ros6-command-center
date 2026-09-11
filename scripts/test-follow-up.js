@@ -123,6 +123,52 @@ assert(rAbs.absent === true && !rAbs.vs && !rAbs.praise, 'détection absent');
 assert(M.normalizeFollowUpSettings({}).vsPraiseMinDaysMet === 5, 'défaut félicitations = 5 j score fait');
 assert(M.normalizeFollowUpSettings({}).vsPraiseMinHighDays === 1, 'défaut félicitations = 1 j gros score');
 assert(M.createDefaultVsSettings().afond.praiseGoal === 20000000, 'défaut seuil gros score = 20 M');
+assert(M.normalizeFollowUpSettings({}).specialists.vs === null, 'spécialiste VS défaut null');
+
+const specsState = {
+  players: [
+    { id: 'r4_vs', pseudo: 'R4VS', role: 'R4', status: 'Actif' },
+    { id: 'r4_praise', pseudo: 'R4Praise', role: 'R4', status: 'Actif' },
+  ],
+  followUpSettings: {
+    specialists: { vs: 'r4_vs', praise: 'r4_praise' },
+  },
+};
+const pick = M.pickFollowUpSpecialist({ vs: true, praise: true }, specsState);
+assert(pick.assigneePlayerId === 'r4_vs', 'priorité spécialiste VS');
+assert(
+  M.getFollowUpSpecialistKeysForPlayer(M.getFollowUpSettings(specsState), 'r4_praise').includes(
+    'praise'
+  ),
+  'clés spécialiste praise'
+);
+assert(
+  M.isFollowUpVisibleToViewer(
+    { follow: { assigneePlayerId: null }, reasons: { praise: true, vs: false } },
+    specsState,
+    'r4_praise',
+    false
+  ),
+  'R4 praise voit félicitations'
+);
+assert(
+  !M.isFollowUpVisibleToViewer(
+    { follow: { assigneePlayerId: null }, reasons: { vs: true, praise: false } },
+    specsState,
+    'r4_praise',
+    false
+  ),
+  'R4 praise ne voit pas VS seul'
+);
+assert(
+  M.isFollowUpVisibleToViewer(
+    { follow: { assigneePlayerId: null }, reasons: { vs: true } },
+    specsState,
+    'r4_praise',
+    true
+  ),
+  'R5 voit tout'
+);
 
 const opts = M.getDayOptions(M.createDefaultVsSettings());
 assert(opts[0].bracket === 'high' && opts[1].bracket === 'ok', 'options VS : gros score puis Score fait');
@@ -165,9 +211,10 @@ assert(html.includes('id="trainExportHistoryExcel"'), 'export Excel Train');
 assert(html.includes('id="followUpVsPraiseMinDaysMet"'), 'seuil félicitations jours faits');
 assert(html.includes('id="vsAfondPraiseGoal"'), 'seuil gros score VS paramètres');
 assert(html.includes('id="followUpHeroMax"'), 'seuil héros paramètres');
-assert(suiviCode.includes('copyDiscordList'), 'copie Discord suivi');
-assert(suiviCode.includes('setAssignee'), 'assignation R4 suivi');
-assert(suiviCode.includes('assigneePlayerId'), 'champ assignee dans suivi');
+assert(html.includes('id="followUpSpecialistVs"'), 'référent VS paramètres');
+assert(html.includes('id="suiviScopeHint"'), 'hint périmètre R4');
+assert(suiviCode.includes('isFollowUpVisibleToViewer'), 'filtre visibilité R4');
+assert(suiviCode.includes('pickFollowUpSpecialist'), 'auto référent motif');
 assert(html.includes('js/suivi.js'), 'script suivi inclus');
 assert(appCode.includes("tabName === 'suivi'"), 'app switchTab suivi');
 assert(appCode.includes('SuiviModule.init()'), 'app init SuiviModule');

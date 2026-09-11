@@ -940,7 +940,37 @@
       vsPraiseMinHighDays: 1,
       /** Puissance héros max (M) : tranche.max ≤ cette valeur → suivi héros. */
       heroMaxM: 30,
+      /** R4/R5 référents par motif (visibilité + suggestion d’assignation). */
+      specialists: emptyFollowUpSpecialists(),
     };
+  }
+
+  const FOLLOW_UP_SPECIALIST_KEYS = [
+    { id: 'vs', label: 'VS sous seuil' },
+    { id: 'praise', label: 'À féliciter' },
+    { id: 'absent', label: 'Absents' },
+    { id: 'hero', label: 'Puissance héros' },
+    { id: 'manual', label: 'Aide / manuel' },
+  ];
+
+  function emptyFollowUpSpecialists(seed = {}) {
+    return {
+      vs: seed.vs || null,
+      praise: seed.praise || null,
+      absent: seed.absent || null,
+      hero: seed.hero || null,
+      manual: seed.manual || null,
+    };
+  }
+
+  function normalizeFollowUpSpecialists(raw) {
+    const out = emptyFollowUpSpecialists();
+    if (!raw || typeof raw !== 'object') return out;
+    FOLLOW_UP_SPECIALIST_KEYS.forEach(({ id }) => {
+      const value = raw[id];
+      out[id] = value ? String(value) : null;
+    });
+    return out;
   }
 
   function normalizeFollowUpSettings(raw) {
@@ -960,11 +990,47 @@
           ? Math.round(praiseHigh)
           : defaults.vsPraiseMinHighDays,
       heroMaxM: Number.isFinite(heroMax) && heroMax >= 0 ? heroMax : defaults.heroMaxM,
+      specialists: normalizeFollowUpSpecialists(raw?.specialists),
     };
   }
 
   function getFollowUpSettings(state) {
     return normalizeFollowUpSettings(state?.followUpSettings);
+  }
+
+  /** Motifs dont le joueur est le référent Paramètres. */
+  function getFollowUpSpecialistKeysForPlayer(settings, playerId) {
+    if (!playerId) return [];
+    const specs = normalizeFollowUpSpecialists(settings?.specialists);
+    return FOLLOW_UP_SPECIALIST_KEYS.map((k) => k.id).filter((id) => specs[id] === playerId);
+  }
+
+  /**
+   * Choisit un référent selon les motifs actifs (priorité VS → absent → féliciter → héros → manuel).
+   */
+  function pickFollowUpSpecialist(reasons, state) {
+    const settings = getFollowUpSettings(state);
+    const specs = settings.specialists || emptyFollowUpSpecialists();
+    const priority = ['vs', 'absent', 'praise', 'hero', 'manual'];
+    for (let i = 0; i < priority.length; i += 1) {
+      const key = priority[i];
+      if (!reasons?.[key] || !specs[key]) continue;
+      const officer = (state?.players || []).find((p) => p.id === specs[key]);
+      return {
+        assigneePlayerId: specs[key],
+        assigneeLabel: officer?.pseudo || specs[key],
+      };
+    }
+    return null;
+  }
+
+  /** R5 voit tout ; R4 voit ses motifs référents + fiches assignées. Sans spécialité = voit tout. */
+  function isFollowUpVisibleToViewer(row, state, viewerPlayerId, viewerIsR5) {
+    if (viewerIsR5 || !viewerPlayerId) return true;
+    if (row?.follow?.assigneePlayerId === viewerPlayerId) return true;
+    const keys = getFollowUpSpecialistKeysForPlayer(getFollowUpSettings(state), viewerPlayerId);
+    if (!keys.length) return true;
+    return keys.some((key) => Boolean(row?.reasons?.[key]));
   }
 
   const FOLLOW_UP_STATUSES = [
@@ -1632,6 +1698,12 @@
     normalizeFollowUpSettings,
     getFollowUpSettings,
     FOLLOW_UP_STATUSES,
+    FOLLOW_UP_SPECIALIST_KEYS,
+    emptyFollowUpSpecialists,
+    normalizeFollowUpSpecialists,
+    getFollowUpSpecialistKeysForPlayer,
+    pickFollowUpSpecialist,
+    isFollowUpVisibleToViewer,
     normalizeFollowUpStatus,
     getFollowUpStatusLabel,
     createEmptyFollowUpCase,
