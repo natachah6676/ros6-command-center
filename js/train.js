@@ -2011,6 +2011,7 @@
     els.initEnd = document.getElementById('trainInitWeekEnd');
     els.initDays = document.getElementById('trainInitDays');
     els.btnSaveHistoryWeek = document.getElementById('trainSaveHistoryWeek');
+    els.btnExportHistoryExcel = document.getElementById('trainExportHistoryExcel');
     els.replaceModal = document.getElementById('trainReplaceModal');
     els.replaceForm = document.getElementById('trainReplaceForm');
     els.replaceTitle = document.getElementById('trainReplaceTitle');
@@ -3174,6 +3175,109 @@
     }
   }
 
+  function xmlEscape(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function exportOfficialHistoryExcel() {
+    if (!canManageTrainHistorySettings()) {
+      AppUI.toast('Seul le R5 peut exporter l’historique Train.');
+      return;
+    }
+    const weeks = getOfficialWeeks()
+      .slice()
+      .sort((a, b) => String(a.weekStartDate || '').localeCompare(String(b.weekStartDate || '')));
+    if (!weeks.length) {
+      AppUI.toast('Aucun historique Train à exporter.');
+      return;
+    }
+
+    const journalHeader = [
+      'Semaine',
+      'Début',
+      'Fin',
+      'Source',
+      'Jour',
+      'Conducteur',
+      'VIP',
+    ]
+      .map((h) => `<Cell><Data ss:Type="String">${xmlEscape(h)}</Data></Cell>`)
+      .join('');
+    const journalRows = [`<Row>${journalHeader}</Row>`];
+    weeks.forEach((week) => {
+      WEEK_DAYS.forEach((d) => {
+        const slot = week.days?.[d.key] || {};
+        const conductor = isJeuQuizConductor(slot.conductorId)
+          ? SUNDAY_JEU_QUIZ_LABEL
+          : slot.conductorPseudo || (isRealPlayerId(slot.conductorId) ? slot.conductorId : '');
+        const vip = slot.vipPseudo || (isRealPlayerId(slot.vipId) ? slot.vipId : '');
+        if (!conductor && !vip) return;
+        const cells = [
+          week.weekLabel || week.weekKey || '',
+          week.weekStartDate || '',
+          week.weekEndDate || '',
+          week.source || '',
+          d.label,
+          conductor,
+          vip,
+        ]
+          .map((v) => `<Cell><Data ss:Type="String">${xmlEscape(v)}</Data></Cell>`)
+          .join('');
+        journalRows.push(`<Row>${cells}</Row>`);
+      });
+    });
+
+    const equityHeader = ['Pseudo', 'Statut', 'Conducteur', 'VIP']
+      .map((h) => `<Cell><Data ss:Type="String">${xmlEscape(h)}</Data></Cell>`)
+      .join('');
+    const equityRows = [`<Row>${equityHeader}</Row>`];
+    getEquityRows()
+      .slice()
+      .sort((a, b) => a.pseudo.localeCompare(b.pseudo, 'fr', { sensitivity: 'base' }))
+      .forEach((row) => {
+        if (!row.conductor && !row.vip) return;
+        const cells = [
+          `<Cell><Data ss:Type="String">${xmlEscape(row.pseudo)}</Data></Cell>`,
+          `<Cell><Data ss:Type="String">${xmlEscape(row.status)}</Data></Cell>`,
+          `<Cell><Data ss:Type="Number">${Number(row.conductor) || 0}</Data></Cell>`,
+          `<Cell><Data ss:Type="Number">${Number(row.vip) || 0}</Data></Cell>`,
+        ].join('');
+        equityRows.push(`<Row>${cells}</Row>`);
+      });
+
+    const xml = `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+ <Worksheet ss:Name="Journal">
+  <Table>${journalRows.join('')}</Table>
+ </Worksheet>
+ <Worksheet ss:Name="Equite">
+  <Table>${equityRows.join('')}</Table>
+ </Worksheet>
+</Workbook>`;
+
+    const blob = new Blob([xml], { type: 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const tag =
+      global.ROSModels && typeof ROSModels.getAllianceTag === 'function'
+        ? ROSModels.getAllianceTag(getAllianceState())
+        : 'alliance';
+    a.href = url;
+    a.download = `warops-train-historique-${tag}-${stamp}.xls`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    AppUI.toast('Historique Train exporté (Excel).');
+  }
+
   function renderSettingsHistoryAdmin() {
     if (!els.settingsHistoryBlock) return;
     const allowed = canManageTrainHistorySettings();
@@ -3621,6 +3725,9 @@
       els.btnSaveHistoryWeek.addEventListener('click', () => {
         void submitSettingsHistoryWeek();
       });
+    }
+    if (els.btnExportHistoryExcel) {
+      els.btnExportHistoryExcel.addEventListener('click', exportOfficialHistoryExcel);
     }
 
     els.root.addEventListener('click', onRootClick);

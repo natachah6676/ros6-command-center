@@ -1,5 +1,5 @@
 /**
- * VS : clôture / création séparées + snapshot d’absence.
+ * VS : clôture efface la semaine (pas d’historique) + création séparée.
  * node scripts/test-vs-close-create.js
  */
 const fs = require('fs');
@@ -10,6 +10,7 @@ const root = path.join(__dirname, '..');
 const modelsCode = fs.readFileSync(path.join(root, 'js/models.js'), 'utf8');
 const storageCode = fs.readFileSync(path.join(root, 'js/storage.js'), 'utf8');
 const vsCode = fs.readFileSync(path.join(root, 'js/vs.js'), 'utf8');
+const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 
 let passed = 0;
 let failed = 0;
@@ -55,8 +56,6 @@ const noActiveNotice = {
   },
   textContent: '',
 };
-const donationsWrap = { classList: { toggle() {} } };
-const donationsCheck = { checked: false, disabled: false, addEventListener() {} };
 const tbody = { innerHTML: '', addEventListener() {} };
 const table = { classList: { add() {}, remove() {}, toggle() {} } };
 const empty = { classList: { add() {}, remove() {} }, textContent: '' };
@@ -79,8 +78,6 @@ const sandbox = {
       if (id === 'weekSelector') return weekSelector;
       if (id === 'vsArchiveNotice') return archiveNotice;
       if (id === 'vsNoActiveNotice') return noActiveNotice;
-      if (id === 'vsDonationsVerifiedWrap') return donationsWrap;
-      if (id === 'vsDonationsVerified') return donationsCheck;
       if (id === 'vsTableBody') return tbody;
       if (id === 'vsTable') return table;
       if (id === 'vsEmpty') return empty;
@@ -89,8 +86,6 @@ const sandbox = {
       if (id === 'btnCloseWeek') return btnClose;
       if (id === 'btnNewWeek') return btnNew;
       if (id === 'vsLegend') return { innerHTML: '' };
-      if (id === 'vsModeLabel') return { innerHTML: '' };
-      if (id === 'vsToggleMode') return { textContent: '', dataset: {}, addEventListener() {} };
       return {
         addEventListener() {},
         classList: { toggle() {}, add() {}, remove() {} },
@@ -122,7 +117,12 @@ vm.runInContext(vsCode, sandbox);
 const VS = sandbox.window.VSModule;
 const M = sandbox.ROSModels;
 
-console.log('\n=== Normalize : aucune active possible ===');
+console.log('\n=== UI : Archives VS retirées ===');
+assert(!html.includes('data-tab="archives"'), 'onglet Archives retiré');
+assert(!html.includes('id="panel-archives"'), 'panneau Archives retiré');
+assert(!html.includes('js/archives.js'), 'script archives retiré');
+
+console.log('\n=== Normalize : historiques archivés purgés ===');
 const blank = M.normalizeState({
   players: [],
   weeks: [
@@ -133,14 +133,49 @@ const blank = M.normalizeState({
       startDate: '2026-07-27',
       endDate: '2026-07-31',
       archived: true,
+      scores: { p1: { days: {}, dayBrackets: {}, allianceDonMissed: true } },
+    },
+    {
+      id: 'active_keep',
+      number: 2,
+      label: 'Semaine 2',
+      startDate: '2026-08-03',
+      endDate: '2026-08-07',
+      archived: false,
       scores: { p1: { days: {}, dayBrackets: {}, allianceDonMissed: false } },
+    },
+  ],
+  currentWeekId: 'active_keep',
+  playerWeekNotes: {
+    p1: {
+      old_1: { comment: 'ancien' },
+      active_keep: { comment: 'courant' },
+    },
+  },
+});
+assert(blank.weeks.length === 1, 'une seule semaine conservée');
+assert(blank.weeks[0].id === 'active_keep', 'semaine active conservée');
+assert(blank.weeks[0].archived === false, 'semaine active non archivée');
+assert(!blank.playerWeekNotes.p1.old_1, 'notes semaine archivée purgées');
+assert(blank.playerWeekNotes.p1.active_keep.comment === 'courant', 'notes semaine active gardées');
+
+const allArchived = M.normalizeState({
+  players: [],
+  weeks: [
+    {
+      id: 'old_only',
+      number: 1,
+      label: 'Semaine 1',
+      startDate: '2026-07-27',
+      endDate: '2026-07-31',
+      archived: true,
+      scores: {},
     },
   ],
   currentWeekId: null,
 });
-assert(blank.currentWeekId === null, 'currentWeekId null conservé');
-assert(blank.weeks[0].archived === true, 'semaine historique archivée');
-assert(blank.weeks[0].scores.p1.absent === false, 'ancienne donnée sans absent → false');
+assert(allArchived.weeks.length === 0, 'toutes archivées → weeks vide');
+assert(allArchived.currentWeekId === null, 'currentWeekId null');
 
 console.log('\n=== Seed état actif ===');
 const present = M.createPlayer({ pseudo: 'Present', status: 'Actif' });
@@ -149,7 +184,6 @@ const away = M.createPlayer({ pseudo: 'Away', status: 'Actif', absent: true });
 away.id = 'p_abs';
 const wActive = M.createWeek(new Date('2026-08-03'), { number: 2, archived: false });
 wActive.id = 'week_active';
-wActive.donationsVerified = true;
 wActive.scores = {
   p_ok: M.createEmptyScore(),
 };
@@ -170,30 +204,34 @@ let state = sandbox.ROSStorage.getState();
 assert(state.currentWeekId === 'week_active', 'semaine active');
 assert(M.isWeekEditable(VS.getActiveWeek(state), state.currentWeekId), 'éditable');
 
-console.log('\n=== Clôture (snapshot absences) ===');
+console.log('\n=== Clôture (effacement, pas d’archive) ===');
 (async () => {
   await VS.closeActiveWeek();
   state = sandbox.ROSStorage.getState();
-  const closed = state.weeks.find((w) => w.id === 'week_active');
   assert(state.currentWeekId === null, 'plus de semaine active');
-  assert(closed.archived === true, 'semaine clôturée archivée');
-  assert(closed.scores.p_ok.absent === false, 'présent → absent false');
-  assert(closed.scores.p_ok.days.lundi === 12, 'score présent conservé');
-  assert(closed.scores.p_abs.absent === true, 'absent → snapshot absent true');
-  assert(M.computeTotal(closed.scores.p_abs, state) === 0, 'absent score 0');
-  assert(M.isScoreAbsent(closed.scores.p_abs), 'isScoreAbsent');
-  const summaryAbs = M.getWeekScoreSummary(closed, 'p_abs', state);
-  assert(summaryAbs.absent === true && summaryAbs.total === 0, 'summary absent');
+  assert(!state.weeks.find((w) => w.id === 'week_active'), 'semaine effacée');
+  assert(state.weeks.length === 0, 'aucun historique VS');
   assert(!M.getCurrentWeekFromState(state), 'getCurrentWeekFromState null');
 
-  console.log('\n=== Création sans clôturer l’inexistant ===');
+  const statsOk = M.getPlayerVsUnderStats(state, 'p_ok');
+  assert(statsOk.entries.length === 1, 'compteur : 1 entrée pour présent');
+  assert(statsOk.entries[0].underDays === 1, 'compteur : 1 j sous objectif (12 pts)');
+  assert(statsOk.entries[0].under === false, 'compteur : pas sous seuil (seuil 2)');
+  assert(M.formatVsUnderCounterLabel(statsOk) === 'VS sous seuil : 0 / 1', 'libellé 0/1');
+
+  const statsAbs = M.getPlayerVsUnderStats(state, 'p_abs');
+  assert(statsAbs.entries.length === 0, 'absent non compté au snapshot');
+
+  console.log('\n=== Création après clôture ===');
   await VS.createNewWeek();
   state = sandbox.ROSStorage.getState();
   assert(state.currentWeekId && state.currentWeekId !== 'week_active', 'nouvelle active');
+  assert(state.weeks.length === 1, 'une seule semaine');
   assert(state.vsSettings.mode === 'afond', 'mode à fond à la création');
-  const prev = state.weeks.find((w) => w.id === 'week_active');
-  assert(prev && prev.archived === true, 'ancienne semaine toujours là');
-  assert(Object.keys(prev.scores).includes('p_abs'), 'historique absences intact');
+  assert(
+    M.getPlayerVsUnderStats(state, 'p_ok').entries.length === 1,
+    'compteur conservé après nouvelle semaine'
+  );
 
   console.log('\n=== Impossible de créer si déjà active ===');
   const beforeCount = state.weeks.length;

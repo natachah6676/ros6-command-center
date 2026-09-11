@@ -45,12 +45,11 @@ console.log('\n=== VS Settings & bareme ===');
   const settings = M.createDefaultVsSettings();
   assert(settings.mode === 'afond', 'Mode par défaut = afond');
   assert(settings.eco.dailyGoal === 3600000, 'ÉCO objectif 3 600 000');
-  assert(settings.eco.underPoints === 10, 'ÉCO under 10 pts');
-  assert(settings.eco.redFrom === 30, 'ÉCO rouge ≥ 30');
   assert(settings.afond.dailyGoal === 7200000, 'À FOND objectif 7 200 000');
-  assert(settings.afond.midPoints === 5, 'À FOND mid 5 pts');
-  assert(settings.afond.lowPoints === 12, 'À FOND low 12 pts');
-  assert(settings.afond.redFrom === 36, 'À FOND rouge ≥ 36');
+  assert(settings.afond.praiseGoal === 20000000, 'À FOND gros score 20 M');
+  assert(settings.afond.midMin === 3600000, 'À FOND seuil bas 3,6 M');
+  assert(settings.afond.midPoints === 1 && settings.afond.lowPoints === 1, 'Points internes = marqueurs 0/1');
+  assert(M.getColorThresholds().redFrom === 4, 'Rouge ≥ 4 j sous');
 }
 
 console.log('\n=== Migration anciennes données ===');
@@ -79,7 +78,7 @@ console.log('\n=== Migration anciennes données ===');
   assert(score.dayBrackets.lundi === 'ok', '0 → bracket ok');
   assert(score.dayBrackets.mardi === 'mid', '5 → bracket mid');
   assert(score.dayBrackets.mercredi === 'low', '10 → bracket low');
-  assert(score.days.mercredi === 12, 'Points mid/low remappés au barème à fond');
+  assert(score.days.mardi === 1 && score.days.mercredi === 1, 'Recalcul → marqueurs sous objectif = 1');
   assert(state.weeks[0].donationsVerified === false, 'donationsVerified défaut false');
 }
 
@@ -107,20 +106,14 @@ console.log('\n=== Recalcul mode À FOND / ÉCO ===');
   });
   M.recalculateWeekWithBareme(state.weeks[0], state);
   const s = state.weeks[0].scores.p1;
-  assert(s.days.lundi === 0 && s.days.mardi === 5 && s.days.mercredi === 12, 'À FOND remap 0/5/12');
-  assert(M.computeTotal(s, state) === 0 + 5 + 12 + 0 + 5, 'Total À FOND = 22');
+  assert(s.days.lundi === 0 && s.days.mardi === 1 && s.days.mercredi === 1, 'À FOND remap 0/1');
+  assert(M.computeTotal(s, state) === 3, 'Total = jours sous objectif (3)');
   assert(M.countDaysUnderObjective(s) === 3, 'Jours sous objectif À FOND = 3');
   assert(M.countObjectivesMet(s) === 2, 'Objectifs atteints À FOND = 2');
 
-  state.vsSettings.mode = 'eco';
-  M.recalculateWeekWithBareme(state.weeks[0], state);
-  assert(s.days.lundi === 0 && s.days.mardi === 0 && s.days.mercredi === 10, 'ÉCO remap mid→0 low→10');
-  assert(M.countDaysUnderObjective(s) === 1, 'Jours sous objectif ÉCO = 1');
-  assert(M.countObjectivesMet(s) === 4, 'Objectifs atteints ÉCO = 4');
-  assert(M.getColorClass(30, state) === 'color-red', 'ÉCO rouge à 30');
-  state.vsSettings.mode = 'afond';
-  assert(M.getColorClass(36, state) === 'color-red', 'À FOND rouge à 36');
-  assert(M.getColorClass(35, state) === 'color-orange', 'À FOND 35 = orange');
+  assert(M.getColorClass(0, state) === 'color-green', '0 j sous = vert');
+  assert(M.getColorClass(2, state) === 'color-orange', '2 j sous = orange');
+  assert(M.getColorClass(4, state) === 'color-red', '4 j sous = rouge');
 }
 
 console.log('\n=== Day options dynamiques ===');
@@ -128,8 +121,13 @@ console.log('\n=== Day options dynamiques ===');
   const eco = M.getDayOptions({ mode: 'eco', ...M.createDefaultVsSettings(), mode: 'eco' });
   assert(eco.length === 2, 'ÉCO : 2 options');
   const afond = M.getDayOptions({ ...M.createDefaultVsSettings(), mode: 'afond' });
-  assert(afond.length === 3, 'À FOND : 3 options');
-  assert(afond[2].value === 12, 'À FOND low value = 12');
+  assert(afond.length === 4, 'À FOND : 4 options');
+  assert(afond[0].bracket === 'high', 'À FOND high en premier');
+  assert(afond[1].bracket === 'ok', 'À FOND Score fait');
+  assert(afond[1].label.includes('Score fait'), 'libellé sans points');
+  assert(!afond[3].label.includes('pt'), 'pas de pts dans les options');
+  assert(afond[3].value === 1, 'À FOND low value = 1');
+  assert(M.createDefaultVsSettings().afond.praiseGoal === 20000000, 'seuil félicitations 20 M');
 }
 
 console.log('\n=== Présence Tempête (logique) ===');

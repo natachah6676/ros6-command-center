@@ -121,6 +121,28 @@
       }
     }
 
+    if (state.playerVsUnderStats && typeof state.playerVsUnderStats === 'object') {
+      const result = migrateMapKeysToPlayerIds(state.playerVsUnderStats, players, {
+        ...options,
+        mergeFn: (a, b) => {
+          const entries = [...(a?.entries || []), ...(b?.entries || [])];
+          const seen = new Set();
+          const merged = [];
+          entries.forEach((e) => {
+            const key = e?.weekId || `${e?.startDate || ''}_${e?.at || ''}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            merged.push(e);
+          });
+          return { entries: merged.slice(0, 8) };
+        },
+      });
+      if (result.changed) {
+        state.playerVsUnderStats = result.map;
+        changed = true;
+      }
+    }
+
     return { state, changed };
   }
 

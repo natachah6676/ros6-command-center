@@ -120,7 +120,6 @@
     if (tabName === 'train' && globalThis.TrainModule) TrainModule.render();
     if (tabName === 'ruche' && globalThis.RucheModule) RucheModule.render();
     if (tabName === 'tempete' && globalThis.TempeteModule) TempeteModule.render();
-    if (tabName === 'archives') ArchivesModule.render();
     if (tabName === 'settings' && canAccessSettings()) {
       applyRolePermissions();
       renderPowerTiersSettings();
@@ -419,7 +418,6 @@
     if (globalThis.TrainModule) TrainModule.render();
     if (globalThis.RucheModule) RucheModule.render();
     if (globalThis.TempeteModule) TempeteModule.render();
-    ArchivesModule.render();
     NotificationsModule.render();
     renderAllianceSettings();
     applyBrandIdentity();
@@ -608,7 +606,6 @@
     CommandModule.init();
     NotificationsModule.init();
     VSModule.init();
-    ArchivesModule.init();
     if (globalThis.TrainModule) TrainModule.init();
     if (globalThis.RucheModule) RucheModule.init();
     if (globalThis.TempeteModule) TempeteModule.init();
@@ -625,7 +622,6 @@
       if (globalThis.TrainModule) TrainModule.render();
       if (globalThis.RucheModule) RucheModule.render();
       if (globalThis.TempeteModule) TempeteModule.render();
-      ArchivesModule.render();
       NotificationsModule.render();
       const settingsPanel = document.getElementById('panel-settings');
       if (settingsPanel && !settingsPanel.hidden) {

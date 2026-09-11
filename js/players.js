@@ -104,6 +104,27 @@
     els.powerCounter.textContent = `Puissances renseignées : ${filled} / ${actives.length} joueurs actifs`;
   }
 
+  function getActiveVsWeek(state = ROSStorage.getState()) {
+    if (!state?.currentWeekId) return null;
+    const week = (state.weeks || []).find((w) => w.id === state.currentWeekId);
+    if (!week || week.archived) return null;
+    return week;
+  }
+
+  function actorStamp() {
+    if (global.ROSProfiles && typeof ROSProfiles.stampActor === 'function') {
+      return ROSProfiles.stampActor();
+    }
+    const session =
+      global.ROSSync && typeof ROSSync.getSession === 'function' ? ROSSync.getSession() : null;
+    const email = session?.user?.email ? String(session.user.email).trim() : '';
+    return {
+      actorUserId: session?.user?.id || '',
+      actorPlayerId: null,
+      actorLabel: email || ROSStorage.getState().appRole || 'R4',
+    };
+  }
+
   function canEditGlobalPower() {
     return Boolean(ROSModels.canEditGlobalPower && ROSModels.canEditGlobalPower());
   }
@@ -177,61 +198,40 @@
 
   function renderHistoryTable(playerId) {
     const state = ROSStorage.getState();
-    const weeks = ROSModels.getSortedWeeks(state);
-
-    if (!weeks.length) {
-      return '<p class="empty-state">Aucun historique de semaine.</p>';
+    const week = ROSModels.getCurrentWeekFromState(state);
+    if (!week) {
+      return '<p class="empty-state">Aucune semaine VS active — pas d’historique conservé.</p>';
     }
 
-    const rows = weeks
-      .map((week) => {
-        const summary = ROSModels.getWeekScoreSummary(week, playerId);
-        const note = ROSUI.getPlayerWeekNote(state, playerId, week.id);
-        const points = summary.hasRecord ? String(summary.total) : '—';
-        const color = summary.hasRecord
-          ? `<span class="score-pill ${summary.color}">${ROSUI.escapeHtml(summary.colorLabel)}</span>`
-          : '—';
-        const dons = !summary.hasRecord
-          ? '—'
-          : summary.donationMissed
-            ? 'Non réalisés'
-            : 'OK';
-
-        const commentCell = detailAllowEdit
-          ? `<input class="input input-sm" data-note-field="comment" data-week="${week.id}" value="${ROSUI.escapeHtml(note.comment)}" placeholder="Commentaire…" />`
-          : ROSUI.escapeHtml(note.comment || '—');
-
-        return `
-          <tr>
-            <td>${ROSUI.escapeHtml(week.label)}</td>
-            <td>${points}</td>
-            <td>${color}</td>
-            <td>${dons}</td>
-            <td>${commentCell}</td>
-            <td class="muted-cell">${ROSUI.escapeHtml(note.conducteur || '—')}</td>
-            <td class="muted-cell">${ROSUI.escapeHtml(note.vip || '—')}</td>
-            <td class="muted-cell">${ROSUI.escapeHtml(note.saison || '—')}</td>
-          </tr>
-        `;
-      })
-      .join('');
+    const summary = ROSModels.getWeekScoreSummary(week, playerId);
+    const note = ROSUI.getPlayerWeekNote(state, playerId, week.id);
+    const points = summary.hasRecord ? String(summary.total) : '—';
+    const color = summary.hasRecord
+      ? `<span class="score-pill ${summary.color}">${ROSUI.escapeHtml(summary.colorLabel)}</span>`
+      : '—';
+    const commentCell = detailAllowEdit
+      ? `<input class="input input-sm" data-note-field="comment" data-week="${week.id}" value="${ROSUI.escapeHtml(note.comment)}" placeholder="Commentaire…" />`
+      : ROSUI.escapeHtml(note.comment || '—');
 
     return `
       <div class="table-wrap">
         <table class="fiche-table">
           <thead>
             <tr>
-              <th>Semaine</th>
+              <th>Semaine active</th>
               <th>Points</th>
               <th>Couleur</th>
-              <th>Dons</th>
               <th>Commentaires</th>
-              <th>Conducteur</th>
-              <th>VIP</th>
-              <th>Saison</th>
             </tr>
           </thead>
-          <tbody>${rows}</tbody>
+          <tbody>
+            <tr>
+              <td>${ROSUI.escapeHtml(week.label)}</td>
+              <td>${points}</td>
+              <td>${color}</td>
+              <td>${commentCell}</td>
+            </tr>
+          </tbody>
         </table>
       </div>
     `;
@@ -253,9 +253,9 @@
     const absentBadge = player.absent ? '<span class="badge badge-absent">Absent</span>' : '';
     const inactiveBadge = player.inactive ? '<span class="badge badge-status-parti">Inactif</span>' : '';
     const vsNote = player.absent
-      ? 'Ignoré des calculs VS tant qu’il est absent (historique des semaines précédentes inchangé).'
+      ? 'Hors VS (absent) — non compté dans les seuils / compteurs.'
       : summary.hasRecord
-        ? `${summary.total} pts · ${ROSUI.escapeHtml(summary.colorLabel)}`
+        ? `${summary.daysUnderObjective} j sous objectif · ${summary.objectivesMet} j score fait · ${ROSUI.escapeHtml(summary.colorLabel)}`
         : 'aucune donnée VS';
 
     const trainLabel =
@@ -310,9 +310,9 @@
       }
 
       <div>
-        <strong class="section-label">Historique complet</strong>
+        <strong class="section-label">Semaine VS active</strong>
         <p class="panel-subtitle" style="margin:0.35rem 0 0.7rem">
-          Semaine courante : ${vsNote}
+          ${vsNote} · aucun historique VS détaillé conservé après clôture
         </p>
         ${renderHistoryTable(playerId)}
       </div>
@@ -373,7 +373,7 @@
       if (existing && existing.status === 'Actif' && status === 'Parti') {
         const ok = await AppUI.confirm({
           title: 'Passer en « Parti »',
-          message: `Confirmer le départ de « ${existing.pseudo} » ? Son historique VS sera conservé dans les archives.`,
+          message: `Confirmer le départ de « ${existing.pseudo} » ?`,
           confirmLabel: 'Passer en Parti',
         });
         if (!ok) return;
@@ -492,7 +492,7 @@
 
     const ok = await AppUI.confirm({
       title: 'Passer en « Parti »',
-      message: `Confirmer le départ de « ${player.pseudo} » ? Son historique VS sera conservé dans les archives.`,
+      message: `Confirmer le départ de « ${player.pseudo} » ?`,
       confirmLabel: 'Passer en Parti',
     });
     if (!ok) return;
@@ -531,9 +531,20 @@
       const target = state.players.find((p) => p.id === playerId);
       if (!target || target.status !== 'Actif') return state;
       target.absent = Boolean(absent);
-      // Historique des semaines précédentes : jamais modifié.
+      const week =
+        state.currentWeekId &&
+        (state.weeks || []).find((w) => w.id === state.currentWeekId && !w.archived);
+      if (week && week.scores) {
+        if (absent) {
+          delete week.scores[playerId];
+        } else if (!week.scores[playerId]) {
+          week.scores[playerId] = ROSModels.createEmptyScore();
+        }
+      }
       return state;
     });
+    if (global.VSModule && typeof VSModule.render === 'function') VSModule.render();
+    if (global.SuiviModule && typeof SuiviModule.render === 'function') SuiviModule.render();
     AppUI.toast(absent ? 'Joueur marqué Absent (hors VS).' : 'Joueur de nouveau présent dans le VS.');
   }
 

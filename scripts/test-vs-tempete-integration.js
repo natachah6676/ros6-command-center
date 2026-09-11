@@ -77,53 +77,38 @@ console.log('\n=== Flux VS : migration + mode + paramètres + clôture ===');
 
   assert(state.vsSettings.mode === 'afond', 'Migration → mode à fond');
   assert(state.weeks.find((w) => w.id === 'w-active').donationsVerified === false, 'Dons non vérifiés par défaut');
-
-  const archived = state.weeks.find((w) => w.id === 'w-old');
-  assert(archived.scores.p1.days.mardi === 5, 'Archive : points mid historiques intactes');
-  assert(archived.scores.p1.allianceDonMissed === true, 'Archive : don manqué conservé');
+  assert(!state.weeks.find((w) => w.id === 'w-old'), 'Archive VS historique purgée');
+  assert(state.weeks.length === 1, 'une seule semaine active conservée');
 
   const active = state.weeks.find((w) => w.id === 'w-active');
-  // Première migration (barème à fond) : mid → 5, low → 12
-  assert(active.scores.p1.days.mardi === 5, 'Semaine active : mid recalculé à fond (5)');
-  assert(active.scores.p1.days.mercredi === 12, 'Semaine active : low = 12 à fond');
-  assert(active.scores.p1.dayBrackets.mardi === 'mid', 'Bracket mid conservé pour bascule future');
+  // Première migration : marqueurs 0/1 (plus de barème points)
+  assert(active.scores.p1.days.mardi === 1, 'Semaine active : mid → 1');
+  assert(active.scores.p1.days.mercredi === 1, 'Semaine active : low → 1');
+  assert(active.scores.p1.dayBrackets.mardi === 'mid', 'Bracket mid conservé');
+  assert(active.scores.p1.dayBrackets.mercredi === 'low', 'Bracket low conservé');
 
-  // Bascule ÉCO + recalcul (compat barème stocké)
-  state.vsSettings.mode = 'eco';
   M.recalculateWeekWithBareme(active, state);
-  assert(active.scores.p1.days.mardi === 0, 'Bascule ÉCO : mid → 0');
-  assert(active.scores.p1.days.mercredi === 10, 'Bascule ÉCO : low → 10');
-
-  // Retour À FOND + recalcul
-  state.vsSettings.mode = 'afond';
-  M.recalculateWeekWithBareme(active, state);
-  assert(active.scores.p1.days.mardi === 5, 'Bascule À FOND : mid → 5');
-  assert(active.scores.p1.days.mercredi === 12, 'Bascule À FOND : low → 12');
   assert(M.countDaysUnderObjective(active.scores.p1) === 3, 'Indicateur jours sous objectif = 3');
   assert(M.countObjectivesMet(active.scores.p1) === 2, 'Indicateur objectifs atteints = 2');
 
-  // Modifier paramètres (lowPoints 15) puis recalcul
-  state.vsSettings.afond.lowPoints = 15;
-  M.recalculateWeekWithBareme(active, state);
-  assert(active.scores.p1.days.mercredi === 15, 'Paramètre lowPoints appliqué (15)');
-
-  // Day options dynamiques
+  // Day options : seuils (pas de points)
   const opts = M.getDayOptions(state);
-  assert(opts.length === 3 && opts[2].value === 15, 'Options jour reflètent les paramètres');
+  assert(opts.length === 4 && opts[1].bracket === 'ok', 'Options jour : 4 tranches');
+  assert(opts.every((o) => !String(o.label).includes('pt')), 'Options sans mention de points');
 
-  // Couleurs selon redFrom
-  state.vsSettings.afond.redFrom = 36;
-  assert(M.getColorClass(36, state) === 'color-red', 'Rouge ≥ 36');
-  assert(M.getColorClass(30, state) === 'color-orange', 'Orange sous le seuil rouge');
+  // Couleurs selon jours sous objectif
+  assert(M.getColorClass(4, state) === 'color-red', 'Rouge ≥ 4 j');
+  assert(M.getColorClass(2, state) === 'color-orange', 'Orange ≥ 2 j');
+  assert(M.getColorClass(1, state) === 'color-green', 'Vert ≤ 1 j');
 
   // Clôture libre : plus de gate donationsVerified (champ conservé en données)
   assert(Object.prototype.hasOwnProperty.call(active, 'donationsVerified'), 'donationsVerified toujours présent (compat)');
   assert(typeof active.donationsVerified === 'boolean', 'donationsVerified booléen');
 
-  // Re-normalisation ne doit pas écraser vsSettings ni archives
+  // Re-normalisation ne doit pas écraser vsSettings ; historiques VS restent absents
   const again = M.normalizeState(state);
   assert(again.vsSettings.mode === 'afond', 'Mode mémorisé après re-normalize');
-  assert(again.weeks.find((w) => w.id === 'w-old').scores.p1.days.mardi === 5, 'Archive intacte après re-normalize');
+  assert(again.weeks.length === 1 && again.weeks[0].id === 'w-active', 'Toujours uniquement la semaine active');
 }
 
 console.log('\n=== Flux Tempête : présence + filtres + couleurs ===');
@@ -208,11 +193,12 @@ console.log('\n=== Compatibilité API legacy (autres modules) ===');
 {
   const score = M.createEmptyScore();
   score.days.lundi = 10;
+  score.dayBrackets.lundi = 'low';
   score.allianceDonMissed = true;
-  // Appels sans 2e argument (archives / command)
+  // Appels sans 2e argument (archives / command) — total = jours sous
   const total = M.computeTotal(score);
-  assert(typeof total === 'number' && total >= 10, 'computeTotal(score) legacy OK');
-  assert(typeof M.getColorClass(total) === 'string', 'getColorClass(total) legacy OK');
+  assert(total === 1, 'computeTotal = jours sous (dons sans pts)');
+  assert(M.getColorClass(total) === 'color-green', 'getColorClass(1 j) = vert');
   assert(Array.isArray(M.DAY_OPTIONS) && M.DAY_OPTIONS.length === 3, 'DAY_OPTIONS legacy conservé');
 }
 

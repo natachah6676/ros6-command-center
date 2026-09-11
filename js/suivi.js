@@ -15,6 +15,8 @@
     els.filterStatus = document.getElementById('suiviFilterStatus');
     els.filterReason = document.getElementById('suiviFilterReason');
     els.showDone = document.getElementById('suiviShowDone');
+    els.filterAssignee = document.getElementById('suiviFilterAssignee');
+    els.btnCopyList = document.getElementById('btnSuiviCopyList');
     els.counter = document.getElementById('suiviCounter');
     els.btnAdd = document.getElementById('btnSuiviAdd');
     els.addSelect = document.getElementById('suiviAddPlayer');
@@ -29,6 +31,44 @@
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  function getAssignableOfficers(state) {
+    return (state.players || [])
+      .filter((p) => p && p.status === 'Actif' && (p.role === 'R4' || p.role === 'R5'))
+      .sort((a, b) => {
+        if (a.role !== b.role) return a.role === 'R5' ? -1 : 1;
+        return a.pseudo.localeCompare(b.pseudo, 'fr', { sensitivity: 'base' });
+      });
+  }
+
+  function fillAssigneeFilter(state) {
+    if (!els.filterAssignee) return;
+    const previous = els.filterAssignee.value || '';
+    const officers = getAssignableOfficers(state);
+    els.filterAssignee.innerHTML =
+      `<option value="">Tous les R4</option>` +
+      `<option value="unassigned">Non assigné</option>` +
+      officers
+        .map(
+          (p) =>
+            `<option value="${escapeHtml(p.id)}">${escapeHtml(p.pseudo)} (${escapeHtml(
+              p.role
+            )})</option>`
+        )
+        .join('');
+    if (
+      previous === 'unassigned' ||
+      previous === '' ||
+      officers.some((p) => p.id === previous)
+    ) {
+      els.filterAssignee.value = previous;
+    }
+  }
+
+  function assigneeLabelFor(follow) {
+    if (!follow?.assigneePlayerId && !follow?.assigneeLabel) return '';
+    return follow.assigneeLabel || 'R4';
   }
 
   function canEditFollowUp() {
@@ -65,6 +105,8 @@
     return {
       vs: Boolean(detected.vs || follow?.reasons?.vs),
       hero: Boolean(detected.hero || follow?.reasons?.hero),
+      praise: Boolean(detected.praise || follow?.reasons?.praise),
+      absent: Boolean(detected.absent || follow?.reasons?.absent),
       manual: Boolean(follow?.manual || follow?.reasons?.manual || detected.manual),
     };
   }
@@ -77,7 +119,7 @@
       const detected = ROSModels.detectFollowUpReasons(player, state);
       const existing = state.playerFollowUps?.[player.id];
       const hasOpen = existing && existing.status !== 'done';
-      const autoHit = detected.vs || detected.hero;
+      const autoHit = detected.vs || detected.hero || detected.praise || detected.absent;
       if (!autoHit && !hasOpen && !detected.manual) return;
       if (existing?.status === 'done') return;
 
@@ -86,6 +128,8 @@
           reasons: {
             vs: detected.vs,
             hero: detected.hero,
+            praise: detected.praise,
+            absent: detected.absent,
             manual: Boolean(detected.manual),
           },
           manual: Boolean(detected.manual),
@@ -97,14 +141,12 @@
       const row = ensureCase(state, player.id);
       if (row.status === 'done') return;
       let rowChanged = false;
-      if (detected.vs && !row.reasons.vs) {
-        row.reasons.vs = true;
-        rowChanged = true;
-      }
-      if (detected.hero && !row.reasons.hero) {
-        row.reasons.hero = true;
-        rowChanged = true;
-      }
+      ['vs', 'hero', 'praise', 'absent'].forEach((key) => {
+        if (detected[key] && !row.reasons[key]) {
+          row.reasons[key] = true;
+          rowChanged = true;
+        }
+      });
       if (row.manual && !row.reasons.manual) {
         row.reasons.manual = true;
         rowChanged = true;
@@ -121,6 +163,7 @@
     const q = (els.search?.value || '').trim().toLowerCase();
     const statusFilter = els.filterStatus?.value || '';
     const reasonFilter = els.filterReason?.value || '';
+    const assigneeFilter = els.filterAssignee?.value || '';
 
     return (state.players || [])
       .filter((p) => p && p.status === 'Actif')
@@ -130,13 +173,30 @@
         const displayReasons = buildDisplayReasons(player, follow, state);
         const isDone = follow.status === 'done';
         if (isDone && !showDone && statusFilter !== 'done') return null;
-        if (!isDone && !displayReasons.vs && !displayReasons.hero && !displayReasons.manual) {
+        if (
+          !isDone &&
+          !displayReasons.vs &&
+          !displayReasons.hero &&
+          !displayReasons.praise &&
+          !displayReasons.absent &&
+          !displayReasons.manual
+        ) {
           return null;
         }
         if (statusFilter && follow.status !== statusFilter) return null;
         if (reasonFilter === 'vs' && !displayReasons.vs) return null;
         if (reasonFilter === 'hero' && !displayReasons.hero) return null;
+        if (reasonFilter === 'praise' && !displayReasons.praise) return null;
+        if (reasonFilter === 'absent' && !displayReasons.absent) return null;
         if (reasonFilter === 'manual' && !displayReasons.manual) return null;
+        if (assigneeFilter === 'unassigned' && follow.assigneePlayerId) return null;
+        if (
+          assigneeFilter &&
+          assigneeFilter !== 'unassigned' &&
+          follow.assigneePlayerId !== assigneeFilter
+        ) {
+          return null;
+        }
         if (q && !String(player.pseudo || '').toLowerCase().includes(q)) return null;
         return { player, follow, reasons: displayReasons };
       })
@@ -176,6 +236,7 @@
       );
     }
     const fresh = ROSStorage.getState();
+    fillAssigneeFilter(fresh);
     const rows = getActiveFollowUpRows(fresh);
     fillAddSelect(fresh, rows);
 
@@ -201,6 +262,10 @@
       els.list.innerHTML = rows
         .map(({ player, follow, reasons }) => {
           const selected = player.id === selectedPlayerId ? ' is-selected' : '';
+          const vsStats = ROSModels.getPlayerVsUnderStats(fresh, player.id);
+          const vsCounter = ROSModels.formatVsUnderCounterLabel(vsStats);
+          const praiseCounter = ROSModels.formatVsPraiseCounterLabel(vsStats);
+          const assignee = assigneeLabelFor(follow);
           return `
             <button type="button" class="suivi-row${selected}" data-suivi-open="${escapeHtml(player.id)}">
               <span class="suivi-row-main">
@@ -208,6 +273,13 @@
                 <span class="suivi-row-reasons">${escapeHtml(
                   ROSModels.formatFollowUpReasonsLabel(reasons)
                 )}</span>
+                <span class="suivi-row-vs-counter">${escapeHtml(vsCounter)}</span>
+                <span class="suivi-row-vs-counter">${escapeHtml(praiseCounter)}</span>
+                ${
+                  assignee
+                    ? `<span class="suivi-row-assignee">Suivi par ${escapeHtml(assignee)}</span>`
+                    : '<span class="suivi-row-assignee is-empty">Non assigné</span>'
+                }
               </span>
               <span class="suivi-status suivi-status--${escapeHtml(follow.status)}">
                 ${escapeHtml(ROSModels.getFollowUpStatusLabel(follow.status))}
@@ -249,6 +321,22 @@
     const underDays = week ? ROSModels.countPlayerVsUnderDays(week, player.id) : 0;
     const settings = ROSModels.getFollowUpSettings(state);
     const heroLabel = ROSModels.getPlayerPowerLabel(player, state);
+    const vsStats = ROSModels.getPlayerVsUnderStats(state, player.id);
+    const vsSummary = ROSModels.summarizeVsUnderStats(vsStats);
+    const vsHistoryHtml = vsSummary.entries.length
+      ? `<ul class="suivi-vs-history">${vsSummary.entries
+          .map(
+            (e) =>
+              `<li class="${
+                e.under ? 'is-under' : e.praise ? 'is-ok' : ''
+              }">${escapeHtml(e.weekLabel || e.startDate || 'Semaine')} · ${
+                e.underDays
+              } j sous objectif · ${
+                e.under ? 'sous seuil' : e.praise ? 'à féliciter' : 'neutre'
+              }</li>`
+          )
+          .join('')}</ul>`
+      : '<p class="panel-subtitle">Aucune semaine clôturée mémorisée pour le moment.</p>';
 
     const statusOptions = ROSModels.FOLLOW_UP_STATUSES.map(
       (s) =>
@@ -256,6 +344,18 @@
           s.label
         )}</option>`
     ).join('');
+
+    const officers = getAssignableOfficers(state);
+    const assigneeOptions =
+      `<option value="">— Non assigné —</option>` +
+      officers
+        .map(
+          (p) =>
+            `<option value="${escapeHtml(p.id)}" ${
+              follow.assigneePlayerId === p.id ? 'selected' : ''
+            }>${escapeHtml(p.pseudo)} (${escapeHtml(p.role)})</option>`
+        )
+        .join('');
 
     const notesHtml = (follow.notes || [])
       .slice()
@@ -285,11 +385,22 @@
         </div>
       </div>
       <div class="suivi-detail-meta">
-        <p><strong>VS :</strong> ${
-          displayReasons.vs
-            ? `${underDays} jour(s) sous objectif${week ? ` (${escapeHtml(week.label || '')})` : ''}`
-            : 'non concerné'
-        } · seuil ${settings.vsMinUnderDays} j</p>
+        <p><strong>VS (semaine active) :</strong> ${
+          player.absent
+            ? 'absent — hors scores'
+            : week
+              ? `${underDays} jour(s) sous objectif (${escapeHtml(week.label || '')})`
+              : 'aucune'
+        } · seuil suivi ≥ ${settings.vsMinUnderDays} j · félicitations ≥ ${
+          settings.vsPraiseMinDaysMet
+        } j score fait + ≥ ${settings.vsPraiseMinHighDays} j gros score</p>
+        <p><strong>${escapeHtml(ROSModels.formatVsUnderCounterLabel(vsStats))}</strong>
+          · <strong>${escapeHtml(ROSModels.formatVsPraiseCounterLabel(vsStats))}</strong>
+          <span class="panel-subtitle"> · ${
+            ROSModels.VS_UNDER_HISTORY_LIMIT
+          } dernières semaines clôturées</span>
+        </p>
+        ${vsHistoryHtml}
         <p><strong>Puissance héros :</strong> ${escapeHtml(heroLabel)} · seuil ≤ ${
           settings.heroMaxM
         } M</p>
@@ -302,6 +413,9 @@
             ? ` · ${escapeHtml(ROSModels.formatFollowUpReasonsLabel(follow.contactReasons))}`
             : ''
         }</p>
+        <p><strong>R4 assigné :</strong> ${
+          assigneeLabelFor(follow) ? escapeHtml(assigneeLabelFor(follow)) : 'personne'
+        }</p>
       </div>
       <label class="field">
         <span>Statut du suivi</span>
@@ -309,6 +423,14 @@
           player.id
         )}" ${editable ? '' : 'disabled'}>
           ${statusOptions}
+        </select>
+      </label>
+      <label class="field" style="margin-top:0.65rem">
+        <span>Qui suit ce joueur (R4 / R5)</span>
+        <select id="suiviAssigneeSelect" class="input" data-suivi-assignee="${escapeHtml(
+          player.id
+        )}" ${editable ? '' : 'disabled'}>
+          ${assigneeOptions}
         </select>
       </label>
       <div class="settings-actions" style="margin-top:0.75rem;gap:0.5rem;flex-wrap:wrap">
@@ -355,7 +477,7 @@
     ROSStorage.update((s) => {
       const row = ensureCase(s, playerId, {
         manual: true,
-        reasons: { vs: false, hero: false, manual: true },
+        reasons: ROSModels.emptyFollowUpReasons({ manual: true }),
         status: 'to_contact',
       });
       row.manual = true;
@@ -372,6 +494,103 @@
     if (els.showDone) els.showDone.checked = false;
     AppUI.toast('Joueur ajouté au suivi.');
     render();
+  }
+
+  function setAssignee(playerId, assigneePlayerId) {
+    if (!canEditFollowUp()) {
+      AppUI.toast('Seul un R4 ou R5 peut assigner un suivi.');
+      return;
+    }
+    const actor = stampActor();
+    ROSStorage.update((s) => {
+      const row = ensureCase(s, playerId);
+      const nextId = String(assigneePlayerId || '').trim() || null;
+      if (!nextId) {
+        row.assigneePlayerId = null;
+        row.assigneeLabel = '';
+        row.assignedAt = null;
+        row.assignedByLabel = '';
+      } else {
+        const officer = (s.players || []).find((p) => p.id === nextId);
+        row.assigneePlayerId = nextId;
+        row.assigneeLabel = officer?.pseudo || nextId;
+        row.assignedAt = new Date().toISOString();
+        row.assignedByLabel = actor.actorLabel || '';
+      }
+      row.updatedAt = new Date().toISOString();
+      return s;
+    });
+    AppUI.toast(assigneePlayerId ? 'R4 assigné.' : 'Assignation retirée.');
+    render();
+  }
+
+  async function copyDiscordList() {
+    const state = ROSStorage.getState();
+    const rows = getActiveFollowUpRows(state);
+    if (!rows.length) {
+      AppUI.toast('Aucune ligne à copier avec les filtres actuels.');
+      return;
+    }
+
+    const dateLabel = new Date().toLocaleDateString('fr-FR');
+    const used = new Set();
+    const take = (predicate) =>
+      rows.filter((r) => {
+        if (used.has(r.player.id) || !predicate(r)) return false;
+        used.add(r.player.id);
+        return true;
+      });
+
+    const groups = [
+      { title: 'Absents', rows: take((r) => r.reasons.absent) },
+      { title: 'À féliciter', rows: take((r) => r.reasons.praise) },
+      { title: 'À contacter', rows: take((r) => r.follow.status === 'to_contact') },
+      { title: 'Autres suivis', rows: take(() => true) },
+    ];
+
+    const lines = [`**Suivi membres — ${dateLabel}**`, ''];
+    let written = 0;
+    groups.forEach((group) => {
+      if (!group.rows.length) return;
+      lines.push(`**${group.title}** (${group.rows.length})`);
+      group.rows.forEach((r) => {
+        const motifs = ROSModels.formatFollowUpReasonsLabel(r.reasons);
+        const assignee = assigneeLabelFor(r.follow);
+        const status =
+          r.follow.status !== 'to_contact'
+            ? ` · ${ROSModels.getFollowUpStatusLabel(r.follow.status)}`
+            : '';
+        const who = assignee ? ` · suivi par ${assignee}` : '';
+        lines.push(`• ${r.player.pseudo} — ${motifs}${status}${who}`);
+        written += 1;
+      });
+      lines.push('');
+    });
+
+    if (!written) {
+      AppUI.toast('Aucune ligne à copier.');
+      return;
+    }
+
+    const text = lines.join('\n').trim();
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+      AppUI.toast('Liste copiée — colle-la dans Discord.');
+    } catch (_err) {
+      AppUI.toast('Impossible de copier automatiquement.');
+    }
   }
 
   function setStatus(playerId, status) {
@@ -393,11 +612,13 @@
           const player = s.players.find((p) => p.id === playerId);
           const detected = ROSModels.detectFollowUpReasons(player, s);
           row.contactedAt = new Date().toISOString();
-          row.contactReasons = {
+          row.contactReasons = ROSModels.emptyFollowUpReasons({
             vs: Boolean(detected.vs || row.reasons.vs),
             hero: Boolean(detected.hero || row.reasons.hero),
+            praise: Boolean(detected.praise || row.reasons.praise),
+            absent: Boolean(detected.absent || row.reasons.absent),
             manual: Boolean(row.manual || row.reasons.manual),
-          };
+          });
         }
       }
       return s;
@@ -415,11 +636,13 @@
       const detected = ROSModels.detectFollowUpReasons(player, s);
       const row = ensureCase(s, playerId);
       row.contactedAt = new Date().toISOString();
-      row.contactReasons = {
+      row.contactReasons = ROSModels.emptyFollowUpReasons({
         vs: Boolean(detected.vs || row.reasons.vs),
         hero: Boolean(detected.hero || row.reasons.hero),
+        praise: Boolean(detected.praise || row.reasons.praise),
+        absent: Boolean(detected.absent || row.reasons.absent),
         manual: Boolean(row.manual || row.reasons.manual),
-      };
+      });
       if (row.status === 'to_contact') row.status = 'contacted';
       row.updatedAt = new Date().toISOString();
       return s;
@@ -479,6 +702,11 @@
     const statusSelect = event.target.closest('[data-suivi-status]');
     if (statusSelect) {
       setStatus(statusSelect.dataset.suiviStatus, statusSelect.value);
+      return;
+    }
+    const assigneeSelect = event.target.closest('[data-suivi-assignee]');
+    if (assigneeSelect) {
+      setAssignee(assigneeSelect.dataset.suiviAssignee, assigneeSelect.value);
     }
   }
 
@@ -502,12 +730,19 @@
     const state = ROSStorage.getState();
     const settings = ROSModels.getFollowUpSettings(state);
     const vsEl = document.getElementById('followUpVsMinDays');
+    const praiseMetEl = document.getElementById('followUpVsPraiseMinDaysMet');
+    const praiseHighEl = document.getElementById('followUpVsPraiseMinHighDays');
     const heroEl = document.getElementById('followUpHeroMax');
     const preview = document.getElementById('followUpSettingsPreview');
     if (vsEl) vsEl.value = settings.vsMinUnderDays;
+    if (praiseMetEl) praiseMetEl.value = settings.vsPraiseMinDaysMet;
+    if (praiseHighEl) praiseHighEl.value = settings.vsPraiseMinHighDays;
     if (heroEl) heroEl.value = settings.heroMaxM;
     if (preview) {
-      preview.textContent = `VS : ≥ ${settings.vsMinUnderDays} jour(s) sous objectif · Héros : ≤ ${settings.heroMaxM} M`;
+      const praiseGoal = ROSModels.formatVsMillionsShort(
+        ROSModels.getVsSettings(state).afond.praiseGoal
+      );
+      preview.textContent = `VS suivi : ≥ ${settings.vsMinUnderDays} j sous objectif · À féliciter : ≥ ${settings.vsPraiseMinDaysMet} j score fait + ≥ ${settings.vsPraiseMinHighDays} j ≥ ${praiseGoal} · Héros : ≤ ${settings.heroMaxM} M · Absents : auto`;
     }
   }
 
@@ -517,10 +752,14 @@
       return;
     }
     const vsMin = Number(document.getElementById('followUpVsMinDays')?.value);
+    const praiseMet = Number(document.getElementById('followUpVsPraiseMinDaysMet')?.value);
+    const praiseHigh = Number(document.getElementById('followUpVsPraiseMinHighDays')?.value);
     const heroMax = Number(document.getElementById('followUpHeroMax')?.value);
     ROSStorage.update((s) => {
       s.followUpSettings = ROSModels.normalizeFollowUpSettings({
         vsMinUnderDays: vsMin,
+        vsPraiseMinDaysMet: praiseMet,
+        vsPraiseMinHighDays: praiseHigh,
         heroMaxM: heroMax,
       });
       return s;
@@ -535,7 +774,11 @@
     els.search?.addEventListener('input', () => render());
     els.filterStatus?.addEventListener('change', () => render());
     els.filterReason?.addEventListener('change', () => render());
+    els.filterAssignee?.addEventListener('change', () => render());
     els.showDone?.addEventListener('change', () => render());
+    els.btnCopyList?.addEventListener('click', () => {
+      void copyDiscordList();
+    });
     els.btnAdd?.addEventListener('click', addManualPlayer);
     els.root?.addEventListener('click', onRootClick);
     els.root?.addEventListener('change', onRootChange);

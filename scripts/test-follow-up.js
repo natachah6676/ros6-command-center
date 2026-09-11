@@ -40,12 +40,16 @@ const highHeroTier =
   (tiers || []).find((t) => Number(t.max) > 30) ||
   { id: 'tier_high', label: '>30', min: 31, max: 40, order: 2 };
 
-function makeScore(underDays) {
+function makeScore(underDays, highDays = 0) {
   const dayKeys = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi'];
-  const score = { allianceDonMissed: false, days: {} };
+  const score = { allianceDonMissed: false, days: {}, dayBrackets: {} };
   dayKeys.forEach((d, i) => {
     // points > 0 = jour sous objectif (barème VS)
-    score.days[d] = i < underDays ? 5 : 0;
+    const under = i < underDays;
+    score.days[d] = under ? 5 : 0;
+    if (under) score.dayBrackets[d] = 'mid';
+    else if (i < underDays + highDays) score.dayBrackets[d] = 'high';
+    else score.dayBrackets[d] = 'ok';
   });
   return score;
 }
@@ -97,8 +101,35 @@ assert(rHero.hero === true, 'détection héros');
 const rBoth = M.detectFollowUpReasons(state.players[3], state);
 assert(rBoth.vs && rBoth.hero, 'détection VS + héros');
 
+const perfect = M.createPlayer({
+  pseudo: 'Perfect',
+  status: 'Actif',
+  heroPowerTierId: highHeroTier.id,
+});
+perfect.id = 'p_praise';
+state.players.push(perfect);
+state.weeks[0].scores.p_praise = makeScore(0, 0);
+const rNoHigh = M.detectFollowUpReasons(perfect, state);
+assert(rNoHigh.praise === false, '5 j score fait sans gros score → pas féliciter');
+
+state.weeks[0].scores.p_praise = makeScore(0, 1);
+const rPraise = M.detectFollowUpReasons(perfect, state);
+assert(rPraise.praise === true && rPraise.vs === false, '5 j score fait + 1 gros score → féliciter');
+
+const absentP = state.players.find((p) => p.id === 'p_absent');
+const rAbs = M.detectFollowUpReasons(absentP, state);
+assert(rAbs.absent === true && !rAbs.vs && !rAbs.praise, 'détection absent');
+
+assert(M.normalizeFollowUpSettings({}).vsPraiseMinDaysMet === 5, 'défaut félicitations = 5 j score fait');
+assert(M.normalizeFollowUpSettings({}).vsPraiseMinHighDays === 1, 'défaut félicitations = 1 j gros score');
+assert(M.createDefaultVsSettings().afond.praiseGoal === 20000000, 'défaut seuil gros score = 20 M');
+
+const opts = M.getDayOptions(M.createDefaultVsSettings());
+assert(opts[0].bracket === 'high' && opts[1].bracket === 'ok', 'options VS : gros score puis Score fait');
+assert(opts[1].label.includes('Score fait'), 'libellé Score fait');
+
 const rAbsent = M.detectFollowUpReasons(state.players[4], state);
-assert(!rAbsent.vs && !rAbsent.hero, 'absent ignoré');
+assert(rAbsent.absent === true, 'absent → motif absent');
 
 const caseNorm = M.normalizeFollowUpCase({
   status: 'contacted',
@@ -108,16 +139,35 @@ const caseNorm = M.normalizeFollowUpCase({
 assert(caseNorm.reasons.manual === true, 'manual → reason manual');
 assert(caseNorm.notes.length === 1, 'notes vides filtrées');
 assert(caseNorm.notes[0].text === 'Premier contact', 'texte note conservé');
+assert(caseNorm.assigneePlayerId === null, 'assignee défaut null');
+
+const withAssignee = M.normalizeFollowUpCase({
+  status: 'in_progress',
+  assigneePlayerId: 'r4_1',
+  assigneeLabel: 'Natacha',
+  assignedAt: '2026-09-11T12:00:00.000Z',
+});
+assert(withAssignee.assigneePlayerId === 'r4_1', 'assignee conservé');
+assert(withAssignee.assigneeLabel === 'Natacha', 'label assignee conservé');
 
 assert(
-  M.formatFollowUpReasonsLabel({ vs: true, hero: true, manual: false }) === 'VS · Puissance héros',
+  M.formatFollowUpReasonsLabel({ vs: true, hero: true, manual: false }) ===
+    'VS sous seuil · Puissance héros',
   'libellé motifs'
 );
 
 assert(html.includes('data-tab="suivi"'), 'onglet Gestion des membres');
 assert(html.includes('id="panel-suivi"'), 'panneau suivi');
 assert(html.includes('id="followUpVsMinDays"'), 'seuil VS paramètres');
+assert(html.includes('id="btnSuiviCopyList"'), 'bouton copier Discord');
+assert(html.includes('id="suiviFilterAssignee"'), 'filtre R4 assigné');
+assert(html.includes('id="trainExportHistoryExcel"'), 'export Excel Train');
+assert(html.includes('id="followUpVsPraiseMinDaysMet"'), 'seuil félicitations jours faits');
+assert(html.includes('id="vsAfondPraiseGoal"'), 'seuil gros score VS paramètres');
 assert(html.includes('id="followUpHeroMax"'), 'seuil héros paramètres');
+assert(suiviCode.includes('copyDiscordList'), 'copie Discord suivi');
+assert(suiviCode.includes('setAssignee'), 'assignation R4 suivi');
+assert(suiviCode.includes('assigneePlayerId'), 'champ assignee dans suivi');
 assert(html.includes('js/suivi.js'), 'script suivi inclus');
 assert(appCode.includes("tabName === 'suivi'"), 'app switchTab suivi');
 assert(appCode.includes('SuiviModule.init()'), 'app init SuiviModule');

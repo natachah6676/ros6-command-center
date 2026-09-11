@@ -22,7 +22,8 @@
   const APP_ROLES = ['R5', 'R4'];
   const DONATION_PENALTY = 5;
   const DATA_VERSION = 1;
-  const VS_BRACKETS = ['ok', 'mid', 'low'];
+  /** high = gros score (félicitations), ok = score fait, mid/low = sous objectif */
+  const VS_BRACKETS = ['high', 'ok', 'mid', 'low'];
   const VS_MODES = ['eco', 'afond'];
 
   function createDefaultVsSettings() {
@@ -30,17 +31,20 @@
       mode: 'afond',
       afond: {
         dailyGoal: 7200000,
+        /** Seuil « gros score » (ex. 20 M) — option VS à féliciter, modifiable. */
+        praiseGoal: 20000000,
         midMin: 3600000,
-        midPoints: 5,
-        lowPoints: 12,
-        donationPenalty: 5,
-        redFrom: 36,
+        /** Conservés pour compat données anciennes ; plus exposés ni utilisés pour le suivi. */
+        midPoints: 1,
+        lowPoints: 1,
+        donationPenalty: 0,
+        redFrom: 4,
       },
       eco: {
         dailyGoal: 3600000,
-        underPoints: 10,
-        donationPenalty: 5,
-        redFrom: 30,
+        underPoints: 1,
+        donationPenalty: 0,
+        redFrom: 4,
       },
     };
   }
@@ -62,17 +66,21 @@
       mode,
       afond: {
         dailyGoal: toPositiveInt(afondSrc.dailyGoal, defaults.afond.dailyGoal),
+        praiseGoal: Math.max(
+          toPositiveInt(afondSrc.praiseGoal, defaults.afond.praiseGoal),
+          toPositiveInt(afondSrc.dailyGoal, defaults.afond.dailyGoal)
+        ),
         midMin: toPositiveInt(afondSrc.midMin, defaults.afond.midMin),
-        midPoints: toPositiveInt(afondSrc.midPoints, defaults.afond.midPoints),
-        lowPoints: toPositiveInt(afondSrc.lowPoints, defaults.afond.lowPoints),
-        donationPenalty: toPositiveInt(afondSrc.donationPenalty, defaults.afond.donationPenalty),
-        redFrom: toPositiveInt(afondSrc.redFrom, defaults.afond.redFrom),
+        midPoints: defaults.afond.midPoints,
+        lowPoints: defaults.afond.lowPoints,
+        donationPenalty: defaults.afond.donationPenalty,
+        redFrom: defaults.afond.redFrom,
       },
       eco: {
         dailyGoal: toPositiveInt(ecoSrc.dailyGoal, defaults.eco.dailyGoal),
-        underPoints: toPositiveInt(ecoSrc.underPoints, defaults.eco.underPoints),
-        donationPenalty: toPositiveInt(ecoSrc.donationPenalty, defaults.eco.donationPenalty),
-        redFrom: toPositiveInt(ecoSrc.redFrom, defaults.eco.redFrom),
+        underPoints: defaults.eco.underPoints,
+        donationPenalty: defaults.eco.donationPenalty,
+        redFrom: defaults.eco.redFrom,
       },
     };
   }
@@ -124,44 +132,45 @@
   }
 
   function pointsForBracket(bracket, stateOrSettings) {
-    const settings = getVsSettings(stateOrSettings);
     const key = VS_BRACKETS.includes(bracket) ? bracket : 'ok';
-    if (settings.mode === 'afond') {
-      if (key === 'ok') return 0;
-      if (key === 'mid') return settings.afond.midPoints;
-      return settings.afond.lowPoints;
-    }
-    if (key === 'low') return settings.eco.underPoints;
-    return 0;
+    // Plus de barème de points : 0 = objectif atteint, 1 = sous objectif (compteur de jours).
+    if (key === 'high' || key === 'ok') return 0;
+    return 1;
   }
 
   function getDayOptions(stateOrSettings) {
     const settings = getVsSettings(stateOrSettings);
     if (settings.mode === 'afond') {
+      const praise = formatVsMillionsShort(settings.afond.praiseGoal);
       const goal = formatVsMillionsShort(settings.afond.dailyGoal);
       const mid = formatVsMillionsShort(settings.afond.midMin);
       const midHigh = formatVsMillionsShort(Math.max(0, settings.afond.dailyGoal - 1));
       return [
-        { value: 0, bracket: 'ok', label: `Plus de ${goal} · 0 pt` },
         {
-          value: settings.afond.midPoints,
+          value: 0,
+          bracket: 'high',
+          label: `Plus de ${praise}`,
+        },
+        { value: 0, bracket: 'ok', label: `Score fait (≥ ${goal})` },
+        {
+          value: 1,
           bracket: 'mid',
-          label: `Entre ${mid} et ${midHigh} · ${settings.afond.midPoints} pts`,
+          label: `Entre ${mid} et ${midHigh}`,
         },
         {
-          value: settings.afond.lowPoints,
+          value: 1,
           bracket: 'low',
-          label: `Moins de ${mid} · ${settings.afond.lowPoints} pts`,
+          label: `Moins de ${mid}`,
         },
       ];
     }
     const goal = formatVsMillionsShort(settings.eco.dailyGoal);
     return [
-      { value: 0, bracket: 'ok', label: `Objectif atteint (≥ ${goal}) · 0 pt` },
+      { value: 0, bracket: 'ok', label: `Objectif atteint (≥ ${goal})` },
       {
-        value: settings.eco.underPoints,
+        value: 1,
         bracket: 'low',
-        label: `Sous ${goal} · ${settings.eco.underPoints} pts`,
+        label: `Sous ${goal}`,
       },
     ];
   }
@@ -211,12 +220,36 @@
   }
 
   function countDaysUnderObjective(score) {
-    if (!score?.days) return 0;
-    return DAYS.reduce((sum, day) => sum + ((Number(score.days[day.key]) || 0) > 0 ? 1 : 0), 0);
+    if (!score) return 0;
+    const brackets = ensureDayBrackets(score);
+    return DAYS.reduce((sum, day) => {
+      const b = brackets[day.key];
+      if (b === 'mid' || b === 'low') return sum + 1;
+      // Compat anciennes données sans bracket fiable : points > 0 = sous objectif
+      if (!VS_BRACKETS.includes(b) && (Number(score.days?.[day.key]) || 0) > 0) return sum + 1;
+      return sum;
+    }, 0);
   }
 
   function countObjectivesMet(score) {
     return DAYS.length - countDaysUnderObjective(score);
+  }
+
+  /** Jours marqués « gros score » (bracket high). */
+  function countHighDays(score) {
+    if (!score) return 0;
+    const brackets = ensureDayBrackets(score);
+    return DAYS.reduce((sum, day) => sum + (brackets[day.key] === 'high' ? 1 : 0), 0);
+  }
+
+  /** Semaine à féliciter : assez de scores faits + assez de jours gros score. */
+  function isPraiseWeekScore(score, state) {
+    if (!score || isScoreAbsent(score)) return false;
+    const settings = getFollowUpSettings(state);
+    return (
+      countObjectivesMet(score) >= settings.vsPraiseMinDaysMet &&
+      countHighDays(score) >= settings.vsPraiseMinHighDays
+    );
   }
 
   /** Tranches de puissance héros par défaut (liste centrale — ne pas dupliquer ailleurs). */
@@ -657,30 +690,26 @@
   }
 
   function computeTotal(score, stateOrSettings) {
-    if (!score) return 0;
-    const dayTotal = DAYS.reduce((sum, day) => sum + (Number(score.days[day.key]) || 0), 0);
-    if (!score.allianceDonMissed) return dayTotal;
-    const cfg = getActiveVsConfig(stateOrSettings);
-    const donation = Number(cfg.donationPenalty);
-    return dayTotal + (Number.isFinite(donation) ? donation : DONATION_PENALTY);
+    // Ancien total de points → désormais = jours sous objectif (Train / KPI / compat).
+    if (!score || isScoreAbsent(score)) return 0;
+    return countDaysUnderObjective(score);
   }
 
-  function getColorThresholds(stateOrSettings) {
-    const cfg = getActiveVsConfig(stateOrSettings);
-    const redFrom = Math.max(1, Number(cfg.redFrom) || 35);
-    const orangeFrom = Math.max(1, redFrom - 10);
-    return { redFrom, orangeFrom };
+  /** Seuils couleur : basés sur le nombre de jours sous objectif (plus sur un total de pts). */
+  function getColorThresholds(_stateOrSettings) {
+    return { orangeFrom: 2, redFrom: 4 };
   }
 
-  function getColorClass(total, stateOrSettings) {
-    const { redFrom, orangeFrom } = getColorThresholds(stateOrSettings);
-    if (total >= redFrom) return 'color-red';
-    if (total >= orangeFrom) return 'color-orange';
+  function getColorClass(underDays, _stateOrSettings) {
+    const n = Number(underDays) || 0;
+    const { redFrom, orangeFrom } = getColorThresholds();
+    if (n >= redFrom) return 'color-red';
+    if (n >= orangeFrom) return 'color-orange';
     return 'color-green';
   }
 
-  function getColorLabel(total, stateOrSettings) {
-    const color = getColorClass(total, stateOrSettings);
+  function getColorLabel(underDays, stateOrSettings) {
+    const color = getColorClass(underDays, stateOrSettings);
     if (color === 'color-red') return 'Rouge';
     if (color === 'color-orange') return 'Orange';
     return 'Vert';
@@ -688,12 +717,14 @@
 
   function getFlaggedDays(score) {
     if (!score) return [];
+    const brackets = ensureDayBrackets(score);
     return DAYS.filter((day) => {
-      const value = Number(score.days[day.key]) || 0;
-      return value > 0;
+      const b = brackets[day.key];
+      return b === 'mid' || b === 'low' || (Number(score.days?.[day.key]) || 0) > 0;
     }).map((day) => ({
       ...day,
       points: Number(score.days[day.key]) || 0,
+      bracket: brackets[day.key] || 'low',
     }));
   }
 
@@ -854,6 +885,8 @@
       coachingThreshold: createDefaultCoachingThreshold(),
       followUpSettings: createDefaultFollowUpSettings(),
       playerFollowUps: {},
+      /** Compteur léger VS sous seuil (fenêtre glissante, sans garder les semaines). */
+      playerVsUnderStats: {},
       alliance: createDefaultAllianceSettings(),
       /** Journal minimal des changements de Puissance globale (sync / audit). */
       globalPowerAudit: [],
@@ -901,6 +934,10 @@
     return {
       /** Nombre de jours sous objectif VS (ex. &lt; 7,2 M) pour déclencher un suivi. */
       vsMinUnderDays: 2,
+      /** Jours « Score fait » min (objectif quotidien atteint) pour féliciter. */
+      vsPraiseMinDaysMet: 5,
+      /** Jours « gros score » (seuil praiseGoal VS) min pour féliciter. */
+      vsPraiseMinHighDays: 1,
       /** Puissance héros max (M) : tranche.max ≤ cette valeur → suivi héros. */
       heroMaxM: 30,
     };
@@ -909,9 +946,19 @@
   function normalizeFollowUpSettings(raw) {
     const defaults = createDefaultFollowUpSettings();
     const vsMin = Number(raw?.vsMinUnderDays);
+    const praiseMet = Number(raw?.vsPraiseMinDaysMet);
+    const praiseHigh = Number(raw?.vsPraiseMinHighDays);
     const heroMax = Number(raw?.heroMaxM);
     return {
       vsMinUnderDays: Number.isFinite(vsMin) && vsMin >= 1 ? Math.round(vsMin) : defaults.vsMinUnderDays,
+      vsPraiseMinDaysMet:
+        Number.isFinite(praiseMet) && praiseMet >= 1 && praiseMet <= DAYS.length
+          ? Math.round(praiseMet)
+          : defaults.vsPraiseMinDaysMet,
+      vsPraiseMinHighDays:
+        Number.isFinite(praiseHigh) && praiseHigh >= 0 && praiseHigh <= DAYS.length
+          ? Math.round(praiseHigh)
+          : defaults.vsPraiseMinHighDays,
       heroMaxM: Number.isFinite(heroMax) && heroMax >= 0 ? heroMax : defaults.heroMaxM,
     };
   }
@@ -936,22 +983,28 @@
     return FOLLOW_UP_STATUSES.find((s) => s.id === statusId)?.label || 'À contacter';
   }
 
+  function emptyFollowUpReasons(seed = {}) {
+    return {
+      vs: Boolean(seed.vs),
+      hero: Boolean(seed.hero),
+      praise: Boolean(seed.praise),
+      absent: Boolean(seed.absent),
+      manual: Boolean(seed.manual),
+    };
+  }
+
   function createEmptyFollowUpCase(options = {}) {
     const now = new Date().toISOString();
     return {
       status: normalizeFollowUpStatus(options.status),
-      reasons: {
-        vs: Boolean(options.reasons?.vs),
-        hero: Boolean(options.reasons?.hero),
-        manual: Boolean(options.reasons?.manual),
-      },
+      reasons: emptyFollowUpReasons(options.reasons),
       manual: Boolean(options.manual || options.reasons?.manual),
       contactedAt: options.contactedAt || null,
-      contactReasons: {
-        vs: Boolean(options.contactReasons?.vs),
-        hero: Boolean(options.contactReasons?.hero),
-        manual: Boolean(options.contactReasons?.manual),
-      },
+      contactReasons: emptyFollowUpReasons(options.contactReasons),
+      assigneePlayerId: options.assigneePlayerId || null,
+      assigneeLabel: options.assigneeLabel != null ? String(options.assigneeLabel) : '',
+      assignedAt: options.assignedAt || null,
+      assignedByLabel: options.assignedByLabel != null ? String(options.assignedByLabel) : '',
       notes: Array.isArray(options.notes) ? options.notes : [],
       createdAt: options.createdAt || now,
       updatedAt: options.updatedAt || now,
@@ -977,20 +1030,20 @@
     const notes = Array.isArray(raw.notes)
       ? raw.notes.map(normalizeFollowUpNote).filter(Boolean).slice(0, 200)
       : [];
+    const assigneePlayerId = raw.assigneePlayerId ? String(raw.assigneePlayerId) : null;
     return {
       status: normalizeFollowUpStatus(raw.status),
-      reasons: {
-        vs: Boolean(raw.reasons?.vs),
-        hero: Boolean(raw.reasons?.hero),
+      reasons: emptyFollowUpReasons({
+        ...raw.reasons,
         manual: Boolean(raw.reasons?.manual || raw.manual),
-      },
+      }),
       manual: Boolean(raw.manual || raw.reasons?.manual),
       contactedAt: raw.contactedAt || null,
-      contactReasons: {
-        vs: Boolean(raw.contactReasons?.vs),
-        hero: Boolean(raw.contactReasons?.hero),
-        manual: Boolean(raw.contactReasons?.manual),
-      },
+      contactReasons: emptyFollowUpReasons(raw.contactReasons),
+      assigneePlayerId,
+      assigneeLabel: raw.assigneeLabel != null ? String(raw.assigneeLabel) : '',
+      assignedAt: raw.assignedAt || null,
+      assignedByLabel: raw.assignedByLabel != null ? String(raw.assignedByLabel) : '',
       notes,
       createdAt: raw.createdAt || new Date().toISOString(),
       updatedAt: raw.updatedAt || raw.createdAt || new Date().toISOString(),
@@ -1031,13 +1084,28 @@
 
   function detectFollowUpReasons(player, state) {
     const settings = getFollowUpSettings(state);
-    const reasons = { vs: false, hero: false, manual: false };
-    if (!player || player.status !== 'Actif' || player.absent) return reasons;
+    const reasons = emptyFollowUpReasons();
+    if (!player || player.status !== 'Actif') return reasons;
+
+    const existing = state?.playerFollowUps?.[player.id];
+    if (existing?.manual || existing?.reasons?.manual) reasons.manual = true;
+
+    if (player.absent) {
+      reasons.absent = true;
+      return reasons;
+    }
 
     const week = getFollowUpReferenceWeek(state);
     if (week) {
       const underDays = countPlayerVsUnderDays(week, player.id);
-      if (underDays >= settings.vsMinUnderDays) reasons.vs = true;
+      const score = week.scores?.[player.id];
+      const hasScore = Boolean(score && !isScoreAbsent(score));
+      if (hasScore && underDays >= settings.vsMinUnderDays) reasons.vs = true;
+      if (hasScore && isPraiseWeekScore(score, state)) reasons.praise = true;
+    } else {
+      const last = getPlayerVsUnderStats(state, player.id).entries[0];
+      if (last?.under) reasons.vs = true;
+      if (last?.praise) reasons.praise = true;
     }
 
     const heroSort = getPlayerPowerSortValue(player, state);
@@ -1045,17 +1113,120 @@
       reasons.hero = true;
     }
 
-    const existing = state?.playerFollowUps?.[player.id];
-    if (existing?.manual || existing?.reasons?.manual) reasons.manual = true;
     return reasons;
   }
 
   function formatFollowUpReasonsLabel(reasons) {
     const parts = [];
-    if (reasons?.vs) parts.push('VS');
+    if (reasons?.vs) parts.push('VS sous seuil');
+    if (reasons?.praise) parts.push('À féliciter');
+    if (reasons?.absent) parts.push('Absent');
     if (reasons?.hero) parts.push('Puissance héros');
     if (reasons?.manual) parts.push('Aide / manuel');
     return parts.length ? parts.join(' · ') : '—';
+  }
+
+  /** Nombre de semaines VS mémorisées dans le compteur léger (plus récentes). */
+  const VS_UNDER_HISTORY_LIMIT = 8;
+
+  function createEmptyVsUnderStats() {
+    return { entries: [] };
+  }
+
+  function normalizeVsUnderEntry(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const underDays = Math.max(0, Math.round(Number(raw.underDays) || 0));
+    return {
+      weekId: raw.weekId ? String(raw.weekId) : '',
+      weekLabel: raw.weekLabel != null ? String(raw.weekLabel) : '',
+      startDate: raw.startDate || '',
+      underDays,
+      under: Boolean(raw.under),
+      praise: Boolean(raw.praise),
+      at: raw.at || new Date().toISOString(),
+    };
+  }
+
+  function normalizePlayerVsUnderStats(raw) {
+    if (!raw || typeof raw !== 'object') return {};
+    const out = {};
+    Object.keys(raw).forEach((playerId) => {
+      if (!playerId) return;
+      const row = raw[playerId];
+      const entries = Array.isArray(row?.entries)
+        ? row.entries.map(normalizeVsUnderEntry).filter(Boolean).slice(0, VS_UNDER_HISTORY_LIMIT)
+        : [];
+      out[playerId] = { entries };
+    });
+    return out;
+  }
+
+  function getPlayerVsUnderStats(state, playerId) {
+    if (!playerId) return createEmptyVsUnderStats();
+    const row = state?.playerVsUnderStats?.[playerId];
+    if (!row) return createEmptyVsUnderStats();
+    return {
+      entries: Array.isArray(row.entries)
+        ? row.entries.map(normalizeVsUnderEntry).filter(Boolean)
+        : [],
+    };
+  }
+
+  function summarizeVsUnderStats(stats) {
+    const entries = stats?.entries || [];
+    const tracked = entries.length;
+    const underCount = entries.filter((e) => e.under).length;
+    const praiseCount = entries.filter((e) => e.praise).length;
+    return { tracked, underCount, praiseCount, entries };
+  }
+
+  function formatVsUnderCounterLabel(stats) {
+    const { tracked, underCount } = summarizeVsUnderStats(stats);
+    if (!tracked) return 'VS sous seuil : —';
+    return `VS sous seuil : ${underCount} / ${tracked}`;
+  }
+
+  function formatVsPraiseCounterLabel(stats) {
+    const { tracked, praiseCount } = summarizeVsUnderStats(stats);
+    if (!tracked) return 'À féliciter : —';
+    return `À féliciter : ${praiseCount} / ${tracked}`;
+  }
+
+  /**
+   * Enregistre un snapshot léger à la clôture VS (avant effacement de la semaine).
+   * Absents / sans score : ignorés.
+   */
+  function recordVsUnderSnapshotsForWeek(state, week) {
+    if (!state || !week) return state;
+    const settings = getFollowUpSettings(state);
+    if (!state.playerVsUnderStats || typeof state.playerVsUnderStats !== 'object') {
+      state.playerVsUnderStats = {};
+    }
+    const now = new Date().toISOString();
+    const players = (state.players || []).filter((p) => p && p.status === 'Actif');
+    players.forEach((player) => {
+      if (player.absent) return;
+      const score = week.scores?.[player.id];
+      if (!score || isScoreAbsent(score)) return;
+      const underDays = countDaysUnderObjective(score);
+      const under = underDays >= settings.vsMinUnderDays;
+      const praise = isPraiseWeekScore(score, state);
+      const prev = getPlayerVsUnderStats(state, player.id);
+      const withoutDup = prev.entries.filter((e) => e.weekId !== week.id);
+      withoutDup.unshift({
+        weekId: week.id,
+        weekLabel: week.label || `Semaine ${week.number || ''}`.trim(),
+        startDate: week.startDate || '',
+        underDays,
+        under,
+        praise,
+        at: now,
+      });
+      state.playerVsUnderStats[player.id] = {
+        entries: withoutDup.slice(0, VS_UNDER_HISTORY_LIMIT),
+      };
+    });
+    return state;
   }
 
   function formatCoachingThresholdLabel(threshold) {
@@ -1269,11 +1440,17 @@
       // Si toutes sont archivées → currentWeekId reste null (aucune active)
     }
 
-    // Au plus une semaine active ; les autres sont clôturées / archivées.
-    // Autorise currentWeekId = null (aucune semaine active).
-    weeks.forEach((week) => {
-      week.archived = !currentWeekId || week.id !== currentWeekId;
-    });
+    // Politique WarOps : pas d’historique VS/dons — uniquement la semaine active éventuelle.
+    if (currentWeekId) {
+      weeks = weeks
+        .filter((week) => week.id === currentWeekId)
+        .map((week) => {
+          week.archived = false;
+          return week;
+        });
+    } else {
+      weeks = [];
+    }
 
     const rawUi = raw.ui && typeof raw.ui === 'object' ? raw.ui : {};
     const completedActionsByDate =
@@ -1289,12 +1466,24 @@
       : [];
     const coachingContacts = normalizeCoachingContacts(rawUi.coachingContacts);
 
-    const playerWeekNotes =
+    const weekIds = new Set(weeks.map((w) => w.id));
+    const rawNotes =
       raw.playerWeekNotes && typeof raw.playerWeekNotes === 'object' ? raw.playerWeekNotes : {};
+    const playerWeekNotes = {};
+    Object.keys(rawNotes).forEach((playerId) => {
+      const byWeek = rawNotes[playerId];
+      if (!byWeek || typeof byWeek !== 'object') return;
+      const kept = {};
+      Object.keys(byWeek).forEach((weekId) => {
+        if (weekIds.has(weekId)) kept[weekId] = byWeek[weekId];
+      });
+      if (Object.keys(kept).length) playerWeekNotes[playerId] = kept;
+    });
 
     const coachingThreshold = normalizeCoachingThreshold(raw.coachingThreshold);
     const followUpSettings = normalizeFollowUpSettings(raw.followUpSettings);
     const playerFollowUps = normalizePlayerFollowUps(raw.playerFollowUps);
+    const playerVsUnderStats = normalizePlayerVsUnderStats(raw.playerVsUnderStats);
     const alliance = normalizeAllianceSettings(raw.alliance);
 
     const normalized = {
@@ -1315,6 +1504,7 @@
       coachingThreshold,
       followUpSettings,
       playerFollowUps,
+      playerVsUnderStats,
       alliance,
       globalPowerAudit: normalizeGlobalPowerAudit(raw.globalPowerAudit),
     };
@@ -1403,6 +1593,8 @@
     recalculateWeekWithBareme,
     countDaysUnderObjective,
     countObjectivesMet,
+    countHighDays,
+    isPraiseWeekScore,
     createDefaultPowerTiers,
     normalizePowerTier,
     normalizePowerTiers,
@@ -1449,6 +1641,14 @@
     countPlayerVsUnderDays,
     detectFollowUpReasons,
     formatFollowUpReasonsLabel,
+    VS_UNDER_HISTORY_LIMIT,
+    normalizePlayerVsUnderStats,
+    getPlayerVsUnderStats,
+    summarizeVsUnderStats,
+    formatVsUnderCounterLabel,
+    formatVsPraiseCounterLabel,
+    recordVsUnderSnapshotsForWeek,
+    emptyFollowUpReasons,
     createDefaultAllianceSettings,
     normalizeAllianceSettings,
     getAllianceSettings,

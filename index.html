@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20260911-norecruit1" />
+  <link rel="stylesheet" href="css/styles.css?v=20260911-export1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -72,13 +72,12 @@
 
     <nav class="tabs" role="tablist" aria-label="Navigation principale">
       <button type="button" class="tab is-active" data-tab="command" role="tab" aria-selected="true">Poste de Commandement</button>
+      <button type="button" class="tab" data-tab="suivi" role="tab" aria-selected="false">Gestion des membres</button>
       <button type="button" class="tab" data-tab="vs" role="tab" aria-selected="false">VS</button>
+      <button type="button" class="tab" data-tab="tempete" role="tab" aria-selected="false">Tempête du Désert</button>
       <button type="button" class="tab" data-tab="train" role="tab" aria-selected="false">Train</button>
       <button type="button" class="tab" data-tab="ruche" role="tab" aria-selected="false">Ruche</button>
-      <button type="button" class="tab" data-tab="tempete" role="tab" aria-selected="false">Tempête du Désert</button>
       <button type="button" class="tab" data-tab="players" role="tab" aria-selected="false">Liste des membres</button>
-      <button type="button" class="tab" data-tab="suivi" role="tab" aria-selected="false">Gestion des membres</button>
-      <button type="button" class="tab" data-tab="archives" role="tab" aria-selected="false">Archives</button>
       <button type="button" class="tab hidden" data-tab="settings" role="tab" aria-selected="false" hidden aria-hidden="true">Paramètres</button>
     </nav>
 
@@ -165,7 +164,7 @@
         <div class="panel-header">
           <div>
             <h2>VS hebdomadaire</h2>
-            <p class="panel-subtitle">Semaines VS à fond · clôture indépendante · historique conservé</p>
+            <p class="panel-subtitle">Semaines VS à fond · clôture sans historique · scores de la semaine active uniquement</p>
           </div>
           <div class="panel-header-actions">
             <button type="button" id="btnCloseWeek" class="btn btn-ghost">Clôturer la semaine</button>
@@ -193,13 +192,12 @@
           </p>
 
           <div class="legend" id="vsLegend">
-            <span class="legend-item"><span class="swatch score-0"></span> Plus de 7,2 M · 0 pt</span>
-            <span class="legend-item"><span class="swatch score-5"></span> 3,7 à 7,2 M · 5 pts</span>
-            <span class="legend-item"><span class="swatch score-10"></span> 0 à 3,6 M · 10 pts</span>
-            <span class="legend-item"><span class="swatch score-don"></span> Dons non réalisés · 5 pts</span>
-            <span class="legend-item"><span class="dot color-green"></span> 0–20</span>
-            <span class="legend-item"><span class="dot color-orange"></span> 25–30</span>
-            <span class="legend-item"><span class="dot color-red"></span> ≥ 35</span>
+            <span class="legend-item"><span class="swatch score-0"></span> Score fait</span>
+            <span class="legend-item"><span class="swatch score-5"></span> Entre seuils</span>
+            <span class="legend-item"><span class="swatch score-10"></span> Sous seuil bas</span>
+            <span class="legend-item"><span class="dot color-green"></span> 0–1 j sous</span>
+            <span class="legend-item"><span class="dot color-orange"></span> 2–3 j sous</span>
+            <span class="legend-item"><span class="dot color-red"></span> ≥ 4 j sous</span>
           </div>
 
           <div class="table-wrap">
@@ -213,10 +211,8 @@
                   <th>Mer</th>
                   <th>Jeu</th>
                   <th>Ven</th>
-                  <th>Dons non réalisés</th>
                   <th>Jours sous objectif</th>
                   <th>Objectifs atteints</th>
-                  <th>Total</th>
                 </tr>
               </thead>
               <tbody id="vsTableBody"></tbody>
@@ -570,40 +566,13 @@
         </div>
       </section>
 
-      <!-- ARCHIVES -->
-      <section id="panel-archives" class="panel" role="tabpanel" hidden>
-        <div class="panel-header">
-          <div>
-            <h2>Archives</h2>
-            <p class="panel-subtitle">Tous les joueurs · couleur par semaine · clic pour le détail</p>
-          </div>
-        </div>
-
-        <div class="toolbar">
-          <input type="search" id="archiveSearch" class="input" placeholder="Rechercher dans les archives…" autocomplete="off" />
-          <select id="archiveStatusFilter" class="input">
-            <option value="">Tous les statuts</option>
-            <option value="Actif">Actifs</option>
-            <option value="Parti">Partis</option>
-          </select>
-        </div>
-
-        <div class="table-wrap">
-          <table class="archive-table" id="archiveTable">
-            <thead id="archiveTableHead"></thead>
-            <tbody id="archiveTableBody"></tbody>
-          </table>
-        </div>
-        <p id="archivesEmpty" class="empty-state hidden">Aucune donnée d’archive pour le moment.</p>
-      </section>
-
       <!-- GESTION DES MEMBRES (suivi joueurs) -->
       <section id="panel-suivi" class="panel" role="tabpanel" hidden>
         <div class="panel-header">
           <div>
             <h2>Gestion des membres</h2>
             <p class="panel-subtitle">
-              Suivi des joueurs sous objectif VS, puissance héros faible, ou aide manuelle
+              Suivi : VS sous seuil, à féliciter, absents, puissance héros, ou aide manuelle
             </p>
           </div>
           <p id="suiviCounter" class="panel-subtitle">0 joueur(s)</p>
@@ -626,7 +595,9 @@
           </select>
           <select id="suiviFilterReason" class="input" aria-label="Filtrer par motif">
             <option value="">Tous les motifs</option>
-            <option value="vs">VS</option>
+            <option value="vs">VS sous seuil</option>
+            <option value="praise">À féliciter</option>
+            <option value="absent">Absent</option>
             <option value="hero">Puissance héros</option>
             <option value="manual">Aide / manuel</option>
           </select>
@@ -636,6 +607,13 @@
               Afficher les suivis terminés
             </span>
           </label>
+          <select id="suiviFilterAssignee" class="input" aria-label="Filtrer par R4 assigné">
+            <option value="">Tous les R4</option>
+            <option value="unassigned">Non assigné</option>
+          </select>
+          <button type="button" id="btnSuiviCopyList" class="btn btn-ghost">
+            Copier pour Discord
+          </button>
         </div>
 
         <div id="suiviAddWrap" class="suivi-add-wrap">
@@ -695,28 +673,16 @@
               <div id="vsSettingsPaneAfond" class="block" style="padding:0;border:none;box-shadow:none;background:transparent">
                 <div class="vs-settings-grid">
                   <label class="field">
-                    <span>Objectif quotidien</span>
+                    <span>Objectif quotidien (Score fait)</span>
                     <input type="number" id="vsAfondDailyGoal" class="input" min="0" step="1" required />
+                  </label>
+                  <label class="field">
+                    <span>Seuil gros score — à féliciter (ex. 20 000 000)</span>
+                    <input type="number" id="vsAfondPraiseGoal" class="input" min="0" step="1" required />
                   </label>
                   <label class="field">
                     <span>Seuil bas (entre ce seuil et objectif − 1)</span>
                     <input type="number" id="vsAfondMidMin" class="input" min="0" step="1" required />
-                  </label>
-                  <label class="field">
-                    <span>Points (entre seuil bas et objectif)</span>
-                    <input type="number" id="vsAfondMidPoints" class="input" min="0" step="1" required />
-                  </label>
-                  <label class="field">
-                    <span>Points (moins que le seuil bas)</span>
-                    <input type="number" id="vsAfondLowPoints" class="input" min="0" step="1" required />
-                  </label>
-                  <label class="field">
-                    <span>Dons non faits</span>
-                    <input type="number" id="vsAfondDonation" class="input" min="0" step="1" required />
-                  </label>
-                  <label class="field">
-                    <span>Rouge à partir de</span>
-                    <input type="number" id="vsAfondRedFrom" class="input" min="1" step="1" required />
                   </label>
                 </div>
               </div>
@@ -768,9 +734,12 @@
               </label>
             </div>
             <div id="trainInitDays" class="train-init-days"></div>
-            <div class="settings-actions" style="margin-top:0.85rem">
+            <div class="settings-actions" style="margin-top:0.85rem;gap:0.5rem;flex-wrap:wrap">
               <button type="button" id="trainSaveHistoryWeek" class="btn btn-primary">
                 Enregistrer cette semaine dans l’historique
+              </button>
+              <button type="button" id="trainExportHistoryExcel" class="btn btn-ghost">
+                Exporter historique Excel
               </button>
             </div>
             <p id="settingsTrainHistoryNote" class="panel-subtitle" style="margin-top:0.75rem"></p>
@@ -906,8 +875,16 @@
             </header>
             <div class="vs-settings-grid">
               <label class="field">
-                <span>VS : jours sous objectif (min.)</span>
+                <span>VS : jours sous objectif (min.) — à suivre</span>
                 <input type="number" id="followUpVsMinDays" class="input" min="1" step="1" required />
+              </label>
+              <label class="field">
+                <span>À féliciter : jours « Score fait » (min.)</span>
+                <input type="number" id="followUpVsPraiseMinDaysMet" class="input" min="1" max="5" step="1" required />
+              </label>
+              <label class="field">
+                <span>À féliciter : jours gros score (min.)</span>
+                <input type="number" id="followUpVsPraiseMinHighDays" class="input" min="0" max="5" step="1" required />
               </label>
               <label class="field">
                 <span>Héros : puissance max (M)</span>
@@ -915,7 +892,7 @@
               </label>
             </div>
             <p id="followUpSettingsPreview" class="panel-subtitle" style="margin-top:0.65rem">
-              VS : ≥ 2 jour(s) sous objectif · Héros : ≤ 30 M
+              VS suivi : ≥ 2 j · À féliciter : ≥ 5 j score fait + ≥ 1 j gros score · Héros : ≤ 30 M · Absents : auto
             </p>
             <div class="settings-actions" style="margin-top:0.85rem">
               <button type="button" id="btnSaveFollowUpSettings" class="btn btn-primary">
@@ -1319,23 +1296,22 @@
   <script src="js/supabase-client.js?v=20260804-4"></script>
   <script src="js/profiles.js?v=20260910-vssettings1"></script>
   <script src="js/supabase-sync.js?v=20260910-localguard1"></script>
-  <script src="js/models.js?v=20260911-nocoach1"></script>
+  <script src="js/models.js?v=20260911-export1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
-  <script src="js/player-identity.js?v=20260802-4"></script>
+  <script src="js/player-identity.js?v=20260911-vscounter1"></script>
   <script src="js/storage.js?v=20260910-vsclose1"></script>
   <script src="js/ui-helpers.js?v=20260802-4"></script>
   <script src="js/insights.js?v=20260910-vsclose1"></script>
   <script src="js/player-stats.js?v=20260802-4"></script>
-  <script src="js/players.js?v=20260911-nocoach1"></script>
-  <script src="js/suivi.js?v=20260911-suivi1"></script>
+  <script src="js/players.js?v=20260911-nodon1"></script>
+  <script src="js/suivi.js?v=20260911-export1"></script>
   <script src="js/command.js?v=20260806-cmd1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
-  <script src="js/vs.js?v=20260910-vssettings1"></script>
-  <script src="js/archives.js?v=20260802-4"></script>
-  <script src="js/train.js?v=20260910-vsclose1"></script>
+  <script src="js/vs.js?v=20260911-nodon1"></script>
+  <script src="js/train.js?v=20260911-export1"></script>
   <script src="js/ruche.js?v=20260809-scoped1"></script>
   <script src="js/tempete.js?v=20260809-scoped1"></script>
   <script src="js/backups.js?v=20260812-gp-harden1"></script>
-  <script src="js/app.js?v=20260911-norecruit1"></script>
+  <script src="js/app.js?v=20260911-nohist1"></script>
 </body>
 </html>
