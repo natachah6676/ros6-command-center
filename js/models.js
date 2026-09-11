@@ -942,6 +942,11 @@
       heroMaxM: 30,
       /** R4/R5 référents par motif (visibilité + suggestion d’assignation). */
       specialists: emptyFollowUpSpecialists(),
+      /**
+       * Après « Remettre les compteurs VS à zéro » : ignore VS / félicitations
+       * pour cette semaine de référence (jusqu’à une nouvelle semaine).
+       */
+      vsFollowUpMutedWeekId: null,
     };
   }
 
@@ -977,6 +982,10 @@
     const praiseMet = Number(raw?.vsPraiseMinDaysMet);
     const praiseHigh = Number(raw?.vsPraiseMinHighDays);
     const heroMax = Number(raw?.heroMaxM);
+    const mutedWeek =
+      raw?.vsFollowUpMutedWeekId != null && String(raw.vsFollowUpMutedWeekId).trim()
+        ? String(raw.vsFollowUpMutedWeekId).trim()
+        : null;
     return {
       vsMinUnderDays: Number.isFinite(vsMin) && vsMin >= 1 ? Math.round(vsMin) : defaults.vsMinUnderDays,
       vsPraiseMinDaysMet:
@@ -989,6 +998,7 @@
           : defaults.vsPraiseMinHighDays,
       heroMaxM: Number.isFinite(heroMax) && heroMax >= 0 ? heroMax : defaults.heroMaxM,
       specialists: normalizeFollowUpSpecialists(raw?.specialists),
+      vsFollowUpMutedWeekId: mutedWeek,
     };
   }
 
@@ -1156,17 +1166,20 @@
     if (existing?.manual || existing?.reasons?.manual) reasons.manual = true;
 
     const week = getFollowUpReferenceWeek(state);
-    if (week) {
+    const mutedForWeek =
+      week && settings.vsFollowUpMutedWeekId && week.id === settings.vsFollowUpMutedWeekId;
+    if (week && !mutedForWeek) {
       const underDays = countPlayerVsUnderDays(week, player.id);
       const score = week.scores?.[player.id];
       const hasScore = Boolean(score && !isScoreAbsent(score));
       if (hasScore && underDays >= settings.vsMinUnderDays) reasons.vs = true;
       if (hasScore && isPraiseWeekScore(score, state)) reasons.praise = true;
-    } else {
+    } else if (!week) {
       const last = getPlayerVsUnderStats(state, player.id).entries[0];
       if (last?.under) reasons.vs = true;
       if (last?.praise) reasons.praise = true;
     }
+    // Semaine muette (après reset compteurs) : pas de VS / félicitations auto.
 
     const heroSort = getPlayerPowerSortValue(player, state);
     if (heroSort >= 0 && heroSort <= settings.heroMaxM) {

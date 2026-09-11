@@ -123,6 +123,19 @@ assert(
   'absent hors suivi (aucun motif)'
 );
 
+assert(M.normalizeFollowUpSettings({}).vsFollowUpMutedWeekId === null, 'mute VS défaut null');
+assert(
+  M.normalizeFollowUpSettings({ vsFollowUpMutedWeekId: 'w1' }).vsFollowUpMutedWeekId === 'w1',
+  'mute VS conserve weekId'
+);
+
+const mutedState = {
+  ...state,
+  followUpSettings: { ...state.followUpSettings, vsFollowUpMutedWeekId: state.currentWeekId },
+};
+const rMuted = M.detectFollowUpReasons(state.players[0], mutedState);
+assert(!rMuted.vs && !rMuted.praise, 'semaine muette : pas de VS / félicitations auto');
+
 assert(M.normalizeFollowUpSettings({}).vsPraiseMinDaysMet === 5, 'défaut félicitations = 5 j score fait');
 assert(M.normalizeFollowUpSettings({}).vsPraiseMinHighDays === 1, 'défaut félicitations = 1 j gros score');
 assert(M.createDefaultVsSettings().afond.praiseGoal === 20000000, 'défaut seuil gros score = 20 M');

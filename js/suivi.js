@@ -892,12 +892,15 @@
       specialists[id] = el?.value || null;
     });
     ROSStorage.update((s) => {
+      const prev = ROSModels.getFollowUpSettings(s);
       s.followUpSettings = ROSModels.normalizeFollowUpSettings({
         vsMinUnderDays: vsMin,
         vsPraiseMinDaysMet: praiseMet,
         vsPraiseMinHighDays: praiseHigh,
         heroMaxM: heroMax,
         specialists,
+        // Ne pas perdre le mute VS posé par le reset compteurs.
+        vsFollowUpMutedWeekId: prev.vsFollowUpMutedWeekId,
       });
       return s;
     });
@@ -914,30 +917,30 @@
     const ok = await AppUI.confirm({
       title: 'Remettre les compteurs VS à zéro',
       message:
-        'Effacer les compteurs « VS sous seuil / À féliciter » et retirer des suivis ouverts les motifs VS / félicitations qui ne sont plus justifiés par la semaine actuelle ? Tempête, Train et membres ne sont pas touchés.',
+        'Effacer les compteurs « VS sous seuil / À féliciter » et retirer ces motifs des suivis ouverts pour la semaine en cours (ils ne réapparaissent pas tant que tu n’ouvres pas une nouvelle semaine VS). Tempête, Train, héros et manuels ne sont pas touchés.',
       confirmLabel: 'Remettre à zéro',
     });
     if (!ok) return;
     ROSStorage.update((s) => {
       s.playerVsUnderStats = {};
-      // Nettoie aussi les fiches de suivi encore marquées VS / féliciter à tort.
+      const refWeek = ROSModels.getFollowUpReferenceWeek(s);
+      const prev = ROSModels.getFollowUpSettings(s);
+      s.followUpSettings = ROSModels.normalizeFollowUpSettings({
+        ...prev,
+        vsFollowUpMutedWeekId: refWeek?.id || null,
+      });
+      // Retire VS / félicitations des fiches ouvertes (la semaine muette empêche la redétection).
       Object.keys(s.playerFollowUps || {}).forEach((playerId) => {
         const row = s.playerFollowUps[playerId];
         if (!row || row.status === 'done') return;
-        const player = (s.players || []).find((p) => p.id === playerId);
-        const detected = ROSModels.detectFollowUpReasons(player, {
-          ...s,
-          playerVsUnderStats: {},
-        });
         row.reasons = ROSModels.emptyFollowUpReasons({
-          vs: Boolean(detected.vs),
-          hero: Boolean(detected.hero || row.reasons?.hero),
-          praise: Boolean(detected.praise),
+          vs: false,
+          praise: false,
+          hero: Boolean(row.reasons?.hero),
           manual: Boolean(row.manual || row.reasons?.manual),
         });
         row.manual = Boolean(row.manual || row.reasons.manual);
-        const stillRelevant =
-          row.reasons.vs || row.reasons.hero || row.reasons.praise || row.manual;
+        const stillRelevant = row.reasons.hero || row.manual;
         if (!stillRelevant) {
           row.status = 'done';
           row.closedAt = new Date().toISOString();
@@ -947,7 +950,7 @@
       return s;
     });
     render();
-    AppUI.toast('Compteurs et suivis VS nettoyés.');
+    AppUI.toast('Compteurs et suivis VS nettoyés pour la semaine en cours.');
   }
 
   function init() {
