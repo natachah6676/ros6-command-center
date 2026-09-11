@@ -34,12 +34,29 @@
   }
 
   function getAssignableOfficers(state) {
-    return (state.players || [])
-      .filter((p) => p && p.status === 'Actif' && (p.role === 'R4' || p.role === 'R5'))
-      .sort((a, b) => {
-        if (a.role !== b.role) return a.role === 'R5' ? -1 : 1;
-        return a.pseudo.localeCompare(b.pseudo, 'fr', { sensitivity: 'base' });
+    const byId = new Map();
+    (state.players || []).forEach((p) => {
+      if (!p || p.status !== 'Actif') return;
+      if (p.role === 'R4' || p.role === 'R5') byId.set(p.id, p);
+    });
+    // Comptes Accès (Paramètres) : un R4 lié à un joueur « Membre » doit aussi apparaître.
+    if (global.ROSProfiles && typeof ROSProfiles.listProfiles === 'function') {
+      ROSProfiles.listProfiles().forEach((prof) => {
+        if (!prof || prof.status !== 'Actif') return;
+        if (prof.role !== 'R4' && prof.role !== 'R5') return;
+        if (!prof.playerId) return;
+        const player = (state.players || []).find((p) => p && p.id === prof.playerId);
+        if (!player || player.status !== 'Actif') return;
+        const prev = byId.get(player.id);
+        const role =
+          prev?.role === 'R5' || player.role === 'R5' || prof.role === 'R5' ? 'R5' : 'R4';
+        byId.set(player.id, { ...player, role });
       });
+    }
+    return Array.from(byId.values()).sort((a, b) => {
+      if (a.role !== b.role) return a.role === 'R5' ? -1 : 1;
+      return a.pseudo.localeCompare(b.pseudo, 'fr', { sensitivity: 'base' });
+    });
   }
 
   function fillAssigneeFilter(state) {
