@@ -318,10 +318,17 @@
   function renderList() {
     const probe = ROSStorage.getState();
     const draftFollowUps = JSON.parse(JSON.stringify(probe.playerFollowUps || {}));
-    if (syncAutoReasons({ ...probe, playerFollowUps: draftFollowUps })) {
+    const muted = Boolean(ROSModels.getFollowUpSettings(probe).vsFollowUpMutedWeekId);
+    const hasStaleVsStats =
+      muted && probe.playerVsUnderStats && Object.keys(probe.playerVsUnderStats).length > 0;
+    if (syncAutoReasons({ ...probe, playerFollowUps: draftFollowUps }) || hasStaleVsStats) {
       ROSStorage.update(
         (s) => {
           syncAutoReasons(s);
+          // Tant que le mute reset est actif, aucun historique VS ne doit réapparaître.
+          if (ROSModels.getFollowUpSettings(s).vsFollowUpMutedWeekId) {
+            s.playerVsUnderStats = {};
+          }
           return s;
         },
         { silent: true }
@@ -356,8 +363,15 @@
         .map(({ player, follow, reasons }) => {
           const selected = player.id === selectedPlayerId ? ' is-selected' : '';
           const vsStats = ROSModels.getPlayerVsUnderStats(fresh, player.id);
-          const vsCounter = ROSModels.formatVsUnderCounterLabel(vsStats);
-          const praiseCounter = ROSModels.formatVsPraiseCounterLabel(vsStats);
+          const vsSummary = ROSModels.summarizeVsUnderStats(vsStats);
+          const showVsCounter = reasons.vs || vsSummary.underCount > 0;
+          const showPraiseCounter = reasons.praise || vsSummary.praiseCount > 0;
+          const vsCounter = showVsCounter
+            ? ROSModels.formatVsUnderCounterLabel(vsStats)
+            : '';
+          const praiseCounter = showPraiseCounter
+            ? ROSModels.formatVsPraiseCounterLabel(vsStats)
+            : '';
           const assignee = assigneeLabelFor(follow);
           return `
             <button type="button" class="suivi-row${selected}" data-suivi-open="${escapeHtml(player.id)}">
@@ -366,8 +380,16 @@
                 <span class="suivi-row-reasons">${escapeHtml(
                   ROSModels.formatFollowUpReasonsLabel(reasons)
                 )}</span>
-                <span class="suivi-row-vs-counter">${escapeHtml(vsCounter)}</span>
-                <span class="suivi-row-vs-counter">${escapeHtml(praiseCounter)}</span>
+                ${
+                  vsCounter
+                    ? `<span class="suivi-row-vs-counter">${escapeHtml(vsCounter)}</span>`
+                    : ''
+                }
+                ${
+                  praiseCounter
+                    ? `<span class="suivi-row-vs-counter">${escapeHtml(praiseCounter)}</span>`
+                    : ''
+                }
                 ${
                   assignee
                     ? `<span class="suivi-row-assignee">Suivi par ${escapeHtml(assignee)}</span>`
@@ -416,8 +438,11 @@
     const heroLabel = ROSModels.getPlayerPowerLabel(player, state);
     const vsStats = ROSModels.getPlayerVsUnderStats(state, player.id);
     const vsSummary = ROSModels.summarizeVsUnderStats(vsStats);
-    const vsHistoryHtml = vsSummary.entries.length
+    const hasVsHistory = vsSummary.underCount > 0 || vsSummary.praiseCount > 0;
+    const showVsBlock = Boolean(week) || displayReasons.vs || displayReasons.praise || hasVsHistory;
+    const vsHistoryHtml = hasVsHistory
       ? `<ul class="suivi-vs-history">${vsSummary.entries
+          .filter((e) => e.under || e.praise)
           .map(
             (e) =>
               `<li class="${
@@ -429,7 +454,7 @@
               }</li>`
           )
           .join('')}</ul>`
-      : '<p class="panel-subtitle">Aucune semaine clôturée mémorisée pour le moment.</p>';
+      : '';
 
     const statusOptions = ROSModels.FOLLOW_UP_STATUSES.map(
       (s) =>
@@ -478,22 +503,30 @@
         </div>
       </div>
       <div class="suivi-detail-meta">
-        <p><strong>VS (semaine active) :</strong> ${
-          player.absent
-            ? 'absent — hors scores'
-            : week
-              ? `${underDays} jour(s) sous objectif (${escapeHtml(week.label || '')})`
-              : 'aucune'
-        } · seuil suivi ≥ ${settings.vsMinUnderDays} j · félicitations ≥ ${
-          settings.vsPraiseMinDaysMet
-        } j score fait + ≥ ${settings.vsPraiseMinHighDays} j gros score</p>
-        <p><strong>${escapeHtml(ROSModels.formatVsUnderCounterLabel(vsStats))}</strong>
+        ${
+          showVsBlock
+            ? `<p><strong>VS (semaine active) :</strong> ${
+                player.absent
+                  ? 'absent — hors scores'
+                  : week
+                    ? `${underDays} jour(s) sous objectif (${escapeHtml(week.label || '')})`
+                    : 'aucune'
+              } · seuil suivi ≥ ${settings.vsMinUnderDays} j · félicitations ≥ ${
+                settings.vsPraiseMinDaysMet
+              } j score fait + ≥ ${settings.vsPraiseMinHighDays} j gros score</p>
+        ${
+          hasVsHistory
+            ? `<p><strong>${escapeHtml(ROSModels.formatVsUnderCounterLabel(vsStats))}</strong>
           · <strong>${escapeHtml(ROSModels.formatVsPraiseCounterLabel(vsStats))}</strong>
           <span class="panel-subtitle"> · ${
             ROSModels.VS_UNDER_HISTORY_LIMIT
           } dernières semaines clôturées</span>
         </p>
-        ${vsHistoryHtml}
+        ${vsHistoryHtml}`
+            : '<p class="panel-subtitle">Aucun historique VS sous seuil / à féliciter.</p>'
+        }`
+            : ''
+        }
         <p><strong>Puissance héros :</strong> ${escapeHtml(heroLabel)} · seuil ≤ ${
           settings.heroMaxM
         } M</p>

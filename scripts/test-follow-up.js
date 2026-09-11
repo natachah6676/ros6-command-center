@@ -136,6 +136,51 @@ const mutedState = {
 const rMuted = M.detectFollowUpReasons(state.players[0], mutedState);
 assert(!rMuted.vs && !rMuted.praise, 'semaine muette : pas de VS / félicitations auto');
 
+const mutedNoWeek = {
+  ...state,
+  currentWeekId: null,
+  weeks: [],
+  followUpSettings: { ...state.followUpSettings, vsFollowUpMutedWeekId: 'week_old' },
+  playerVsUnderStats: {
+    p_vs: { entries: [{ weekId: 'week_old', under: true, praise: false, underDays: 3 }] },
+  },
+};
+assert(
+  !M.detectFollowUpReasons(state.players[0], mutedNoWeek).vs,
+  'mute sans semaine : ignore historique VS'
+);
+
+let snapState = {
+  players: state.players,
+  followUpSettings: { vsMinUnderDays: 2 },
+  playerVsUnderStats: {},
+};
+M.recordVsUnderSnapshotsForWeek(snapState, {
+  id: 'w_ok',
+  label: 'OK',
+  startDate: '2026-09-01',
+  scores: { p_ok: makeScore(0) },
+});
+assert(
+  !snapState.playerVsUnderStats.p_ok,
+  'clôture neutre : pas d’entrée historique'
+);
+snapState = {
+  players: state.players,
+  followUpSettings: { vsMinUnderDays: 2, vsFollowUpMutedWeekId: 'w_mute' },
+  playerVsUnderStats: {},
+};
+M.recordVsUnderSnapshotsForWeek(snapState, {
+  id: 'w_mute',
+  label: 'Mute',
+  startDate: '2026-09-01',
+  scores: { p_vs: makeScore(3) },
+});
+assert(
+  !snapState.playerVsUnderStats.p_vs,
+  'clôture semaine muette : pas d’historique'
+);
+
 assert(M.normalizeFollowUpSettings({}).vsPraiseMinDaysMet === 5, 'défaut félicitations = 5 j score fait');
 assert(M.normalizeFollowUpSettings({}).vsPraiseMinHighDays === 1, 'défaut félicitations = 1 j gros score');
 assert(M.createDefaultVsSettings().afond.praiseGoal === 20000000, 'défaut seuil gros score = 20 M');
