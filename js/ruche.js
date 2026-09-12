@@ -281,17 +281,28 @@
   /**
    * Garantit que la case centrale en état reflète le sélecteur Maréchal.
    * Utile si l’UI affiche une sélection non encore persistée.
+   * Si toujours vide : assigne le premier R5 actif (Maréchal « par défaut »).
    */
+  function resolveDefaultMarshalId() {
+    const active = getActivePlayers();
+    const r5 = active.find((p) => p.role === 'R5');
+    if (r5) return r5.id;
+    const accessR5 = active.find((p) => accessOfficerRole(p.id) === 'R5');
+    return accessR5?.id || null;
+  }
+
   function syncMarshalFromDomIfNeeded() {
     const fromState = getMarshalId();
     if (fromState) return fromState;
     const fromDom = readMarshalIdFromDom();
-    if (!fromDom) return null;
+    const nextId = fromDom || resolveDefaultMarshalId();
+    if (!nextId) return null;
     const s = getState();
     s.grid = cloneGrid(s.grid);
-    s.grid[MARSHAL_ROW][MARSHAL_COL] = fromDom;
+    removePlayerFromAll(s, nextId, { type: 'grid', row: MARSHAL_ROW, col: MARSHAL_COL });
+    s.grid[MARSHAL_ROW][MARSHAL_COL] = nextId;
     persist();
-    return fromDom;
+    return nextId;
   }
 
   function getBottomId(trainState = getState()) {
@@ -1285,6 +1296,8 @@
   }
 
   function analyzeGrid() {
+    // Avant analyse : synchronise / assigne le Maréchal par défaut (R5).
+    syncMarshalFromDomIfNeeded();
     const s = getState();
     const grid = s.grid;
     const bottomId = getBottomId(s);
@@ -1357,7 +1370,11 @@
     }
 
     if (!marshalId) {
-      issues.push('Maréchal non renseigné');
+      // Pas d’erreur « non renseigné » : la case centrale est toujours le Maréchal.
+      // S’il n’y a aucun R5 actif pour le remplir, on signale seulement l’effectif.
+      if (!active.some((p) => p.role === 'R5' || accessOfficerRole(p.id) === 'R5')) {
+        issues.push('Aucun R5 actif pour occuper la case Maréchal');
+      }
     } else if (!activeIds.has(marshalId)) {
       issues.push('Le Maréchal doit être un joueur actif');
     }
@@ -1671,6 +1688,7 @@
   function renderGrid() {
     if (!els.grid || !els.board) return;
     const grid = getState().grid;
+    const colors = getColors();
     const cells = [];
     for (let r = 0; r < GRID_SIZE; r += 1) {
       for (let c = 0; c < GRID_SIZE; c += 1) {
@@ -1678,7 +1696,9 @@
         const marshal = isMarshalCell(r, c);
         const bg = colorForGridCell(r, c, value);
         const fg = textColorForBg(bg === 'transparent' ? '#1e232b' : bg);
-        const filled = Boolean(value) || marshal;
+        const filled = Boolean(value);
+        const cellBg = value ? bg : marshal ? colors.marshal : 'var(--bg-elevated)';
+        const cellBorder = value || marshal ? (value ? bg : colors.marshal) : 'var(--border-soft)';
         cells.push(`
           <div
             class="ruche-cell ${filled ? 'is-filled' : ''} ${marshal ? 'ruche-cell-marshal' : ''}"
@@ -1688,7 +1708,7 @@
             data-col="${c}"
             data-marshal="${marshal ? '1' : '0'}"
             data-value="${escapeHtml(value || '')}"
-            style="background:${marshal || value ? bg : 'var(--bg-elevated)'};color:${fg};border-color:${marshal || value ? bg : 'var(--border-soft)'}"
+            style="background:${cellBg};color:${fg};border-color:${cellBorder}"
           >
             ${
               marshal
@@ -1704,7 +1724,7 @@
             >
               ${buildOptions(value, { type: 'grid', row: r, col: c }, {
                 allowFree: !marshal,
-                emptyLabel: marshal ? '— Maréchal —' : '—',
+                emptyLabel: marshal ? 'Choisir le Maréchal…' : '—',
               })}
             </select>
             <span class="ruche-cell-label" aria-hidden="true">${escapeHtml(labelForValue(value))}</span>
