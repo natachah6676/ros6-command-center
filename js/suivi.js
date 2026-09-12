@@ -1045,6 +1045,168 @@
     AppUI.toast('Compteurs et suivis VS nettoyés pour la semaine en cours.');
   }
 
+  function contactOfficerLabel(follow) {
+    if (follow?.assigneeLabel) return follow.assigneeLabel;
+    if (follow?.assigneePlayerId) {
+      const state = ROSStorage.getState();
+      const officer = (state.players || []).find((p) => p.id === follow.assigneePlayerId);
+      if (officer?.pseudo) return officer.pseudo;
+    }
+    const notes = Array.isArray(follow?.notes) ? follow.notes : [];
+    for (let i = notes.length - 1; i >= 0; i -= 1) {
+      if (notes[i]?.authorLabel) return notes[i].authorLabel;
+    }
+    return '—';
+  }
+
+  function formatNotesPreview(follow, maxLen = 160) {
+    const notes = Array.isArray(follow?.notes) ? follow.notes.slice() : [];
+    if (!notes.length) return '—';
+    notes.sort((a, b) => (a.at < b.at ? 1 : -1));
+    const text = notes
+      .map((n) => String(n.text || '').trim())
+      .filter(Boolean)
+      .join(' · ');
+    if (!text) return '—';
+    if (text.length <= maxLen) return text;
+    return `${text.slice(0, maxLen - 1)}…`;
+  }
+
+  function getDoneFollowUpRows(state) {
+    const q = (document.getElementById('historiqueSuiviSearch')?.value || '')
+      .trim()
+      .toLowerCase();
+    return (state.players || [])
+      .filter((p) => p && p.status === 'Actif')
+      .map((player) => {
+        const follow = state.playerFollowUps?.[player.id];
+        if (!follow || follow.status !== 'done') return null;
+        // Motifs au moment du suivi (pas la redétection live actuelle).
+        const reasons = ROSModels.emptyFollowUpReasons({
+          vs: Boolean(follow.reasons?.vs || follow.contactReasons?.vs),
+          hero: Boolean(follow.reasons?.hero || follow.contactReasons?.hero),
+          praise: Boolean(follow.reasons?.praise || follow.contactReasons?.praise),
+          discret: Boolean(follow.reasons?.discret || follow.contactReasons?.discret),
+          manual: Boolean(
+            follow.manual || follow.reasons?.manual || follow.contactReasons?.manual
+          ),
+        });
+        return { player, follow, reasons };
+      })
+      .filter(Boolean)
+      .filter((row) =>
+        ROSModels.isFollowUpVisibleToViewer(row, state, viewerPlayerId(), viewerIsR5())
+      )
+      .filter((row) => {
+        if (!q) return true;
+        return String(row.player.pseudo || '')
+          .toLowerCase()
+          .includes(q);
+      })
+      .sort((a, b) => {
+        const ca = a.follow.closedAt || a.follow.updatedAt || '';
+        const cb = b.follow.closedAt || b.follow.updatedAt || '';
+        if (ca !== cb) return ca < cb ? 1 : -1;
+        return a.player.pseudo.localeCompare(b.player.pseudo, 'fr', { sensitivity: 'base' });
+      });
+  }
+
+  function reactivateFollowUp(playerId) {
+    if (!canEditFollowUp()) {
+      AppUI.toast('Seul un R4 ou R5 peut réactiver un suivi.');
+      return;
+    }
+    ROSStorage.update((s) => {
+      const row = s.playerFollowUps?.[playerId];
+      if (!row || row.status !== 'done') return s;
+      const player = (s.players || []).find((p) => p.id === playerId);
+      row.status = 'to_contact';
+      row.closedAt = null;
+      row.updatedAt = new Date().toISOString();
+      // Restaure Discret si la fiche / le contact l’avait.
+      if (row.reasons?.discret || row.contactReasons?.discret) {
+        if (player) player.discret = true;
+        row.reasons = ROSModels.emptyFollowUpReasons({
+          ...row.reasons,
+          discret: true,
+        });
+      }
+      const still =
+        row.reasons?.vs ||
+        row.reasons?.hero ||
+        row.reasons?.praise ||
+        row.reasons?.discret ||
+        row.manual ||
+        row.reasons?.manual;
+      if (!still) {
+        row.manual = true;
+        row.reasons = ROSModels.emptyFollowUpReasons({
+          ...row.reasons,
+          manual: true,
+        });
+      }
+      applySpecialistIfNeeded(row, row.reasons, s);
+      return s;
+    });
+    selectedPlayerId = playerId;
+    showDone = false;
+    if (els.showDone) els.showDone.checked = false;
+    AppUI.toast('Suivi réactivé.');
+    renderHistory();
+    if (global.AppUI && typeof AppUI.switchTab === 'function') {
+      AppUI.switchTab('suivi');
+    } else {
+      render();
+    }
+  }
+
+  function renderHistory() {
+    const body = document.getElementById('historiqueSuiviBody');
+    const empty = document.getElementById('historiqueSuiviEmpty');
+    const counter = document.getElementById('historiqueSuiviCounter');
+    if (!body) return;
+    const state = ROSStorage.getState();
+    const rows = getDoneFollowUpRows(state);
+    if (counter) counter.textContent = `${rows.length} fiche(s) terminée(s)`;
+    if (empty) empty.classList.toggle('hidden', rows.length > 0);
+    const editable = canEditFollowUp();
+    body.innerHTML = rows
+      .map(({ player, follow, reasons }) => {
+        const closed =
+          ROSModels.formatCoachingDateTime(follow.closedAt) ||
+          ROSModels.formatCoachingDateTime(follow.updatedAt) ||
+          '—';
+        const r4 = contactOfficerLabel(follow);
+        const notes = formatNotesPreview(follow);
+        const motifs = ROSModels.formatFollowUpReasonsLabel(reasons);
+        return `
+          <tr>
+            <td><strong>${escapeHtml(player.pseudo)}</strong></td>
+            <td>${escapeHtml(motifs)}</td>
+            <td>${escapeHtml(r4)}</td>
+            <td>${escapeHtml(closed)}</td>
+            <td class="historique-suivi-notes">${escapeHtml(notes)}</td>
+            <td class="table-actions">
+              ${
+                editable
+                  ? `<button type="button" class="btn btn-primary btn-sm" data-historique-reactivate="${escapeHtml(
+                      player.id
+                    )}">Réactiver</button>`
+                  : '—'
+              }
+            </td>
+          </tr>
+        `;
+      })
+      .join('');
+  }
+
+  function onHistoryClick(event) {
+    const btn = event.target.closest('[data-historique-reactivate]');
+    if (!btn) return;
+    reactivateFollowUp(btn.dataset.historiqueReactivate);
+  }
+
   function init() {
     cacheDom();
     els.search?.addEventListener('input', () => render());
@@ -1063,11 +1225,14 @@
     document.getElementById('btnResetVsUnderCounters')?.addEventListener('click', () => {
       void resetVsUnderCounters();
     });
+    document.getElementById('historiqueSuiviSearch')?.addEventListener('input', () => renderHistory());
+    document.getElementById('historiqueSuiviBody')?.addEventListener('click', onHistoryClick);
   }
 
   global.SuiviModule = {
     init,
     render,
+    renderHistory,
     renderSettings,
     canEditFollowUp,
   };
