@@ -15,9 +15,11 @@
   const TOTAL_CASES = GRID_SLOTS + 1; // 101
   const PLAYER_SLOTS = TOTAL_CASES - 1; // 100 (hors Maréchal)
   const FREE = 'FREE';
-  /** Case Maréchal unique au centre de la grille (0-index) */
+  /** Case Maréchal unique au centre de la grille (0-index) — événement fixe, pas un joueur. */
   const MARSHAL_ROW = 4;
   const MARSHAL_COL = 4;
+  /** Valeur sentinelle de la case centrale (jamais un playerId). */
+  const MARSHAL = 'MARSHAL';
 
   /** Couleurs de rôle uniquement (Maréchal / R5·R4 / FREE). */
   const DEFAULT_COLORS = {
@@ -60,13 +62,20 @@
     return row === MARSHAL_ROW && col === MARSHAL_COL;
   }
 
-  function createEmptyGrid() {
-    return Array.from({ length: GRID_SIZE }, () =>
-      Array.from({ length: GRID_SIZE }, () => null)
-    );
+  function isMarshalLandmark(value) {
+    return value === MARSHAL || value === 'MARSHAL' || value === 'marshal';
   }
 
-  function normalizeCellValue(value, { allowFree = true } = {}) {
+  function createEmptyGrid() {
+    const grid = Array.from({ length: GRID_SIZE }, () =>
+      Array.from({ length: GRID_SIZE }, () => null)
+    );
+    grid[MARSHAL_ROW][MARSHAL_COL] = MARSHAL;
+    return grid;
+  }
+
+  function normalizeCellValue(value, { allowFree = true, allowMarshal = false } = {}) {
+    if (isMarshalLandmark(value)) return allowMarshal ? MARSHAL : null;
     if (value === FREE || value === 'FREE') return allowFree ? FREE : null;
     if (typeof value === 'string' && value) return value;
     return null;
@@ -74,13 +83,51 @@
 
   function normalizeGrid(raw) {
     const grid = createEmptyGrid();
+    let displacedMarshalPlayer = null;
     if (!Array.isArray(raw)) return grid;
     for (let r = 0; r < GRID_SIZE; r += 1) {
       const row = Array.isArray(raw[r]) ? raw[r] : [];
       for (let c = 0; c < GRID_SIZE; c += 1) {
-        grid[r][c] = normalizeCellValue(row[c], { allowFree: !isMarshalCell(r, c) });
+        if (isMarshalCell(r, c)) {
+          const prev = normalizeCellValue(row[c], { allowFree: false, allowMarshal: true });
+          if (prev && !isMarshalLandmark(prev) && prev !== FREE) {
+            displacedMarshalPlayer = prev;
+          }
+          grid[r][c] = MARSHAL;
+          continue;
+        }
+        grid[r][c] = normalizeCellValue(row[c], { allowFree: true });
       }
     }
+    // Ancien « joueur Maréchal » : le replacer hors centre (case vide ou FREE).
+    if (displacedMarshalPlayer) {
+      let alreadyPlaced = false;
+      for (let r = 0; r < GRID_SIZE && !alreadyPlaced; r += 1) {
+        for (let c = 0; c < GRID_SIZE; c += 1) {
+          if (grid[r][c] === displacedMarshalPlayer) {
+            alreadyPlaced = true;
+            break;
+          }
+        }
+      }
+      if (!alreadyPlaced) {
+        const tryPlace = (preferEmpty) => {
+          for (let r = 0; r < GRID_SIZE; r += 1) {
+            for (let c = 0; c < GRID_SIZE; c += 1) {
+              if (isMarshalCell(r, c)) continue;
+              const cur = grid[r][c];
+              if (preferEmpty ? !cur : cur === FREE) {
+                grid[r][c] = displacedMarshalPlayer;
+                return true;
+              }
+            }
+          }
+          return false;
+        };
+        tryPlace(true) || tryPlace(false);
+      }
+    }
+    grid[MARSHAL_ROW][MARSHAL_COL] = MARSHAL;
     return grid;
   }
 
@@ -90,7 +137,7 @@
 
   function createBlankState() {
     return {
-      version: 5,
+      version: 6,
       grid: createEmptyGrid(),
       bottomId: null,
       colors: { ...DEFAULT_COLORS },
@@ -128,21 +175,8 @@
         return state;
       }
       const parsed = JSON.parse(raw);
-      let grid = normalizeGrid(parsed.grid);
-      // Migration ancien marshalId hors grille → case centre
-      if (
-        parsed.marshalId &&
-        parsed.marshalId !== FREE &&
-        (!grid[MARSHAL_ROW][MARSHAL_COL] || grid[MARSHAL_ROW][MARSHAL_COL] === FREE)
-      ) {
-        grid = cloneGrid(grid);
-        for (let r = 0; r < GRID_SIZE; r += 1) {
-          for (let c = 0; c < GRID_SIZE; c += 1) {
-            if (grid[r][c] === parsed.marshalId) grid[r][c] = null;
-          }
-        }
-        grid[MARSHAL_ROW][MARSHAL_COL] = parsed.marshalId;
-      }
+      // normalizeGrid force la case centrale = MARSHAL (événement fixe).
+      const grid = normalizeGrid(parsed.grid);
       const colors = {
         ...DEFAULT_COLORS,
         ...(parsed.colors && typeof parsed.colors === 'object' ? parsed.colors : {}),
@@ -152,7 +186,7 @@
         colors.r4 = DEFAULT_COLORS.r4;
       }
       state = {
-        version: 5,
+        version: 6,
         grid,
         bottomId: normalizeCellValue(parsed.bottomId, { allowFree: true }),
         colors,
@@ -246,7 +280,7 @@
   }
 
   function getPlayerById(id) {
-    if (!id || id === FREE) return null;
+    if (!id || id === FREE || id === MARSHAL || id === 'marshal') return null;
     return getAlliancePlayers().find((p) => p.id === id) || null;
   }
 
@@ -257,52 +291,45 @@
   }
 
   /**
-   * Maréchal = valeur de la case à position fixe (MARSHAL_ROW, MARSHAL_COL).
-   * Ne dépend pas du libellé affiché ; FREE / vide = non renseigné.
+   * La case Maréchal est un événement fixe au centre — pas un joueur.
+   * Conservé pour compat (toujours null).
    */
-  function getMarshalId(grid = getState().grid) {
-    if (!grid || !Array.isArray(grid)) return null;
-    const row = grid[MARSHAL_ROW];
-    if (!Array.isArray(row)) return null;
-    const value = normalizeCellValue(row[MARSHAL_COL], { allowFree: false });
-    return value || null;
+  function getMarshalId(_grid) {
+    return null;
   }
 
-  /** Fallback : lit le sélecteur de la case centrale (même position fixe). */
   function readMarshalIdFromDom() {
-    const select =
-      els.grid?.querySelector(
-        `select[data-ruche-select][data-row="${MARSHAL_ROW}"][data-col="${MARSHAL_COL}"]`
-      ) || els.grid?.querySelector('select.ruche-marshal-select');
-    if (!select) return null;
-    return normalizeCellValue(select.value, { allowFree: false });
+    return null;
   }
 
-  /**
-   * Garantit que la case centrale en état reflète le sélecteur Maréchal.
-   * Utile si l’UI affiche une sélection non encore persistée.
-   * Si toujours vide : assigne le premier R5 actif (Maréchal « par défaut »).
-   */
-  function resolveDefaultMarshalId() {
-    const active = getActivePlayers();
-    const r5 = active.find((p) => p.role === 'R5');
-    if (r5) return r5.id;
-    const accessR5 = active.find((p) => accessOfficerRole(p.id) === 'R5');
-    return accessR5?.id || null;
-  }
-
+  /** Garantit la sentinelle MARSHAL au centre. */
   function syncMarshalFromDomIfNeeded() {
-    const fromState = getMarshalId();
-    if (fromState) return fromState;
-    const fromDom = readMarshalIdFromDom();
-    const nextId = fromDom || resolveDefaultMarshalId();
-    if (!nextId) return null;
     const s = getState();
+    if (isMarshalLandmark(s.grid?.[MARSHAL_ROW]?.[MARSHAL_COL])) return MARSHAL;
     s.grid = cloneGrid(s.grid);
-    removePlayerFromAll(s, nextId, { type: 'grid', row: MARSHAL_ROW, col: MARSHAL_COL });
-    s.grid[MARSHAL_ROW][MARSHAL_COL] = nextId;
+    const prev = s.grid[MARSHAL_ROW][MARSHAL_COL];
+    s.grid[MARSHAL_ROW][MARSHAL_COL] = MARSHAL;
+    if (prev && !isMarshalLandmark(prev) && prev !== FREE) {
+      removePlayerFromAll(s, prev, { type: 'grid', row: MARSHAL_ROW, col: MARSHAL_COL });
+      // prev déjà retiré du centre ; le replacer si besoin
+      let placed = false;
+      for (let r = 0; r < GRID_SIZE && !placed; r += 1) {
+        for (let c = 0; c < GRID_SIZE; c += 1) {
+          if (isMarshalCell(r, c)) continue;
+          if (!s.grid[r][c]) {
+            s.grid[r][c] = prev;
+            placed = true;
+            break;
+          }
+        }
+      }
+    }
     persist();
-    return nextId;
+    return MARSHAL;
+  }
+
+  function resolveDefaultMarshalId() {
+    return null;
   }
 
   function getBottomId(trainState = getState()) {
@@ -310,10 +337,14 @@
   }
 
   function removePlayerFromAll(s, playerId, keep) {
-    if (!playerId || playerId === FREE) return;
+    if (!playerId || playerId === FREE || isMarshalLandmark(playerId)) return;
     s.grid = cloneGrid(s.grid);
     for (let r = 0; r < GRID_SIZE; r += 1) {
       for (let c = 0; c < GRID_SIZE; c += 1) {
+        if (isMarshalCell(r, c)) {
+          s.grid[r][c] = MARSHAL;
+          continue;
+        }
         if (keep && keep.type === 'grid' && keep.row === r && keep.col === c) continue;
         if (s.grid[r][c] === playerId) s.grid[r][c] = null;
       }
@@ -325,9 +356,17 @@
 
   function setCell(row, col, value) {
     if (row < 0 || col < 0 || row >= GRID_SIZE || col >= GRID_SIZE) return false;
+    // Case Maréchal : événement fixe, jamais un joueur.
+    if (isMarshalCell(row, col)) {
+      update((s) => {
+        s.grid = cloneGrid(s.grid);
+        s.grid[row][col] = MARSHAL;
+        return s;
+      });
+      return true;
+    }
     update((s) => {
-      let next = normalizeCellValue(value, { allowFree: !isMarshalCell(row, col) });
-      if (isMarshalCell(row, col) && next === FREE) next = null;
+      const next = normalizeCellValue(value, { allowFree: true });
       if (next && next !== FREE) removePlayerFromAll(s, next, { type: 'grid', row, col });
       else s.grid = cloneGrid(s.grid);
       s.grid[row][col] = next;
@@ -336,8 +375,9 @@
     return true;
   }
 
-  function setMarshal(playerId) {
-    return setCell(MARSHAL_ROW, MARSHAL_COL, playerId && playerId !== FREE ? playerId : null);
+  function setMarshal(_playerId) {
+    // Compat : force uniquement la case fixe Maréchal.
+    return setCell(MARSHAL_ROW, MARSHAL_COL, MARSHAL);
   }
 
   function setBottom(value) {
@@ -367,12 +407,12 @@
     ) {
       return false;
     }
+    // Case Maréchal fixe : jamais échangée.
+    if (isMarshalCell(rowA, colA) || isMarshalCell(rowB, colB)) return false;
     update((s) => {
       s.grid = cloneGrid(s.grid);
-      let a = s.grid[rowA][colA];
-      let b = s.grid[rowB][colB];
-      if (isMarshalCell(rowA, colA) && b === FREE) b = null;
-      if (isMarshalCell(rowB, colB) && a === FREE) a = null;
+      const a = s.grid[rowA][colA];
+      const b = s.grid[rowB][colB];
       s.grid[rowA][colA] = b;
       s.grid[rowB][colB] = a;
       return s;
@@ -388,9 +428,10 @@
     const s = getState();
     for (let r = 0; r < GRID_SIZE; r += 1) {
       for (let c = 0; c < GRID_SIZE; c += 1) {
+        if (isMarshalCell(r, c)) continue;
         if (except?.type === 'grid' && except.row === r && except.col === c) continue;
         const value = s.grid[r][c];
-        if (value && value !== FREE) used.add(value);
+        if (value && value !== FREE && !isMarshalLandmark(value)) used.add(value);
       }
     }
     if (!(except?.type === 'bottom')) {
@@ -494,8 +535,11 @@
     const map = new Map();
     for (let r = 0; r < GRID_SIZE; r += 1) {
       for (let c = 0; c < GRID_SIZE; c += 1) {
-        const value = normalizeCellValue(grid?.[r]?.[c], { allowFree: !isMarshalCell(r, c) });
-        if (value && value !== FREE) map.set(value, { type: 'grid', row: r, col: c });
+        if (isMarshalCell(r, c)) continue;
+        const value = normalizeCellValue(grid?.[r]?.[c], { allowFree: true });
+        if (value && value !== FREE && !isMarshalLandmark(value)) {
+          map.set(value, { type: 'grid', row: r, col: c });
+        }
       }
     }
     const bottom = normalizeCellValue(bottomId, { allowFree: true });
@@ -506,24 +550,20 @@
   function getCellValueFromHive(hive, slot) {
     if (!hive || !slot) return null;
     if (slot.type === 'bottom') return normalizeCellValue(hive.bottomId, { allowFree: true });
-    return normalizeCellValue(hive.grid?.[slot.row]?.[slot.col], {
-      allowFree: !isMarshalCell(slot.row, slot.col),
-    });
+    if (isMarshalCell(slot.row, slot.col)) return MARSHAL;
+    return normalizeCellValue(hive.grid?.[slot.row]?.[slot.col], { allowFree: true });
   }
 
   function setHiveSlot(hive, slot, value) {
-    const next = normalizeCellValue(value, {
-      allowFree: !(slot.type === 'grid' && isMarshalCell(slot.row, slot.col)),
-    });
     if (slot.type === 'bottom') {
-      hive.bottomId = next;
+      hive.bottomId = normalizeCellValue(value, { allowFree: true });
       return;
     }
-    if (isMarshalCell(slot.row, slot.col) && next === FREE) {
-      hive.grid[slot.row][slot.col] = null;
+    if (isMarshalCell(slot.row, slot.col)) {
+      hive.grid[slot.row][slot.col] = MARSHAL;
       return;
     }
-    hive.grid[slot.row][slot.col] = next;
+    hive.grid[slot.row][slot.col] = normalizeCellValue(value, { allowFree: true });
   }
 
   function isLockedSlotOnHive(hive, slot, options = {}) {
@@ -604,9 +644,9 @@
    */
   function seatOfficersNearMarshal(hive, mainState, lockOpts, options = {}) {
     const reseatAll = options.reseatAll === true;
-    const marshalId = getMarshalId(hive.grid);
+    // Tous les officiers : la case Maréchal n’est plus un joueur.
     const officerIds = getActivePlayers()
-      .filter((p) => isOfficerPlayer(p) && p.id !== marshalId)
+      .filter((p) => isOfficerPlayer(p))
       .map((p) => p.id);
     if (!officerIds.length) return 0;
 
@@ -615,7 +655,6 @@
       officerIds.forEach((id) => {
         const slot = pos.get(id);
         if (!slot) return;
-        if (slot.type === 'grid' && isMarshalCell(slot.row, slot.col)) return;
         setHiveSlot(hive, slot, FREE);
       });
     }
@@ -801,13 +840,16 @@
   /** Retire de la ruche tout joueur hors effectif actuel (Parti / inactif / inconnu). */
   function stripIneligibleFromHive(hive) {
     let removed = 0;
+    // Toujours forcer l’événement Maréchal au centre.
+    if (hive?.grid) hive.grid[MARSHAL_ROW][MARSHAL_COL] = MARSHAL;
     for (let r = 0; r < GRID_SIZE; r += 1) {
       for (let c = 0; c < GRID_SIZE; c += 1) {
+        if (isMarshalCell(r, c)) continue;
         const slot = { type: 'grid', row: r, col: c };
         const value = getCellValueFromHive(hive, slot);
-        if (!value || value === FREE) continue;
+        if (!value || value === FREE || isMarshalLandmark(value)) continue;
         if (isEligibleHivePlayer(getPlayerById(value))) continue;
-        setHiveSlot(hive, slot, isMarshalCell(r, c) ? null : FREE);
+        setHiveSlot(hive, slot, FREE);
         removed += 1;
       }
     }
@@ -859,7 +901,7 @@
     // Soft : jamais dans l’optimiseur. Full : case cochée = officiers aussi dans le hill-climb.
     const allowOfficerMoves = mode === 'full' && options.allowOfficerMoves === true;
     const hive = {
-      grid: cloneGrid(sourceGrid),
+      grid: normalizeGrid(sourceGrid),
       bottomId: normalizeCellValue(sourceBottom, { allowFree: true }),
     };
     // Aligne les rôles liste sur les comptes Accès avant de détecter les officiers.
@@ -1155,9 +1197,13 @@
   }
 
   function removePlayerFromProposal(hive, playerId, keep) {
-    if (!playerId || playerId === FREE) return;
+    if (!playerId || playerId === FREE || isMarshalLandmark(playerId)) return;
     for (let r = 0; r < GRID_SIZE; r += 1) {
       for (let c = 0; c < GRID_SIZE; c += 1) {
+        if (isMarshalCell(r, c)) {
+          hive.grid[r][c] = MARSHAL;
+          continue;
+        }
         if (keep?.type === 'grid' && keep.row === r && keep.col === c) continue;
         if (hive.grid[r][c] === playerId) hive.grid[r][c] = FREE;
       }
@@ -1176,6 +1222,7 @@
 
   function setProposalSlot(slot, value) {
     if (!slot) return;
+    if (slot.type === 'grid' && isMarshalCell(slot.row, slot.col)) return;
     updateProposal((hive) => {
       if (isLockedSlotOnHive(hive, slot, proposalLockOptions(hive))) return hive;
       let next = normalizeCellValue(value, { allowFree: true });
@@ -1214,7 +1261,7 @@
       label,
       createdAt: stamp.toISOString(),
       grid: cloneGrid(s.grid),
-      marshalId: getMarshalId(s.grid),
+      marshalId: MARSHAL,
       bottomId: getBottomId(s),
       colors: { ...s.colors },
       placedCount: check.placedCount,
@@ -1241,7 +1288,7 @@
     if (!ok) return;
 
     // Remplace la ruche actuelle sans archivage ni historique
-    s.grid = cloneGrid(proposal.grid);
+    s.grid = normalizeGrid(proposal.grid);
     s.bottomId = normalizeCellValue(proposal.bottomId, { allowFree: true });
     s.proposal = buildOptimizedProposal(s.grid, s.bottomId, {
       mode: 'soft',
@@ -1279,6 +1326,7 @@
 
   function labelForValue(value) {
     if (!value) return '';
+    if (isMarshalLandmark(value)) return 'Maréchal';
     if (value === FREE) return 'FREE';
     const player = getPlayerById(value);
     return player ? player.pseudo : '—';
@@ -1296,7 +1344,7 @@
   }
 
   function analyzeGrid() {
-    // Avant analyse : synchronise / assigne le Maréchal par défaut (R5).
+    // Avant analyse : force la case fixe Maréchal au centre.
     syncMarshalFromDomIfNeeded();
     const s = getState();
     const grid = s.grid;
@@ -1311,15 +1359,9 @@
     const unknownIds = new Set();
     const issues = [];
 
-    // Maréchal : uniquement la case à position fixe (pas le libellé UI)
-    let marshalId = getMarshalId(grid);
-    if (!marshalId) {
-      const fromDom = readMarshalIdFromDom();
-      if (fromDom) marshalId = fromDom;
-    }
-
     let caseCount = 0;
     let playerSlotCount = 0;
+    let marshalOk = false;
 
     const registerPlayer = (id, source, row, col) => {
       placed.push({ id, source, row, col });
@@ -1331,25 +1373,31 @@
     grid.forEach((row, r) => {
       row.forEach((rawCell, c) => {
         caseCount += 1;
-        const marshal = isMarshalCell(r, c);
-        const cell = normalizeCellValue(rawCell, { allowFree: !marshal });
-
-        if (marshal) {
+        if (isMarshalCell(r, c)) {
+          marshalOk = isMarshalLandmark(rawCell);
+          if (!marshalOk) {
+            issues.push('La case centrale doit être l’événement Maréchal');
+          }
           if (rawCell === FREE || rawCell === 'FREE') {
             issues.push('La case Maréchal ne peut pas être FREE');
           }
-          // Le Maréchal n'est jamais une des 100 cases joueurs
-          if (cell) registerPlayer(cell, 'marshal', r, c);
+          // Événement fixe : ne compte pas comme joueur placé.
           return;
         }
 
         playerSlotCount += 1;
+        const cell = normalizeCellValue(rawCell, { allowFree: true });
         if (!cell) {
           emptyPlayerSlots += 1;
           return;
         }
         if (cell === FREE) {
           freeCount += 1;
+          return;
+        }
+        if (isMarshalLandmark(cell)) {
+          issues.push(`Sentinelle Maréchal hors centre (${r + 1},${c + 1})`);
+          emptyPlayerSlots += 1;
           return;
         }
         playersInPlayerSlots += 1;
@@ -1367,16 +1415,6 @@
     } else {
       playersInPlayerSlots += 1;
       registerPlayer(bottomId, 'bottom');
-    }
-
-    if (!marshalId) {
-      // Pas d’erreur « non renseigné » : la case centrale est toujours le Maréchal.
-      // S’il n’y a aucun R5 actif pour le remplir, on signale seulement l’effectif.
-      if (!active.some((p) => p.role === 'R5' || accessOfficerRole(p.id) === 'R5')) {
-        issues.push('Aucun R5 actif pour occuper la case Maréchal');
-      }
-    } else if (!activeIds.has(marshalId)) {
-      issues.push('Le Maréchal doit être un joueur actif');
     }
 
     if (emptyPlayerSlots > 0) {
@@ -1417,8 +1455,7 @@
     const canValidate =
       caseCount === TOTAL_CASES &&
       playerSlotCount === PLAYER_SLOTS &&
-      Boolean(marshalId) &&
-      activeIds.has(marshalId) &&
+      marshalOk &&
       slotsConsistent &&
       duplicates.length === 0 &&
       missing.length === 0 &&
@@ -1434,11 +1471,9 @@
       totalActive: active.length,
       freeCount,
       emptyPlayerSlots,
-      marshalId,
-      marshalMissing: !marshalId,
-      marshalPseudo: marshalId
-        ? getPlayerById(marshalId)?.pseudo || marshalId
-        : null,
+      marshalId: MARSHAL,
+      marshalMissing: !marshalOk,
+      marshalPseudo: 'Maréchal',
       bottomId,
       duplicates,
       missing,
@@ -1609,9 +1644,31 @@
         const bg = colorForGridCell(r, c, value);
         const fg = textColorForBg(bg === 'transparent' ? '#1e232b' : bg);
         const filled = Boolean(value) || marshal;
+        if (marshal) {
+          cells.push(`
+          <div
+            class="ruche-cell is-filled ruche-cell-marshal is-locked"
+            role="gridcell"
+            data-proposal-cell
+            data-slot-type="grid"
+            data-row="${r}"
+            data-col="${c}"
+            data-locked="1"
+            data-marshal="1"
+            draggable="false"
+            data-value="${MARSHAL}"
+            style="background:${bg};color:${fg};border-color:${bg}"
+            aria-label="Proposition — événement Maréchal (fixe)"
+          >
+            <span class="ruche-marshal-badge">Maréchal</span>
+            <span class="ruche-cell-label">Maréchal</span>
+          </div>
+        `);
+          continue;
+        }
         cells.push(`
           <div
-            class="ruche-cell ${filled ? 'is-filled' : ''} ${marshal ? 'ruche-cell-marshal' : ''} ${
+            class="ruche-cell ${filled ? 'is-filled' : ''} ${
               locked ? 'is-locked' : ''
             }"
             role="gridcell"
@@ -1620,29 +1677,25 @@
             data-row="${r}"
             data-col="${c}"
             data-locked="${locked ? '1' : '0'}"
-            draggable="${locked || marshal ? 'false' : 'true'}"
+            draggable="${locked ? 'false' : 'true'}"
             data-value="${escapeHtml(value || '')}"
-            style="background:${marshal || value ? bg : 'var(--bg-elevated)'};color:${fg};border-color:${
-              marshal || value ? bg : 'var(--border-soft)'
+            style="background:${value ? bg : 'var(--bg-elevated)'};color:${fg};border-color:${
+              value ? bg : 'var(--border-soft)'
             }"
           >
-            ${
-              marshal
-                ? '<span class="ruche-marshal-badge">Maréchal</span>'
-                : `<span class="ruche-cell-coord">${r + 1},${c + 1}</span>`
-            }
+            <span class="ruche-cell-coord">${r + 1},${c + 1}</span>
             <select
-              class="input ruche-cell-select ${marshal ? 'ruche-marshal-select' : ''}"
+              class="input ruche-cell-select"
               data-proposal-select
               data-row="${r}"
               data-col="${c}"
-              ${locked || marshal ? 'disabled' : ''}
-              aria-label="${marshal ? 'Proposition — Maréchal' : `Proposition — case ${r + 1}, ${c + 1}`}"
+              ${locked ? 'disabled' : ''}
+              aria-label="Proposition — case ${r + 1}, ${c + 1}"
             >
               ${buildProposalOptions(value, { type: 'grid', row: r, col: c }, {
-                allowFree: !marshal,
-                emptyLabel: marshal ? '— Maréchal —' : '—',
-                locked: locked || marshal,
+                allowFree: true,
+                emptyLabel: '—',
+                locked,
               })}
             </select>
             <span class="ruche-cell-label" aria-hidden="true">${escapeHtml(labelForValue(value))}</span>
@@ -1696,35 +1749,50 @@
         const marshal = isMarshalCell(r, c);
         const bg = colorForGridCell(r, c, value);
         const fg = textColorForBg(bg === 'transparent' ? '#1e232b' : bg);
-        const filled = Boolean(value);
-        const cellBg = value ? bg : marshal ? colors.marshal : 'var(--bg-elevated)';
-        const cellBorder = value || marshal ? (value ? bg : colors.marshal) : 'var(--border-soft)';
-        cells.push(`
+        if (marshal) {
+          cells.push(`
           <div
-            class="ruche-cell ${filled ? 'is-filled' : ''} ${marshal ? 'ruche-cell-marshal' : ''}"
+            class="ruche-cell is-filled ruche-cell-marshal"
             role="gridcell"
             data-ruche-cell
             data-row="${r}"
             data-col="${c}"
-            data-marshal="${marshal ? '1' : '0'}"
-            data-value="${escapeHtml(value || '')}"
-            style="background:${cellBg};color:${fg};border-color:${cellBorder}"
+            data-marshal="1"
+            data-value="${MARSHAL}"
+            style="background:${colors.marshal};color:${fg};border-color:${colors.marshal}"
+            aria-label="Événement Maréchal (case fixe)"
           >
-            ${
-              marshal
-                ? '<span class="ruche-marshal-badge">Maréchal</span>'
-                : `<span class="ruche-cell-coord">${r + 1},${c + 1}</span>`
-            }
+            <span class="ruche-marshal-badge">Maréchal</span>
+            <span class="ruche-cell-label">Maréchal</span>
+          </div>
+        `);
+          continue;
+        }
+        const filled = Boolean(value);
+        cells.push(`
+          <div
+            class="ruche-cell ${filled ? 'is-filled' : ''}"
+            role="gridcell"
+            data-ruche-cell
+            data-row="${r}"
+            data-col="${c}"
+            data-marshal="0"
+            data-value="${escapeHtml(value || '')}"
+            style="background:${filled ? bg : 'var(--bg-elevated)'};color:${fg};border-color:${
+              filled ? bg : 'var(--border-soft)'
+            }"
+          >
+            <span class="ruche-cell-coord">${r + 1},${c + 1}</span>
             <select
-              class="input ruche-cell-select ${marshal ? 'ruche-marshal-select' : ''}"
+              class="input ruche-cell-select"
               data-ruche-select
               data-row="${r}"
               data-col="${c}"
-              aria-label="${marshal ? 'Case Maréchal' : `Case ${r + 1}, ${c + 1}`}"
+              aria-label="Case ${r + 1}, ${c + 1}"
             >
               ${buildOptions(value, { type: 'grid', row: r, col: c }, {
-                allowFree: !marshal,
-                emptyLabel: marshal ? 'Choisir le Maréchal…' : '—',
+                allowFree: true,
+                emptyLabel: '—',
               })}
             </select>
             <span class="ruche-cell-label" aria-hidden="true">${escapeHtml(labelForValue(value))}</span>
@@ -1774,11 +1842,7 @@
       );
     }
 
-    const marshalLabel = check.marshalPseudo
-      ? escapeHtml(check.marshalPseudo)
-      : check.marshalId
-        ? escapeHtml(labelForValue(check.marshalId) || check.marshalId)
-        : '—';
+    const marshalLabel = 'Maréchal (centre)';
 
     const cls = check.canValidate ? 'train-ok' : 'train-errors';
     els.verifyResult.innerHTML = `
@@ -1802,7 +1866,7 @@
         ${issues.length ? `<p>${issues.join('<br>')}</p>` : ''}
         ${
           check.canValidate
-            ? `<p>Ruche valide — ${check.totalActive} joueurs actifs, ${check.freeCount} FREE, Maréchal : ${marshalLabel}.</p>`
+            ? `<p>Ruche valide — ${check.totalActive} joueurs actifs, ${check.freeCount} FREE, événement Maréchal au centre.</p>`
             : ''
         }
       </div>
@@ -1876,8 +1940,6 @@
     if (!arch || !els.archivePreview) return;
     const lookup = archivedPlayerLookup(arch);
     const grid = normalizeGrid(arch.grid);
-    let marshalId = getMarshalId(grid);
-    if (!marshalId && arch.marshalId) marshalId = arch.marshalId;
     const bottomId = normalizeCellValue(arch.bottomId, { allowFree: true });
     const cells = [];
     for (let r = 0; r < GRID_SIZE; r += 1) {
@@ -1885,7 +1947,7 @@
         const value = grid[r][c];
         const marshal = isMarshalCell(r, c);
         const bg = colorForGridCell(r, c, value, lookup);
-        const label = resolveArchivedLabel(arch, value) || (marshal ? 'Maréchal' : '');
+        const label = marshal ? 'Maréchal' : resolveArchivedLabel(arch, value);
         const fg = textColorForBg(bg === 'transparent' ? '#1e232b' : bg);
         cells.push(`
           <div class="ruche-cell ruche-cell-readonly is-filled ${marshal ? 'ruche-cell-marshal' : ''}" style="background:${bg};color:${fg};border-color:${bg}">
@@ -1901,7 +1963,7 @@
     els.archivePreview.innerHTML = `
       <header class="block-header">
         <h3>${escapeHtml(arch.label || 'Plan archivé')}</h3>
-        <p>Maréchal : ${escapeHtml(resolveArchivedLabel(arch, marshalId) || '—')} · Bas : ${escapeHtml(resolveArchivedLabel(arch, bottomId) || '—')}</p>
+        <p>Maréchal : événement centre · Bas : ${escapeHtml(resolveArchivedLabel(arch, bottomId) || '—')}</p>
       </header>
       <div class="ruche-board ruche-board-preview">
         <div class="ruche-grid ruche-grid-preview">${cells.join('')}</div>
@@ -1977,7 +2039,7 @@
   async function clearGrid() {
     const ok = await AppUI.confirm({
       title: 'Vider la grille',
-      message: 'Retirer tous les joueurs et FREE (grille, Maréchal et case du bas) ?',
+      message: 'Retirer tous les joueurs et FREE ? La case Maréchal (centre) reste en place.',
       confirmLabel: 'Vider',
     });
     if (!ok) return;
@@ -2013,9 +2075,8 @@
     if (proposalSelect) {
       const row = Number(proposalSelect.dataset.row);
       const col = Number(proposalSelect.dataset.col);
-      let value = proposalSelect.value || FREE;
-      if (isMarshalCell(row, col) && value === FREE) value = null;
-      setProposalSlot({ type: 'grid', row, col }, value);
+      if (isMarshalCell(row, col)) return;
+      setProposalSlot({ type: 'grid', row, col }, proposalSelect.value || FREE);
       return;
     }
     const bottomSelect = event.target.closest('[data-ruche-bottom-select]');
@@ -2027,9 +2088,8 @@
     if (!select) return;
     const row = Number(select.dataset.row);
     const col = Number(select.dataset.col);
-    let value = select.value || null;
-    if (isMarshalCell(row, col) && value === FREE) value = null;
-    setCell(row, col, value);
+    if (isMarshalCell(row, col)) return;
+    setCell(row, col, select.value || null);
   }
 
   function parseProposalSlotFromEl(el) {
@@ -2175,9 +2235,8 @@
         let label = '';
         let badge = '';
         if (marshal) {
-          badge = 'MARÉCHAL';
-          const player = value && value !== FREE ? playerLookup(value) : null;
-          label = player ? player.pseudo : '—';
+          badge = 'ÉVÉNEMENT';
+          label = 'Maréchal';
         } else if (value === FREE) {
           label = 'FREE';
         } else if (value) {
@@ -2336,6 +2395,7 @@
     PLAYER_SLOTS,
     MARSHAL_ROW,
     MARSHAL_COL,
+    MARSHAL,
     FREE,
     getCell,
     setCell,
