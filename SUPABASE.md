@@ -18,15 +18,16 @@ Résumé :
 
 ## Structure localStorage
 
-| Clé | Contenu |
-|-----|---------|
-| `ros6_command_center_v1` | Joueurs, semaines VS, archives, tranches, notes |
-| `ros6_train_v1` | Train |
-| `ros6_ruche_v1` | Ruche |
-| `ros6_tempete_v1` | Tempête |
-| `ros6_backups_v1` | Sauvegardes |
+| Clé | Contenu | Sync Supabase |
+|-----|---------|---------------|
+| `ros6_command_center_v1` | Joueurs, semaines VS, archives, tranches, notes, suivis | Oui → `ros6_state` |
+| `ros6_train_v1` | Train | Oui |
+| `ros6_ruche_v1` | Ruche | Oui |
+| `ros6_tempete_v1` | Tempête | Oui |
+| `ros6_backups_v1` | Sauvegardes navigateur (max 10) | **Non** — local uniquement |
 
-Ces stores sont regroupées dans `ros6_state.data.stores` (ligne `id = main`).
+Les stores métier sont regroupées dans `ros6_state.data.stores` (ligne `id = main`).
+Une éventuelle copie distante de `ros6_backups_v1` (héritage) est **ignorée** par l’app et n’est plus écrite ni lue au sync.
 
 ## Profils (`ros6_user_profiles`)
 
