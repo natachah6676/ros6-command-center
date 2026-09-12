@@ -119,8 +119,32 @@ assert(rPraise.praise === true && rPraise.vs === false, '5 j score fait + 1 gros
 const absentP = state.players.find((p) => p.id === 'p_absent');
 const rAbs = M.detectFollowUpReasons(absentP, state);
 assert(
-  !rAbs.vs && !rAbs.praise && !rAbs.hero && !rAbs.manual,
+  !rAbs.vs && !rAbs.praise && !rAbs.hero && !rAbs.manual && !rAbs.discret,
   'absent hors suivi (aucun motif)'
+);
+
+const discretP = M.createPlayer({
+  pseudo: 'DiscretStrong',
+  status: 'Actif',
+  discret: true,
+  heroPowerTierId: highHeroTier.id,
+});
+discretP.id = 'p_discret';
+state.players.push(discretP);
+state.weeks[0].scores.p_discret = makeScore(0);
+const rDiscret = M.detectFollowUpReasons(discretP, state);
+assert(rDiscret.discret === true && !rDiscret.vs, 'flag discret → motif Discret');
+assert(
+  M.formatFollowUpReasonsLabel({ discret: true }).includes('Discret'),
+  'libellé Discret'
+);
+assert(
+  M.FOLLOW_UP_SPECIALIST_KEYS.some((k) => k.id === 'discret'),
+  'référent Discret présent'
+);
+assert(
+  M.normalizeFollowUpSettings({}).specialists.discret === null,
+  'spécialiste Discret défaut null'
 );
 
 assert(M.normalizeFollowUpSettings({}).vsFollowUpMutedWeekId === null, 'mute VS défaut null');
@@ -279,7 +303,9 @@ assert(html.includes('id="followUpHeroMax"'), 'seuil héros paramètres');
 assert(!html.includes('id="followUpSpecialistAbsent"'), 'pas de référent Absents');
 assert(!html.includes('option value="absent"'), 'pas de filtre motif Absent');
 assert(html.includes('id="followUpSpecialistVs"'), 'référent VS paramètres');
-assert(html.includes('id="suiviScopeHint"'), 'hint périmètre R4');
+assert(html.includes('id="followUpSpecialistDiscret"'), 'référent Discret paramètres');
+assert(html.includes('option value="discret"'), 'filtre motif Discret');
+assert(html.includes('id="playerDiscret"'), 'case Discret fiche joueur');
 assert(suiviCode.includes('isFollowUpVisibleToViewer'), 'filtre visibilité R4');
 assert(suiviCode.includes('pickFollowUpSpecialist'), 'auto référent motif');
 assert(html.includes('js/suivi.js'), 'script suivi inclus');

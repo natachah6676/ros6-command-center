@@ -25,6 +25,8 @@
     els.statusField = document.getElementById('playerStatusField');
     els.absent = document.getElementById('playerAbsent');
     els.absentField = document.getElementById('playerAbsentField');
+    els.discret = document.getElementById('playerDiscret');
+    els.discretField = document.getElementById('playerDiscretField');
     els.inactive = document.getElementById('playerInactive');
     els.inactiveField = document.getElementById('playerInactiveField');
     els.heroPower = document.getElementById('playerHeroPower');
@@ -154,12 +156,14 @@
     els.role.value = 'Membre';
     els.status.value = 'Actif';
     els.absent.checked = false;
+    if (els.discret) els.discret.checked = false;
     if (els.inactive) els.inactive.checked = false;
     fillHeroPowerSelect('');
     fillGlobalPowerSelect('');
     if (els.preferredVolant) els.preferredVolant.checked = false;
     els.statusField.hidden = true;
     els.absentField.hidden = false;
+    if (els.discretField) els.discretField.hidden = false;
     if (els.inactiveField) els.inactiveField.hidden = false;
     els.modal.showModal();
     els.pseudo.focus();
@@ -174,12 +178,14 @@
     els.role.value = player.role;
     els.status.value = player.status;
     els.absent.checked = Boolean(player.absent);
+    if (els.discret) els.discret.checked = Boolean(player.discret);
     if (els.inactive) els.inactive.checked = Boolean(player.inactive);
     fillHeroPowerSelect(player.heroPowerTierId || '');
     fillGlobalPowerSelect(player.globalPowerTierId || '');
     if (els.preferredVolant) els.preferredVolant.checked = Boolean(player.preferredVolant);
     els.statusField.hidden = false;
     els.absentField.hidden = player.status === 'Parti';
+    if (els.discretField) els.discretField.hidden = player.status === 'Parti';
     if (els.inactiveField) els.inactiveField.hidden = player.status === 'Parti';
     els.modal.showModal();
     els.pseudo.focus();
@@ -245,7 +251,7 @@
     detailAllowEdit = options.allowEdit !== false;
 
     els.detailTitle.textContent = player.pseudo;
-    els.detailSubtitle.textContent = `${player.role} · ${player.status}${player.absent ? ' · Absent' : ''}${player.inactive ? ' · Inactif' : ''}`;
+    els.detailSubtitle.textContent = `${player.role} · ${player.status}${player.absent ? ' · Absent' : ''}${player.discret ? ' · Discret' : ''}${player.inactive ? ' · Inactif' : ''}`;
     els.detailEdit.hidden = !detailAllowEdit;
 
     const currentWeek = ROSModels.getCurrentWeekFromState(ROSStorage.getState());
@@ -281,7 +287,9 @@
       </div>
       <div class="detail-item">
         <strong>Statut</strong>
-        <div>${ROSUI.escapeHtml(player.status)}${player.absent ? ' · Absent' : ''}</div>
+        <div>${ROSUI.escapeHtml(player.status)}${player.absent ? ' · Absent' : ''}${
+          player.discret ? ' · Discret' : ''
+        }</div>
       </div>
       <div class="detail-item">
         <strong>Puissance globale</strong>
@@ -355,6 +363,7 @@
     const role = els.role.value;
     const status = els.statusField.hidden ? 'Actif' : els.status.value;
     const absent = status === 'Parti' ? false : Boolean(els.absent.checked);
+    const discret = status === 'Parti' ? false : Boolean(els.discret?.checked);
     const inactive = status === 'Parti' ? false : Boolean(els.inactive?.checked);
     const heroPowerTierId = (els.heroPower?.value || '').trim() || null;
     const requestedGlobalPowerTierId = ROSModels.normalizeGlobalPowerTierId(
@@ -406,6 +415,7 @@
         player.role = role;
         player.status = status;
         player.absent = absent;
+        player.discret = discret;
         player.inactive = inactive;
         player.heroPowerTierId = heroPowerTierId;
         if (!heroPowerTierId && global.ROSSync?.markPlayerFieldCleared) {
@@ -422,6 +432,7 @@
         if (previousStatus === 'Actif' && status === 'Parti') {
           player.leftAt = new Date().toISOString();
           player.absent = false;
+          player.discret = false;
           player.inactive = false;
         }
         if (previousStatus === 'Parti' && status === 'Actif') {
@@ -449,6 +460,7 @@
           role,
           status: 'Actif',
           absent,
+          discret,
           inactive,
           heroPowerTierId,
           globalPowerTierId: mayEditGlobal ? requestedGlobalPowerTierId : null,
@@ -484,6 +496,7 @@
           : 'Joueur ajouté.'
     );
     if (detailPlayerId === id) openDetail(id, { allowEdit: detailAllowEdit });
+    if (global.SuiviModule && typeof SuiviModule.render === 'function') SuiviModule.render();
   }
 
   async function markAsLeft(playerId) {
@@ -503,6 +516,7 @@
         target.status = 'Parti';
         target.leftAt = new Date().toISOString();
         target.absent = false;
+        target.discret = false;
       }
       return state;
     });
@@ -546,6 +560,21 @@
     if (global.VSModule && typeof VSModule.render === 'function') VSModule.render();
     if (global.SuiviModule && typeof SuiviModule.render === 'function') SuiviModule.render();
     AppUI.toast(absent ? 'Joueur marqué Absent (hors VS).' : 'Joueur de nouveau présent dans le VS.');
+  }
+
+  function setDiscret(playerId, discret) {
+    ROSStorage.update((state) => {
+      const target = state.players.find((p) => p.id === playerId);
+      if (!target || target.status !== 'Actif') return state;
+      target.discret = Boolean(discret);
+      return state;
+    });
+    if (global.SuiviModule && typeof SuiviModule.render === 'function') SuiviModule.render();
+    AppUI.toast(
+      discret
+        ? 'Joueur marqué Discret — visible dans Gestion des membres.'
+        : 'Marqueur Discret retiré.'
+    );
   }
 
   function setHeroPowerTier(playerId, tierId) {
@@ -654,6 +683,7 @@
     const state = ROSStorage.getState();
     const powerMissing = !hasHeroPowerTier(player);
     const absentBadge = player.absent ? '<span class="badge badge-absent">Absent</span>' : '';
+    const discretBadge = player.discret ? '<span class="badge badge-role">Discret</span>' : '';
     const powerMissingBadge = powerMissing
       ? '<span class="badge badge-power-missing">Puissance non renseignée</span>'
       : '';
@@ -663,6 +693,17 @@
           <label class="absent-toggle" title="Absent du VS">
             <input type="checkbox" data-action="absent" data-id="${player.id}" ${player.absent ? 'checked' : ''} />
             <span>Absent</span>
+          </label>
+        `
+        : '';
+    const discretToggle =
+      player.status === 'Actif'
+        ? `
+          <label class="absent-toggle" title="Discret mais fort — suivi léger">
+            <input type="checkbox" data-action="discret" data-id="${player.id}" ${
+              player.discret ? 'checked' : ''
+            } />
+            <span>Discret</span>
           </label>
         `
         : '';
@@ -725,6 +766,7 @@
       player.status === 'Actif'
         ? `
           ${absentToggle}
+          ${discretToggle}
           <button type="button" class="btn btn-ghost btn-sm" data-action="edit" data-id="${player.id}">Modifier</button>
           <button type="button" class="btn btn-danger btn-sm" data-action="leave" data-id="${player.id}">Passer en Parti</button>
         `
@@ -741,6 +783,7 @@
             <span class="badge badge-role">${ROSUI.escapeHtml(player.role)}</span>
             <span class="badge badge-status-${player.status.toLowerCase()}">${ROSUI.escapeHtml(player.status)}</span>
             ${absentBadge}
+            ${discretBadge}
             ${powerMissingBadge}
           </div>
         </div>
@@ -789,6 +832,11 @@
     const absentInput = event.target.closest('input[data-action="absent"]');
     if (absentInput) {
       setAbsent(absentInput.dataset.id, absentInput.checked);
+      return;
+    }
+    const discretInput = event.target.closest('input[data-action="discret"]');
+    if (discretInput) {
+      setDiscret(discretInput.dataset.id, discretInput.checked);
       return;
     }
 
@@ -843,9 +891,11 @@
     els.filterStatus.value = 'Actif';
     els.status.addEventListener('change', () => {
       els.absentField.hidden = els.status.value === 'Parti';
+      if (els.discretField) els.discretField.hidden = els.status.value === 'Parti';
       if (els.inactiveField) els.inactiveField.hidden = els.status.value === 'Parti';
       if (els.status.value === 'Parti') {
         els.absent.checked = false;
+        if (els.discret) els.discret.checked = false;
         if (els.inactive) els.inactive.checked = false;
       }
     });
