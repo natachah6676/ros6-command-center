@@ -339,6 +339,16 @@ assert(
     chebyshevToMarshal(propFullKeep.grid, 'pWeak'),
   'Full : Strong (héros) plus près que Weak'
 );
+const officerDistsFull = ['r5', 'r4a', 'r4b'].map((id) =>
+  chebyshevToMarshal(propFullKeep.grid, id)
+);
+const memberDistsFull = ['pStrong', 'pMid', 'pWeak'].map((id) =>
+  chebyshevToMarshal(propFullKeep.grid, id)
+);
+assert(
+  Math.max(...officerDistsFull) <= Math.min(...memberDistsFull),
+  'Full : tous les R4/R5 plus près (ou égal) que le plus proche membre'
+);
 
 console.log('\n=== Full + option : R4/R5 peuvent bouger dans l’optimiseur ===');
 const propFullMove = Ruche.buildOptimizedProposal(gridSoft, FREE, {
