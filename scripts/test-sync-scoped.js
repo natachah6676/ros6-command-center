@@ -31,7 +31,23 @@ assert(storageCode.includes("schedulePush('ros6_command_center_v1')"), 'storage 
 assert(rucheCode.includes("schedulePush('ros6_ruche_v1')"), 'ruche → ruche only');
 assert(trainCode.includes("schedulePush('ros6_train_v1')"), 'train → train only');
 assert(tempeteCode.includes("schedulePush('ros6_tempete_v1')"), 'tempete → tempete only');
-assert(backupsCode.includes("schedulePush('ros6_backups_v1')"), 'backups → backups only');
+assert(
+  !backupsCode.includes("schedulePush('ros6_backups_v1')"),
+  'backups ne poussent plus vers Supabase'
+);
+{
+  const m = syncCode.match(/const STORE_KEYS = \[([\s\S]*?)\];/);
+  assert(m && !m[1].includes('ros6_backups_v1'), 'STORE_KEYS exclut ros6_backups_v1');
+  assert(m && m[1].includes('ros6_command_center_v1'), 'STORE_KEYS inclut command center');
+  assert(m && m[1].includes('ros6_train_v1'), 'STORE_KEYS inclut train');
+  assert(m && m[1].includes('ros6_ruche_v1'), 'STORE_KEYS inclut ruche');
+  assert(m && m[1].includes('ros6_tempete_v1'), 'STORE_KEYS inclut tempete');
+}
+assert(syncCode.includes('isQuotaExceededError'), 'détection quota localStorage');
+assert(syncCode.includes('LOCAL_QUOTA_USER_MESSAGE'), 'message quota utilisateur');
+assert(syncCode.includes('remoteSaved: true'), 'quota après push distant OK');
+assert(backupsCode.includes('getLocalBackupsStats'), 'stats taille backups locaux');
+assert(backupsCode.includes('hors synchronisation Supabase'), 'libellé hors sync UI');
 assert(!rucheCode.includes('schedulePush()'), 'ruche n’appelle plus schedulePush() sans clé');
 assert(syncCode.includes("syncMode: 'scoped'"), 'payload syncMode scoped');
 assert(syncCode.includes('mergeCommandCenterStore'), 'merge command center');
@@ -117,6 +133,7 @@ const remoteData = {
     },
     ros6_ruche_v1: { version: 5, grid: [['FREE']], proposal: null },
     ros6_train_v1: { week: 'old' },
+    ros6_backups_v1: { version: 1, backups: [{ id: 'remote_only', kind: 'auto', payload: '{}' }] },
   },
 };
 const localIncompleteMembers = {
@@ -195,6 +212,76 @@ assert(
   rebased.stores.ros6_command_center_v1.players[0].globalPowerTierId === 'gp_60_65',
   'rebase : CC non dirty = remote (puissances conservées)'
 );
+
+console.log('\n=== Backups hors sync ===');
+assert(!Sync.STORE_KEYS.includes('ros6_backups_v1'), 'STORE_KEYS runtime sans backups');
+assert(Sync.BACKUPS_KEY === 'ros6_backups_v1', 'BACKUPS_KEY exposé');
+assert(T.markDirty('ros6_backups_v1') === false, 'markDirty backups → false');
+assert(!T.pendingDirty.has('ros6_backups_v1'), 'pendingDirty sans backups');
+
+const afterIgnoreBackups = T.buildPushPayload(
+  remoteData,
+  new Set(['ros6_backups_v1', 'ros6_ruche_v1']),
+  {
+    ...localIncompleteMembers,
+    ros6_backups_v1: { version: 1, backups: [{ id: 'local_huge', kind: 'manual', payload: 'x'.repeat(1000) }] },
+  }
+);
+assert(
+  afterIgnoreBackups.stores.ros6_backups_v1.backups[0].id === 'remote_only',
+  'push conserve backups distants (pas écrasés par le local)'
+);
+assert(afterIgnoreBackups.stores.ros6_ruche_v1.grid[0][0] === 'NEW', 'ruche dirty toujours poussée');
+
+sandbox.localStorage.setItem(
+  'ros6_backups_v1',
+  JSON.stringify({ version: 1, backups: [{ id: 'keep_local' }] })
+);
+sandbox.localStorage.setItem('ros6_ruche_v1', JSON.stringify({ version: 1, grid: [['LOC']] }));
+T.applyStoresToLocal({
+  stores: {
+    ros6_ruche_v1: { version: 9, grid: [['REM']] },
+    ros6_backups_v1: { version: 1, backups: [{ id: 'from_remote' }] },
+  },
+});
+assert(
+  JSON.parse(sandbox.localStorage.getItem('ros6_ruche_v1')).grid[0][0] === 'REM',
+  'applyStores écrit la ruche métier'
+);
+assert(
+  JSON.parse(sandbox.localStorage.getItem('ros6_backups_v1')).backups[0].id === 'keep_local',
+  'applyStores n’écrase pas les backups locaux'
+);
+
+console.log('\n=== Quota localStorage simulé ===');
+assert(T.isQuotaExceededError({ name: 'QuotaExceededError', message: 'The quota has been exceeded.' }), 'détecte QuotaExceededError');
+assert(T.isQuotaExceededError({ message: 'The quota has been exceeded.' }), 'détecte message quota');
+const prevSet = sandbox.localStorage.setItem.bind(sandbox.localStorage);
+sandbox.localStorage.setItem = (k, v) => {
+  if (k === 'ros6_train_v1') {
+    const err = new Error('The quota has been exceeded.');
+    err.name = 'QuotaExceededError';
+    throw err;
+  }
+  return prevSet(k, v);
+};
+let quotaThrown = false;
+try {
+  T.applyStoresToLocal({
+    stores: {
+      ros6_train_v1: { week: 'boom' },
+      ros6_backups_v1: { backups: [{ id: 'ignored' }] },
+    },
+  });
+} catch (error) {
+  quotaThrown = T.isQuotaExceededError(error);
+  assert(
+    String(error.message).includes('stockage local'),
+    'message quota compréhensible (pas seulement sync)'
+  );
+}
+assert(quotaThrown, 'applyStores remonte QuotaExceededError');
+sandbox.localStorage.setItem = prevSet;
 
 console.log('\n=== Résultat ===');
 console.log(`${passed} OK · ${failed} KO`);

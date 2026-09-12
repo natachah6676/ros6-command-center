@@ -6,18 +6,23 @@
  * - un push fusionne ces stores sur la base distante (les autres stores distants restent intacts) ;
  * - Gestion des membres (ros6_command_center_v1.players) est protégée contre l’écrasement
  *   accidentel de champs non vides par null/undefined venant d’un cache incomplet ;
- * - un ancien cache local ne peut pas écraser silencieusement une version distante plus récente.
+ * - un ancien cache local ne peut pas écraser silencieusement une version distante plus récente ;
+ * - ros6_backups_v1 est local uniquement : jamais poussé / jamais réécrit depuis Supabase
+ *   (une copie distante éventuelle est conservée telle quelle, ignorée par l’app).
  */
 (function (global) {
   const ROW_ID = 'main';
   const META_KEY = 'ros6_sync_meta_v1';
+  /** Stores métier synchronisées avec ros6_state. */
   const STORE_KEYS = [
     'ros6_command_center_v1',
     'ros6_train_v1',
     'ros6_ruche_v1',
     'ros6_tempete_v1',
-    'ros6_backups_v1',
   ];
+
+  /** Sauvegardes navigateur — hors sync (ne pas ajouter à STORE_KEYS). */
+  const BACKUPS_KEY = 'ros6_backups_v1';
 
   const COMMAND_CENTER_KEY = 'ros6_command_center_v1';
 
@@ -41,6 +46,9 @@
     error: { label: 'Erreur de synchronisation', css: 'is-error' },
     idle: { label: '—', css: '' },
   };
+
+  const LOCAL_QUOTA_USER_MESSAGE =
+    'Espace de stockage local du navigateur insuffisant (sauvegardes / cache). Ce n’est pas une panne Supabase : les données métier distantes peuvent être à jour.';
 
   /**
    * Hosts de développement : localStorage OK, aucune écriture ros6_state vers Supabase.
@@ -135,10 +143,16 @@
 
   function writeMeta(version) {
     localVersion = Number(version) || 0;
-    localStorage.setItem(
+    const result = safeLocalStorageSetItem(
       META_KEY,
       JSON.stringify({ version: localVersion, savedAt: new Date().toISOString() })
     );
+    if (!result.ok && result.quota) {
+      const err = new Error(LOCAL_QUOTA_USER_MESSAGE);
+      err.name = 'QuotaExceededError';
+      err.quotaExceeded = true;
+      throw err;
+    }
   }
 
   function parseStoreValue(raw) {
@@ -159,12 +173,55 @@
   }
 
   function markDirty(storeKey) {
+    if (storeKey === BACKUPS_KEY) {
+      // Backups locaux uniquement — ne jamais pousser vers ros6_state.
+      return false;
+    }
     if (!storeKey || !STORE_KEYS.includes(storeKey)) {
       console.warn('ROSSync.schedulePush: store inconnu ignoré', storeKey);
       return false;
     }
     pendingDirty.add(storeKey);
     return true;
+  }
+
+  function isQuotaExceededError(error) {
+    if (!error) return false;
+    if (error.quotaExceeded === true) return true;
+    const name = String(error.name || '');
+    const msg = String(error.message || error);
+    return (
+      name === 'QuotaExceededError' ||
+      name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+      /quota\s+has\s+been\s+exceeded/i.test(msg) ||
+      (/quota/i.test(msg) && /exceed/i.test(msg))
+    );
+  }
+
+  function safeLocalStorageSetItem(key, value) {
+    try {
+      localStorage.setItem(key, value);
+      return { ok: true };
+    } catch (error) {
+      if (isQuotaExceededError(error)) {
+        return { ok: false, quota: true, error };
+      }
+      throw error;
+    }
+  }
+
+  function notifyLocalQuotaIssue({ remoteSaved = false } = {}) {
+    const detail = remoteSaved
+      ? 'stockage local saturé (serveur OK)'
+      : 'stockage local saturé';
+    setSyncStatus(remoteSaved ? 'synced' : 'error', detail);
+    if (global.AppUI) {
+      AppUI.toast(
+        remoteSaved
+          ? `Enregistrement serveur OK. ${LOCAL_QUOTA_USER_MESSAGE}`
+          : LOCAL_QUOTA_USER_MESSAGE
+      );
+    }
   }
 
   function getLocalStore(key) {
@@ -343,6 +400,8 @@
   /**
    * Construit le document à écrire : base = distant, overlay = stores dirty locaux.
    * Les stores non dirty restent exactement ceux de Supabase.
+   * Les clés distantes hors STORE_KEYS (ex. ros6_backups_v1 hérité) sont recopées
+   * telles quelles — jamais écrasées ni effacées par ce client.
    * @param {object} [localStoresOverride] Pour tests / injection ; sinon lecture locale.
    */
   function buildPushPayload(remoteData, dirtyKeys, localStoresOverride) {
@@ -367,6 +426,7 @@
     });
 
     dirty.forEach((key) => {
+      if (key === BACKUPS_KEY) return;
       if (!STORE_KEYS.includes(key)) return;
       const local = localStores[key];
       if (local == null) return;
@@ -426,9 +486,6 @@
         if (key === COMMAND_CENTER_KEY) {
           return Array.isArray(parsed.players) && parsed.players.length > 0;
         }
-        if (key === 'ros6_backups_v1') {
-          return Array.isArray(parsed.backups) && parsed.backups.length > 0;
-        }
         return parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0;
       } catch (error) {
         return raw.length > 2;
@@ -481,20 +538,36 @@
     URL.revokeObjectURL(url);
   }
 
+  /**
+   * Écrit uniquement les stores métier synchronisées.
+   * Ne touche jamais à ros6_backups_v1 (local uniquement).
+   */
   function applyStoresToLocal(data, { reload = false } = {}) {
     suppressPush = true;
+    const quotaFailures = [];
     try {
       const stores = data && data.stores ? data.stores : {};
       STORE_KEYS.forEach((key) => {
+        if (key === BACKUPS_KEY) return;
         if (!(key in stores) || stores[key] == null) return;
         const value = stores[key];
-        localStorage.setItem(
-          key,
-          typeof value === 'string' ? value : JSON.stringify(value)
-        );
+        const text = typeof value === 'string' ? value : JSON.stringify(value);
+        const result = safeLocalStorageSetItem(key, text);
+        if (!result.ok && result.quota) quotaFailures.push(key);
       });
+      // Défense : même si un ancien payload contient des backups, ne pas les appliquer.
+      if (Object.prototype.hasOwnProperty.call(stores, BACKUPS_KEY)) {
+        /* ignore volontairement */
+      }
     } finally {
       suppressPush = false;
+    }
+    if (quotaFailures.length) {
+      const err = new Error(LOCAL_QUOTA_USER_MESSAGE);
+      err.name = 'QuotaExceededError';
+      err.quotaExceeded = true;
+      err.failedKeys = quotaFailures;
+      throw err;
     }
     if (reload) {
       global.location.reload();
@@ -605,6 +678,8 @@
         const dirtyForPush = allStores
           ? new Set(STORE_KEYS)
           : new Set(pendingDirty);
+        dirtyForPush.delete(BACKUPS_KEY);
+        pendingDirty.delete(BACKUPS_KEY);
 
         if (!dirtyForPush.size && !force) {
           setSyncStatus('synced');
@@ -643,10 +718,19 @@
 
         if (!force && isExternalRemoteConflict(remoteVersion)) {
           // Rebase : remote gagne pour les stores non dirty ; dirty conservés/fusionnés.
-          writeMeta(remoteVersion);
-          const rebased = rebaseLocalAfterRemote(remote.data || {}, dirtyForPush);
-          applyStoresToLocal(rebased, { reload: false });
-          hydrateAppFromLocalCache();
+          try {
+            writeMeta(remoteVersion);
+            const rebased = rebaseLocalAfterRemote(remote.data || {}, dirtyForPush);
+            applyStoresToLocal(rebased, { reload: false });
+            hydrateAppFromLocalCache();
+          } catch (localError) {
+            if (isQuotaExceededError(localError)) {
+              notifyLocalQuotaIssue({ remoteSaved: false });
+              lastResult = { ok: false, reason: 'local-quota', error: localError };
+              break;
+            }
+            throw localError;
+          }
           setSyncStatus('saving', 'fusion après conflit');
           if (global.AppUI && attempts === 1) {
             AppUI.toast(
@@ -703,15 +787,35 @@
 
         keysToWrite.forEach((key) => pendingDirty.delete(key));
         ownPushedVersions.add(nextVersion);
-        writeMeta(nextVersion);
-        applyStoresToLocal(payload, { reload: false });
-        setSyncStatus('synced');
-        lastResult = { ok: true, version: nextVersion, stores: [...keysToWrite] };
+
+        // Push distant OK — l’écriture localStorage ne doit plus masquer ça en « erreur Supabase ».
+        try {
+          writeMeta(nextVersion);
+          applyStoresToLocal(payload, { reload: false });
+          setSyncStatus('synced');
+          lastResult = { ok: true, version: nextVersion, stores: [...keysToWrite] };
+        } catch (localError) {
+          if (isQuotaExceededError(localError)) {
+            notifyLocalQuotaIssue({ remoteSaved: true });
+            lastResult = {
+              ok: true,
+              version: nextVersion,
+              stores: [...keysToWrite],
+              localQuotaExceeded: true,
+            };
+          } else {
+            throw localError;
+          }
+        }
       } while (pushQueued);
 
       return lastResult;
     } catch (error) {
       console.error('ROSSync push', error);
+      if (isQuotaExceededError(error)) {
+        notifyLocalQuotaIssue({ remoteSaved: false });
+        return { ok: false, reason: 'local-quota', error };
+      }
       const msg = error?.message || String(error);
       if (!navigator.onLine) setSyncStatus('offline');
       else setSyncStatus('error', msg);
@@ -903,11 +1007,15 @@
       setSyncStatus('synced');
     } catch (error) {
       console.error('ROSSync bootstrap', error);
-      setSyncStatus('error', error.message || 'cache local');
-      if (global.AppUI) {
-        AppUI.toast(
-          `Supabase indisponible (${error.message || error}) — cache local utilisé.`
-        );
+      if (isQuotaExceededError(error)) {
+        notifyLocalQuotaIssue({ remoteSaved: false });
+      } else {
+        setSyncStatus('error', error.message || 'cache local');
+        if (global.AppUI) {
+          AppUI.toast(
+            `Supabase indisponible (${error.message || error}) — cache local utilisé.`
+          );
+        }
       }
     }
 
@@ -1140,6 +1248,7 @@
     countFilledGlobalPower,
     shouldBlockDestructiveGlobalPowerOverwrite,
     STORE_KEYS,
+    BACKUPS_KEY,
     COMMAND_CENTER_KEY,
     /** Helpers exposés pour tests unitaires (non utilisés par l’UI). */
     __test: {
@@ -1147,6 +1256,10 @@
       mergeCommandCenterStore,
       buildPushPayload,
       rebaseLocalAfterRemote,
+      applyStoresToLocal,
+      markDirty,
+      isQuotaExceededError,
+      safeLocalStorageSetItem,
       countFilledGlobalPower,
       countFilledGlobalPowerInPlayers,
       protectPlayersGlobalPowers,
@@ -1155,6 +1268,8 @@
       isEmptyFieldValue,
       PROTECTED_NONEMPTY_PLAYER_FIELDS,
       pendingDirty,
+      BACKUPS_KEY,
+      LOCAL_QUOTA_USER_MESSAGE,
     },
   };
 })(window);

@@ -1,6 +1,7 @@
 /**
  * Sauvegardes automatiques locales — max 1/jour, 10 plus récentes.
  * Couvre toutes les stores applicatives (pas seulement l’UI).
+ * Local uniquement : jamais synchronisées avec ros6_state / Supabase.
  */
 (function (global) {
   const BACKUPS_KEY = 'ros6_backups_v1';
@@ -19,6 +20,21 @@
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
   }
 
+  function isQuotaExceededError(error) {
+    if (!error) return false;
+    if (global.ROSSync?.__test?.isQuotaExceededError) {
+      return ROSSync.__test.isQuotaExceededError(error);
+    }
+    const name = String(error.name || '');
+    const msg = String(error.message || error);
+    return (
+      name === 'QuotaExceededError' ||
+      name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+      /quota\s+has\s+been\s+exceeded/i.test(msg) ||
+      (/quota/i.test(msg) && /exceed/i.test(msg))
+    );
+  }
+
   function loadIndex() {
     try {
       const raw = localStorage.getItem(BACKUPS_KEY);
@@ -33,9 +49,20 @@
   }
 
   function saveIndex(index) {
-    localStorage.setItem(BACKUPS_KEY, JSON.stringify(index));
-    if (global.ROSSync && typeof ROSSync.schedulePush === 'function') {
-      ROSSync.schedulePush('ros6_backups_v1');
+    try {
+      localStorage.setItem(BACKUPS_KEY, JSON.stringify(index));
+      return true;
+    } catch (error) {
+      if (isQuotaExceededError(error)) {
+        console.error('Sauvegardes: quota localStorage', error);
+        if (global.AppUI) {
+          AppUI.toast(
+            'Espace de stockage local du navigateur insuffisant pour enregistrer une sauvegarde. Les données métier ne sont pas touchées.'
+          );
+        }
+        return false;
+      }
+      throw error;
     }
   }
 
@@ -60,6 +87,30 @@
     if (bytes < 1024) return `${bytes} o`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
+  }
+
+  /** Stats affichage Paramètres — ne lit / ne modifie que la clé backups. */
+  function getLocalBackupsStats() {
+    const index = loadIndex();
+    const count = index.backups.length;
+    let rawBytes = 0;
+    try {
+      const raw = localStorage.getItem(BACKUPS_KEY);
+      rawBytes = raw ? raw.length : 0;
+    } catch (error) {
+      rawBytes = 0;
+    }
+    const payloadSum = index.backups.reduce(
+      (sum, b) => sum + (Number(b.size) || String(b.payload || '').length || 0),
+      0
+    );
+    return {
+      count,
+      max: MAX_BACKUPS,
+      rawBytes,
+      payloadSum,
+      label: `${count} / ${MAX_BACKUPS} sauvegarde(s) · ~${formatSize(rawBytes)} en local`,
+    };
   }
 
   function pruneToMax(backups) {
@@ -99,7 +150,8 @@
     };
 
     index.backups = pruneToMax([entry, ...index.backups]);
-    saveIndex(index);
+    const saved = saveIndex(index);
+    if (!saved) return { created: false, reason: 'quota' };
     return { created: true, entry };
   }
 
@@ -188,10 +240,18 @@
     els.list = document.getElementById('backupsList');
     els.empty = document.getElementById('backupsEmpty');
     els.btnCreate = document.getElementById('btnCreateBackupNow');
+    els.stats = document.getElementById('backupsStorageHint');
+  }
+
+  function renderStats() {
+    if (!els.stats) return;
+    const stats = getLocalBackupsStats();
+    els.stats.textContent = `${stats.label} · hors synchronisation Supabase`;
   }
 
   function render() {
     if (!els.list) return;
+    renderStats();
     const backups = listBackups();
     if (!backups.length) {
       els.list.innerHTML = '';
@@ -201,16 +261,20 @@
     els.empty?.classList.add('hidden');
     els.list.innerHTML = backups
       .map((b) => {
-        const d = new Date(b.createdAt);
-        const date = Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('fr-FR');
-        const time = Number.isNaN(d.getTime())
-          ? '—'
-          : d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        const when = b.createdAt
+          ? new Date(b.createdAt).toLocaleString('fr-FR', {
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : '—';
         return `
           <article class="stack-item backup-item" data-backup-id="${b.id}">
-            <div class="stack-item-main">
-              <h4 class="stack-item-title">${date} · ${time}</h4>
-              <p class="panel-subtitle">${kindLabel(b.kind)} · ${formatSize(b.size)}</p>
+            <div>
+              <strong>${kindLabel(b.kind)} — ${when}</strong>
+              <p class="panel-subtitle">${formatSize(Number(b.size) || 0)}</p>
             </div>
             <button type="button" class="btn btn-primary btn-sm" data-backup-restore="${b.id}">
               Restaurer
@@ -227,23 +291,22 @@
       AppUI.toast('Sauvegarde introuvable.');
       return;
     }
-    const d = new Date(entry.createdAt);
-    const label = Number.isNaN(d.getTime()) ? entry.id : d.toLocaleString('fr-FR');
+    const label = entry.createdAt
+      ? new Date(entry.createdAt).toLocaleString('fr-FR')
+      : 'cette sauvegarde';
 
     const currentRaw = localStorage.getItem('ros6_command_center_v1');
     let currentGp = 0;
     let backupGp = 0;
     try {
-      if (currentRaw) {
-        const cur = JSON.parse(currentRaw);
-        currentGp = (cur.players || []).filter((p) => p && p.globalPowerTierId).length;
-      }
+      const current = currentRaw ? JSON.parse(currentRaw) : null;
+      currentGp = (current?.players || []).filter((p) => p && p.globalPowerTierId).length;
       const payload = parseBackupPayload(entry);
       const cc = payload?.data?.ros6_command_center_v1;
       const ccObj = typeof cc === 'string' ? JSON.parse(cc) : cc;
       backupGp = (ccObj?.players || []).filter((p) => p && p.globalPowerTierId).length;
     } catch (error) {
-      /* compteurs indicatifs */
+      /* ignore */
     }
 
     const gpWarn =
@@ -273,6 +336,9 @@
     if (result.created) {
       AppUI.toast('Sauvegarde créée.');
       render();
+    } else if (result.reason === 'quota') {
+      /* toast déjà affiché dans saveIndex */
+      renderStats();
     } else {
       AppUI.toast('Sauvegarde non créée.');
     }
@@ -286,6 +352,7 @@
       const btn = event.target.closest('[data-backup-restore]');
       if (btn) onRestore(btn.dataset.backupRestore);
     });
+    render();
   }
 
   global.BackupsModule = {
@@ -295,6 +362,7 @@
     ensureDailyAutoBackup,
     listBackups,
     restoreBackup,
+    getLocalBackupsStats,
     BACKUPS_KEY,
     MAX_BACKUPS,
   };
