@@ -173,6 +173,7 @@
       vs: Boolean(detected.vs || follow?.reasons?.vs),
       hero: Boolean(detected.hero || follow?.reasons?.hero),
       praise: Boolean(detected.praise || follow?.reasons?.praise),
+      discret: Boolean(detected.discret || follow?.reasons?.discret || player?.discret),
       manual: Boolean(follow?.manual || follow?.reasons?.manual || detected.manual),
     };
   }
@@ -182,15 +183,22 @@
     let changed = false;
     (state.players || []).forEach((player) => {
       if (!player || player.status !== 'Actif') return;
-      if (player.absent) {
+      if (player.absent && !player.discret) {
         // Hors suivi : l’absence se gère dans Liste des membres uniquement.
         const existing = state.playerFollowUps?.[player.id];
-        if (existing && existing.status !== 'done' && !existing.manual && !existing.reasons?.manual) {
+        if (
+          existing &&
+          existing.status !== 'done' &&
+          !existing.manual &&
+          !existing.reasons?.manual &&
+          !existing.reasons?.discret
+        ) {
           const onlyLegacyAbsent =
             !existing.reasons?.vs &&
             !existing.reasons?.hero &&
             !existing.reasons?.praise &&
-            !existing.reasons?.manual;
+            !existing.reasons?.manual &&
+            !existing.reasons?.discret;
           if (onlyLegacyAbsent) {
             existing.status = 'done';
             existing.closedAt = new Date().toISOString();
@@ -203,30 +211,47 @@
       const detected = ROSModels.detectFollowUpReasons(player, state);
       const existing = state.playerFollowUps?.[player.id];
       const hasOpen = existing && existing.status !== 'done';
-      const autoHit = detected.vs || detected.hero || detected.praise;
+      const autoHit =
+        detected.vs || detected.hero || detected.praise || detected.discret;
       if (!autoHit && !hasOpen && !detected.manual) return;
-      if (existing?.status === 'done') return;
 
-      if (!existing) {
-        const seedReasons = {
-          vs: detected.vs,
-          hero: detected.hero,
-          praise: detected.praise,
-          manual: Boolean(detected.manual),
-        };
-        const row = ensureCase(state, player.id, {
-          reasons: seedReasons,
-          manual: Boolean(detected.manual),
+      // Suivi terminé : ne rouvre pas VS/héros. Discret : rouvre si la case liste est encore cochée.
+      if (existing?.status === 'done') {
+        if (!player.discret) return;
+        existing.status = 'to_contact';
+        existing.closedAt = null;
+        existing.reasons = ROSModels.emptyFollowUpReasons({
+          ...existing.reasons,
+          discret: true,
         });
-        applySpecialistIfNeeded(row, seedReasons, state);
+        existing.updatedAt = new Date().toISOString();
+        applySpecialistIfNeeded(existing, existing.reasons, state);
         changed = true;
+      }
+
+      if (!existing || existing.status === 'done') {
+        if (!existing) {
+          const seedReasons = {
+            vs: detected.vs,
+            hero: detected.hero,
+            praise: detected.praise,
+            discret: detected.discret,
+            manual: Boolean(detected.manual),
+          };
+          const row = ensureCase(state, player.id, {
+            reasons: seedReasons,
+            manual: Boolean(detected.manual),
+          });
+          applySpecialistIfNeeded(row, seedReasons, state);
+          changed = true;
+        }
         return;
       }
 
       const row = ensureCase(state, player.id);
       if (row.status === 'done') return;
       let rowChanged = false;
-      ['vs', 'hero', 'praise'].forEach((key) => {
+      ['vs', 'hero', 'praise', 'discret'].forEach((key) => {
         if (detected[key] && !row.reasons[key]) {
           row.reasons[key] = true;
           rowChanged = true;
@@ -249,6 +274,7 @@
         row.reasons.vs ||
         row.reasons.hero ||
         row.reasons.praise ||
+        row.reasons.discret ||
         row.manual ||
         row.reasons.manual;
       if (!stillRelevant && row.status !== 'done') {
@@ -286,6 +312,7 @@
           !displayReasons.vs &&
           !displayReasons.hero &&
           !displayReasons.praise &&
+          !displayReasons.discret &&
           !displayReasons.manual
         ) {
           return null;
@@ -294,6 +321,7 @@
         if (reasonFilter === 'vs' && !displayReasons.vs) return null;
         if (reasonFilter === 'hero' && !displayReasons.hero) return null;
         if (reasonFilter === 'praise' && !displayReasons.praise) return null;
+        if (reasonFilter === 'discret' && !displayReasons.discret) return null;
         if (reasonFilter === 'manual' && !displayReasons.manual) return null;
         if (assigneeFilter === 'unassigned' && follow.assigneePlayerId) return null;
         if (
@@ -600,7 +628,7 @@
               )}">
             <label class="field">
               <span>Nouveau commentaire</span>
-              <textarea id="suiviNoteText" class="input" rows="3" maxlength="800" placeholder="Ex. : informé du seuil VS, va travailler ses héros…" required></textarea>
+              <textarea id="suiviNoteText" class="input" rows="3" maxlength="800" placeholder="Ex. : tout va bien, questions VS / troupes…" required></textarea>
             </label>
             <button type="submit" class="btn btn-primary">Ajouter le commentaire</button>
           </form>`
@@ -687,6 +715,7 @@
 
     const groups = [
       { title: 'À féliciter', rows: take((r) => r.reasons.praise) },
+      { title: 'Discrets', rows: take((r) => r.reasons.discret) },
       { title: 'À contacter', rows: take((r) => r.follow.status === 'to_contact') },
       { title: 'Autres suivis', rows: take(() => true) },
     ];
@@ -743,22 +772,31 @@
     }
     ROSStorage.update((s) => {
       const row = ensureCase(s, playerId);
+      const player = (s.players || []).find((p) => p.id === playerId);
       row.status = ROSModels.normalizeFollowUpStatus(status);
       row.updatedAt = new Date().toISOString();
       if (row.status === 'done') {
         row.closedAt = new Date().toISOString();
+        // Terminer un Discret = retirer la case liste, sinon le sync le rouvre aussitôt.
+        if (player && (player.discret || row.reasons?.discret)) {
+          player.discret = false;
+          row.reasons = ROSModels.emptyFollowUpReasons({
+            ...row.reasons,
+            discret: false,
+          });
+        }
       } else {
         row.closedAt = null;
       }
       if (row.status === 'contacted' || row.status === 'in_progress') {
         if (!row.contactedAt) {
-          const player = s.players.find((p) => p.id === playerId);
           const detected = ROSModels.detectFollowUpReasons(player, s);
           row.contactedAt = new Date().toISOString();
           row.contactReasons = ROSModels.emptyFollowUpReasons({
             vs: Boolean(detected.vs || row.reasons.vs),
             hero: Boolean(detected.hero || row.reasons.hero),
             praise: Boolean(detected.praise || row.reasons.praise),
+            discret: Boolean(detected.discret || row.reasons.discret || player?.discret),
             manual: Boolean(row.manual || row.reasons.manual),
           });
         }
@@ -782,6 +820,7 @@
         vs: Boolean(detected.vs || row.reasons.vs),
         hero: Boolean(detected.hero || row.reasons.hero),
         praise: Boolean(detected.praise || row.reasons.praise),
+        discret: Boolean(detected.discret || row.reasons.discret || player?.discret),
         manual: Boolean(row.manual || row.reasons.manual),
       });
       if (row.status === 'to_contact') row.status = 'contacted';
@@ -872,6 +911,7 @@
       vs: 'followUpSpecialistVs',
       praise: 'followUpSpecialistPraise',
       hero: 'followUpSpecialistHero',
+      discret: 'followUpSpecialistDiscret',
       manual: 'followUpSpecialistManual',
     };
     return map[key] || '';
@@ -987,10 +1027,12 @@
           vs: false,
           praise: false,
           hero: Boolean(row.reasons?.hero),
+          discret: Boolean(row.reasons?.discret),
           manual: Boolean(row.manual || row.reasons?.manual),
         });
         row.manual = Boolean(row.manual || row.reasons.manual);
-        const stillRelevant = row.reasons.hero || row.manual;
+        const stillRelevant =
+          row.reasons.hero || row.reasons.discret || row.manual;
         if (!stillRelevant) {
           row.status = 'done';
           row.closedAt = new Date().toISOString();

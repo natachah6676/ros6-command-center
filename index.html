@@ -599,6 +599,7 @@
             <option value="vs">VS sous seuil</option>
             <option value="praise">À féliciter</option>
             <option value="hero">Puissance héros</option>
+            <option value="discret">Discret</option>
             <option value="manual">Aide / manuel</option>
           </select>
           <label class="checkbox-field suivi-show-done">
@@ -915,6 +916,10 @@
                 <select id="followUpSpecialistHero" class="input"></select>
               </label>
               <label class="field">
+                <span>Discret</span>
+                <select id="followUpSpecialistDiscret" class="input"></select>
+              </label>
+              <label class="field">
                 <span>Aide / manuel</span>
                 <select id="followUpSpecialistManual" class="input"></select>
               </label>
@@ -1028,6 +1033,15 @@
             <span>Absent</span>
           </span>
           <small class="field-hint">Ignoré du VS et des tirages Train — n’efface pas l’historique</small>
+        </label>
+        <label class="field checkbox-field" id="playerDiscretField">
+          <span class="checkbox-line">
+            <input type="checkbox" id="playerDiscret" />
+            <span>Discret</span>
+          </span>
+          <small class="field-hint"
+            >Discret mais fort — suivi léger (prise de nouvelles) dans Gestion des membres</small
+          >
         </label>
       </div>
       <footer class="modal-footer">
@@ -1334,15 +1348,15 @@
   <script src="js/supabase-client.js?v=20260804-4"></script>
   <script src="js/profiles.js?v=20260911-refaccess1"></script>
   <script src="js/supabase-sync.js?v=20260910-localguard1"></script>
-  <script src="js/models.js?v=20260911-novshist1"></script>
+  <script src="js/models.js?v=20260912-discret1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
   <script src="js/player-identity.js?v=20260911-vscounter1"></script>
   <script src="js/storage.js?v=20260910-vsclose1"></script>
   <script src="js/ui-helpers.js?v=20260802-4"></script>
   <script src="js/insights.js?v=20260910-vsclose1"></script>
   <script src="js/player-stats.js?v=20260802-4"></script>
-  <script src="js/players.js?v=20260911-nodon1"></script>
-  <script src="js/suivi.js?v=20260911-refaccess1"></script>
+  <script src="js/players.js?v=20260912-discret1"></script>
+  <script src="js/suivi.js?v=20260912-discret1"></script>
   <script src="js/command.js?v=20260806-cmd1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260911-novshist1"></script>
