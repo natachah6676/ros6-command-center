@@ -292,6 +292,11 @@ assert(
 );
 
 assert(html.includes('data-tab="suivi"'), 'onglet Gestion des membres');
+assert(html.includes('data-tab="historique-suivi"'), 'onglet Historique suivi');
+assert(html.includes('id="panel-historique-suivi"'), 'panneau historique suivi');
+assert(html.includes('id="historiqueSuiviBody"'), 'table historique suivi');
+assert(suiviCode.includes('renderHistory'), 'SuiviModule.renderHistory');
+assert(suiviCode.includes('reactivateFollowUp'), 'réactivation historique');
 assert(html.includes('id="panel-suivi"'), 'panneau suivi');
 assert(html.includes('id="followUpVsMinDays"'), 'seuil VS paramètres');
 assert(html.includes('id="btnSuiviCopyList"'), 'bouton copier Discord');

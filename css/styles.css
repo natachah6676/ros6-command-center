@@ -1519,6 +1519,13 @@ tbody tr:nth-child(odd) {
   background: var(--bg-row-odd);
 }
 
+.historique-suivi-notes {
+  max-width: 28rem;
+  white-space: normal;
+  font-size: 0.92rem;
+  color: var(--text-muted);
+}
+
 tbody tr:nth-child(even) {
   background: var(--bg-row-even);
 }

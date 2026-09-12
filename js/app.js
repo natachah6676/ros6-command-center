@@ -116,6 +116,7 @@
     if (tabName === 'command') CommandModule.render();
     if (tabName === 'players') PlayersModule.render();
     if (tabName === 'suivi' && globalThis.SuiviModule) SuiviModule.render();
+    if (tabName === 'historique-suivi' && globalThis.SuiviModule) SuiviModule.renderHistory();
     if (tabName === 'vs') VSModule.render();
     if (tabName === 'train' && globalThis.TrainModule) TrainModule.render();
     if (tabName === 'ruche' && globalThis.RucheModule) RucheModule.render();
@@ -414,6 +415,7 @@
     CommandModule.render();
     PlayersModule.render();
     if (globalThis.SuiviModule) SuiviModule.render();
+    if (globalThis.SuiviModule?.renderHistory) SuiviModule.renderHistory();
     VSModule.render();
     if (globalThis.TrainModule) TrainModule.render();
     if (globalThis.RucheModule) RucheModule.render();
