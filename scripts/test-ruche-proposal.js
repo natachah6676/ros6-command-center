@@ -43,6 +43,10 @@ assert(html.includes('Valider cette proposition comme nouvelle ruche'), 'Libell�
 assert(rucheCode.includes('seatOfficersNearMarshal'), 'Assise officiers près Maréchal');
 assert(rucheCode.includes('isAccessOfficerPlayerId'), 'Officiers via comptes Accès');
 assert(rucheCode.includes('getPlayerPowerSortValue'), 'Tri puissance héros');
+assert(
+  rucheCode.includes('Pas de puissance héros : bonus'),
+  'Officiers sans tri héros'
+);
 assert(html.includes('ne change jamais automatiquement'), 'Mention non-auto actuelle');
 
 console.log('\n=== Module expose ===');
@@ -334,6 +338,16 @@ assert(
   chebyshevToMarshal(propFullKeep.grid, 'pStrong') <=
     chebyshevToMarshal(propFullKeep.grid, 'pWeak'),
   'Full : Strong (héros) plus près que Weak'
+);
+const officerDistsFull = ['r5', 'r4a', 'r4b'].map((id) =>
+  chebyshevToMarshal(propFullKeep.grid, id)
+);
+const memberDistsFull = ['pStrong', 'pMid', 'pWeak'].map((id) =>
+  chebyshevToMarshal(propFullKeep.grid, id)
+);
+assert(
+  Math.max(...officerDistsFull) <= Math.min(...memberDistsFull),
+  'Full : tous les R4/R5 plus près (ou égal) que le plus proche membre'
 );
 
 console.log('\n=== Full + option : R4/R5 peuvent bouger dans l’optimiseur ===');
