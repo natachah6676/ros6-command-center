@@ -172,6 +172,7 @@
     let changed = false;
     const resolve = (value) => {
       if (!value || value === 'FREE') return value;
+      if (value === 'MARSHAL' || value === 'marshal') return 'MARSHAL';
       if (isKnownPlayerId(players, value)) return value;
       if (
         options.explicitPseudo &&
@@ -188,6 +189,14 @@
         const row = rucheState.grid[r];
         if (!Array.isArray(row)) continue;
         for (let c = 0; c < row.length; c += 1) {
+          // Case centrale = événement Maréchal fixe (jamais un id joueur).
+          if (r === 4 && c === 4) {
+            if (row[c] !== 'MARSHAL') {
+              row[c] = 'MARSHAL';
+              changed = true;
+            }
+            continue;
+          }
           const next = resolve(row[c]);
           if (next !== row[c]) {
             row[c] = next;

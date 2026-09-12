@@ -41,6 +41,8 @@ assert(html.includes('id="rucheAllowOfficerMoves"'), 'Case déplacement R4/R5');
 assert(html.includes('Autoriser aussi l’optimiseur'), 'Libellé option R4/R5');
 assert(html.includes('Valider cette proposition comme nouvelle ruche'), 'Libellé validation');
 assert(rucheCode.includes('seatOfficersNearMarshal'), 'Assise officiers près Maréchal');
+assert(rucheCode.includes("const MARSHAL = 'MARSHAL'"), 'Sentinelle case fixe Maréchal');
+assert(rucheCode.includes('isMarshalLandmark'), 'Détection événement Maréchal');
 assert(rucheCode.includes('isAccessOfficerPlayerId'), 'Officiers via comptes Accès');
 assert(rucheCode.includes('getPlayerPowerSortValue'), 'Tri puissance héros');
 assert(
@@ -124,9 +126,17 @@ const GRID = Ruche.GRID_SIZE;
 const MR = Ruche.MARSHAL_ROW;
 const MC = Ruche.MARSHAL_COL;
 const FREE = Ruche.FREE;
+const MARSHAL = Ruche.MARSHAL;
 
 function emptyGrid() {
-  return Array.from({ length: GRID }, () => Array.from({ length: GRID }, () => FREE));
+  const g = Array.from({ length: GRID }, () => Array.from({ length: GRID }, () => FREE));
+  g[MR][MC] = MARSHAL;
+  return g;
+}
+
+function placeMarshalOfficer(grid, id = 'm1') {
+  // Ancien « joueur Maréchal » : désormais officier R5 hors case centrale.
+  grid[MR][MC + 2] = id;
 }
 
 function findPos(grid, bottomId, playerId) {
@@ -143,7 +153,7 @@ const dist = (pos) => Math.max(Math.abs(pos.row - MR), Math.abs(pos.col - MC));
 
 console.log('\n=== Correction ciblée (peu de déplacements) ===');
 const grid = emptyGrid();
-grid[MR][MC] = 'm1';
+placeMarshalOfficer(grid, 'm1');
 grid[0][0] = 'r5';
 grid[0][1] = 'r4a';
 grid[9][9] = 'r4b';
@@ -154,7 +164,7 @@ grid[MR + 1][MC] = 'pMid';
 
 const proposal = Ruche.buildOptimizedProposal(grid, FREE);
 
-assert(proposal.grid[MR][MC] === 'm1', 'Maréchal conservé au centre');
+assert(proposal.grid[MR][MC] === MARSHAL, 'Événement Maréchal fixe au centre');
 assert(proposal.grid[0][0] === 'r5', 'R5 conservé');
 assert(proposal.grid[0][1] === 'r4a', 'R4a conservé');
 assert(proposal.grid[9][9] === 'r4b', 'R4b conservé');
@@ -176,7 +186,7 @@ assert(stats.estimatedGainPct >= 90, `Gain/qualité élevée (got ${stats.estima
 
 console.log('\n=== Déjà cohérent → 0 déplacement ===');
 const grid2 = emptyGrid();
-grid2[MR][MC] = 'm1';
+placeMarshalOfficer(grid2, 'm1');
 grid2[0][0] = 'r5';
 grid2[0][1] = 'r4a';
 grid2[9][9] = 'r4b';
@@ -206,7 +216,7 @@ console.log('\n=== Joueurs bien placés non déplacés ===');
   }
 });
 const grid3 = emptyGrid();
-grid3[MR][MC] = 'm1';
+placeMarshalOfficer(grid3, 'm1');
 grid3[0][0] = 'r5';
 grid3[0][1] = 'r4a';
 grid3[9][9] = 'r4b';
@@ -228,7 +238,7 @@ assert(stats3.moved <= 4, `Opti locale ≤ 4 déplacements (got ${stats3.moved})
 
 console.log('\n=== Ruche quasi pleine : pas de reorg massive ===');
 const grid4 = emptyGrid();
-grid4[MR][MC] = 'm1';
+placeMarshalOfficer(grid4, 'm1');
 grid4[0][0] = 'r5';
 grid4[0][1] = 'r4a';
 // Remplit par anneaux (centre → extérieur), puissances décroissantes → quasi optimal
@@ -273,7 +283,7 @@ assert(stats4.moved <= 10, `Quelques joueurs seulement (got ${stats4.moved})`);
 
 console.log('\n=== Soft : R4/R5 verrouillés même mal placés ===');
 const gridSoft = emptyGrid();
-gridSoft[MR][MC] = 'm1';
+placeMarshalOfficer(gridSoft, 'm1');
 // Officiers volontairement mal placés (loin) — ne doivent pas bouger
 gridSoft[9][0] = 'r5';
 gridSoft[9][1] = 'r4a';
@@ -282,6 +292,7 @@ gridSoft[MR][MC + 1] = 'pWeak';
 gridSoft[8][0] = 'pStrong';
 gridSoft[7][0] = 'pMid';
 const propSoft = Ruche.buildOptimizedProposal(gridSoft, FREE, { mode: 'soft' });
+assert(propSoft.grid[MR][MC] === MARSHAL, 'Soft : événement Maréchal au centre');
 assert(propSoft.grid[9][0] === 'r5', 'Soft : R5 inchangé');
 assert(propSoft.grid[9][1] === 'r4a', 'Soft : R4a inchangé');
 assert(propSoft.grid[9][2] === 'r4b', 'Soft : R4b inchangé');
@@ -378,7 +389,7 @@ setPlayerStatus('r4a', 'Actif');
 setPlayerStatus('r4b', 'Actif');
 
 const gridRoster = emptyGrid();
-gridRoster[MR][MC] = 'm1';
+placeMarshalOfficer(gridRoster, 'm1');
 gridRoster[0][0] = 'r5';
 gridRoster[0][1] = 'r4a';
 gridRoster[9][9] = 'r4b';
@@ -429,7 +440,7 @@ setPlayerStatus('r4b', 'Actif', { role: 'Membre' });
 const propRole = Ruche.buildOptimizedProposal(
   (() => {
     const g = emptyGrid();
-    g[MR][MC] = 'm1';
+    placeMarshalOfficer(g, 'm1');
     g[0][0] = 'r5';
     g[0][1] = 'r4a';
     g[9][9] = 'r4b'; // ex-R4 loin
