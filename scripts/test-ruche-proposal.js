@@ -43,6 +43,10 @@ assert(html.includes('Valider cette proposition comme nouvelle ruche'), 'Libell�
 assert(rucheCode.includes('seatOfficersNearMarshal'), 'Assise officiers près Maréchal');
 assert(rucheCode.includes('isAccessOfficerPlayerId'), 'Officiers via comptes Accès');
 assert(rucheCode.includes('getPlayerPowerSortValue'), 'Tri puissance héros');
+assert(
+  rucheCode.includes('Pas de puissance héros : bonus'),
+  'Officiers sans tri héros'
+);
 assert(html.includes('ne change jamais automatiquement'), 'Mention non-auto actuelle');
 
 console.log('\n=== Module expose ===');

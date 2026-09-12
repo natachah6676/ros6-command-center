@@ -568,11 +568,16 @@
     });
   }
 
-  function compareOfficersForSeating(aId, bId, mainState, scoreMap) {
+  function compareOfficersForSeating(aId, bId) {
+    // Pas de puissance héros : bonus d’attaque Maréchal = proximité seule.
     const ra = officerSeatRank(getPlayerById(aId));
     const rb = officerSeatRank(getPlayerById(bId));
     if (ra !== rb) return ra - rb;
-    return compareByHeroPowerDesc(aId, bId, mainState, scoreMap);
+    const a = getPlayerById(aId);
+    const b = getPlayerById(bId);
+    return String(a?.pseudo || '').localeCompare(String(b?.pseudo || ''), 'fr', {
+      sensitivity: 'base',
+    });
   }
 
   function sortSlotsNearMarshal(slots) {
@@ -583,6 +588,7 @@
 
   /**
    * Place les R4/R5 (rôle ou Accès) au plus près du Maréchal.
+   * Ordre : R5 puis R4, puis pseudo — sans tenir compte de la puissance héros.
    * reseatAll : les retire d’abord de leurs cases (plan complet).
    */
   function seatOfficersNearMarshal(hive, mainState, lockOpts, options = {}) {
@@ -607,8 +613,7 @@
     const toPlace = officerIds.filter((id) => !onHive.has(id));
     if (!toPlace.length) return 0;
 
-    const scoreMap = buildRuchePowerScoreMap(mainState);
-    toPlace.sort((a, b) => compareOfficersForSeating(a, b, mainState, scoreMap));
+    toPlace.sort((a, b) => compareOfficersForSeating(a, b));
     // Pendant l’assise des officiers, autoriser toutes les cases libres non-maréchal.
     const seatLock = { ...lockOpts, allowOfficerMoves: true };
     const empties = sortSlotsNearMarshal(listUnlockedEmptySlots(hive, seatLock));
