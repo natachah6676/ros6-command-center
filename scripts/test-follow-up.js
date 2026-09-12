@@ -294,6 +294,8 @@ assert(
 assert(html.includes('data-tab="suivi"'), 'onglet Gestion des membres');
 assert(html.includes('data-tab="historique-suivi"'), 'onglet Historique suivi');
 assert(html.includes('id="panel-historique-suivi"'), 'panneau historique suivi');
+assert(html.includes('id="btnClearSuiviHistory"'), 'bouton effacer historique suivi');
+assert(suiviCode.includes('clearDoneFollowUpHistory'), 'fonction clearDoneFollowUpHistory');
 assert(html.includes('id="historiqueSuiviBody"'), 'table historique suivi');
 assert(suiviCode.includes('renderHistory'), 'SuiviModule.renderHistory');
 assert(suiviCode.includes('reactivateFollowUp'), 'réactivation historique');
