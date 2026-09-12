@@ -407,8 +407,47 @@
     return role === 'R5' || role === 'R4';
   }
 
+  /** Compte Accès R4/R5 lié à ce joueur (actif). */
+  function isAccessOfficerPlayerId(playerId) {
+    if (!playerId || !global.ROSProfiles || typeof ROSProfiles.listProfiles !== 'function') {
+      return false;
+    }
+    return ROSProfiles.listProfiles().some(
+      (prof) =>
+        prof &&
+        prof.status === 'Actif' &&
+        prof.playerId === playerId &&
+        isOfficerRole(prof.role)
+    );
+  }
+
+  function accessOfficerRole(playerId) {
+    if (!playerId || !global.ROSProfiles || typeof ROSProfiles.listProfiles !== 'function') {
+      return null;
+    }
+    const hit = ROSProfiles.listProfiles().find(
+      (prof) =>
+        prof &&
+        prof.status === 'Actif' &&
+        prof.playerId === playerId &&
+        isOfficerRole(prof.role)
+    );
+    return hit?.role || null;
+  }
+
   function isOfficerPlayer(player) {
-    return Boolean(player && isOfficerRole(player.role));
+    if (!player) return false;
+    if (isOfficerRole(player.role)) return true;
+    return isAccessOfficerPlayerId(player.id);
+  }
+
+  /** Priorité d’assise : R5 puis R4 (rôle liste ou compte Accès). */
+  function officerSeatRank(player) {
+    if (!player) return 99;
+    const accessRole = accessOfficerRole(player.id);
+    if (player.role === 'R5' || accessRole === 'R5') return 0;
+    if (player.role === 'R4' || accessRole === 'R4') return 1;
+    return 99;
   }
 
   function slotKey(slot) {
@@ -487,15 +526,100 @@
   }
 
   function buildRuchePowerScoreMap(mainState) {
-    const players = (mainState?.players || []).filter((p) => p && p.status === 'Actif');
-    return ROSModels.buildCompositePowerScoreMap(players, mainState);
+    // Placement Ruche : puissance héros seule (plus haut = plus près du Maréchal).
+    const map = new Map();
+    (mainState?.players || []).forEach((p) => {
+      if (!p || p.status !== 'Actif') return;
+      const hero = ROSModels.getPlayerPowerSortValue(p, mainState);
+      if (hero >= 0) map.set(p.id, hero);
+    });
+    return map;
   }
 
-  /** Score puissance 70/30 ; null = données incomplètes (neutre dans les comparaisons). */
+  /** Score héros ; null = non renseignée (neutre / placé plus loin). */
   function playerPowerValue(playerId, mainState, scoreMap) {
     const map = scoreMap || buildRuchePowerScoreMap(mainState);
-    const score = ROSModels.getPlayerCompositePowerScore(getPlayerById(playerId), map);
+    if (map instanceof Map) {
+      if (!map.has(playerId)) return null;
+      return map.get(playerId);
+    }
+    // Compat si une Map composite était encore passée
+    const score = ROSModels.getPlayerCompositePowerScore?.(getPlayerById(playerId), map);
     return score == null ? null : score;
+  }
+
+  function compareByHeroPowerDesc(aId, bId, mainState, scoreMap) {
+    const pa = playerPowerValue(aId, mainState, scoreMap);
+    const pb = playerPowerValue(bId, mainState, scoreMap);
+    if (pa == null && pb == null) {
+      const a = getPlayerById(aId);
+      const b = getPlayerById(bId);
+      return String(a?.pseudo || '').localeCompare(String(b?.pseudo || ''), 'fr', {
+        sensitivity: 'base',
+      });
+    }
+    if (pa == null) return 1;
+    if (pb == null) return -1;
+    if (pb !== pa) return pb - pa;
+    const a = getPlayerById(aId);
+    const b = getPlayerById(bId);
+    return String(a?.pseudo || '').localeCompare(String(b?.pseudo || ''), 'fr', {
+      sensitivity: 'base',
+    });
+  }
+
+  function compareOfficersForSeating(aId, bId, mainState, scoreMap) {
+    const ra = officerSeatRank(getPlayerById(aId));
+    const rb = officerSeatRank(getPlayerById(bId));
+    if (ra !== rb) return ra - rb;
+    return compareByHeroPowerDesc(aId, bId, mainState, scoreMap);
+  }
+
+  function sortSlotsNearMarshal(slots) {
+    return slots.slice().sort(
+      (a, b) => chebyshevDist(a) - chebyshevDist(b) || slotKey(a).localeCompare(slotKey(b))
+    );
+  }
+
+  /**
+   * Place les R4/R5 (rôle ou Accès) au plus près du Maréchal.
+   * reseatAll : les retire d’abord de leurs cases (plan complet).
+   */
+  function seatOfficersNearMarshal(hive, mainState, lockOpts, options = {}) {
+    const reseatAll = options.reseatAll === true;
+    const marshalId = getMarshalId(hive.grid);
+    const officerIds = getActivePlayers()
+      .filter((p) => isOfficerPlayer(p) && p.id !== marshalId)
+      .map((p) => p.id);
+    if (!officerIds.length) return 0;
+
+    if (reseatAll) {
+      const pos = collectPlayerPositions(hive.grid, hive.bottomId);
+      officerIds.forEach((id) => {
+        const slot = pos.get(id);
+        if (!slot) return;
+        if (slot.type === 'grid' && isMarshalCell(slot.row, slot.col)) return;
+        setHiveSlot(hive, slot, FREE);
+      });
+    }
+
+    const onHive = collectPlayerPositions(hive.grid, hive.bottomId);
+    const toPlace = officerIds.filter((id) => !onHive.has(id));
+    if (!toPlace.length) return 0;
+
+    const scoreMap = buildRuchePowerScoreMap(mainState);
+    toPlace.sort((a, b) => compareOfficersForSeating(a, b, mainState, scoreMap));
+    // Pendant l’assise des officiers, autoriser toutes les cases libres non-maréchal.
+    const seatLock = { ...lockOpts, allowOfficerMoves: true };
+    const empties = sortSlotsNearMarshal(listUnlockedEmptySlots(hive, seatLock));
+
+    let placed = 0;
+    toPlace.forEach((id) => {
+      if (placed >= empties.length) return;
+      setHiveSlot(hive, empties[placed], id);
+      placed += 1;
+    });
+    return placed;
   }
 
   /**
@@ -682,25 +806,22 @@
 
   /**
    * Place les joueurs absents de la grille dans les cases libres,
-   * plus fort → plus près du Maréchal (sans déplacer les déjà placés).
+   * plus fort (héros) → plus près du Maréchal. Les officiers sont exclus
+   * (gérés par seatOfficersNearMarshal).
    */
   function placeMissingPlayers(hive, playerIds, mainState, scoreMap, lockOpts) {
     const onHive = collectPlayerPositions(hive.grid, hive.bottomId);
-    const missing = playerIds.filter((id) => id && !onHive.has(id));
+    const missing = playerIds.filter((id) => {
+      if (!id || onHive.has(id)) return false;
+      return !isOfficerPlayer(getPlayerById(id));
+    });
     if (!missing.length) return 0;
 
-    const sorted = missing.slice().sort((a, b) => {
-      const pa = playerPowerValue(a, mainState, scoreMap);
-      const pb = playerPowerValue(b, mainState, scoreMap);
-      if (pa == null && pb == null) return 0;
-      if (pa == null) return 1;
-      if (pb == null) return -1;
-      return pb - pa;
-    });
+    const sorted = missing
+      .slice()
+      .sort((a, b) => compareByHeroPowerDesc(a, b, mainState, scoreMap));
 
-    const empties = listUnlockedEmptySlots(hive, lockOpts).sort(
-      (a, b) => chebyshevDist(a) - chebyshevDist(b) || slotKey(a).localeCompare(slotKey(b))
-    );
+    const empties = sortSlotsNearMarshal(listUnlockedEmptySlots(hive, lockOpts));
 
     let placed = 0;
     sorted.forEach((id) => {
@@ -712,19 +833,23 @@
   }
 
   /**
-   * soft — optimisation douce (peu de déplacements, R4/R5 toujours verrouillés)
-   * full — nouveau plan complet ; R4/R5 conservés sauf allowOfficerMoves
+   * soft — optimisation douce (peu de déplacements, R4/R5 déjà placés verrouillés ;
+   *        nouveaux R4/R5 assis près du Maréchal)
+   * full — nouveau plan : R4/R5 d’abord près du Maréchal, puis membres par puissance héros
    * Effectif toujours relu depuis Gestion des membres (ROSStorage).
    */
   function buildOptimizedProposal(sourceGrid, sourceBottom, options = {}) {
     const mode = options.mode === 'full' ? 'full' : 'soft';
-    // Soft : jamais. Full : seulement si option explicite.
+    // Soft : jamais dans l’optimiseur. Full : case cochée = officiers aussi dans le hill-climb.
     const allowOfficerMoves = mode === 'full' && options.allowOfficerMoves === true;
     const hive = {
       grid: cloneGrid(sourceGrid),
       bottomId: normalizeCellValue(sourceBottom, { allowFree: true }),
     };
-    // Toujours la liste actuelle (pas un snapshot figé dans la Ruche)
+    // Aligne les rôles liste sur les comptes Accès avant de détecter les officiers.
+    if (global.ROSProfiles && typeof ROSProfiles.syncAllLinkedPlayerAppRoles === 'function') {
+      ROSProfiles.syncAllLinkedPlayerAppRoles();
+    }
     const mainState = ROSStorage.getState();
     const scoreMap = buildRuchePowerScoreMap(mainState);
     const lockOpts = { mode, allowOfficerMoves };
@@ -733,12 +858,17 @@
     // 1) Libérer les joueurs partis / inéligibles
     stripIneligibleFromHive(hive);
 
-    // 2) Soft : conserver les positions restantes. Full : vider les cases déplaçables.
+    // 2) Soft : conserver. Full : vider les cases (y compris officiers) pour ré-asseoir.
     if (mode === 'full') {
-      clearUnlockedOccupiedSlots(hive, lockOpts);
+      clearUnlockedOccupiedSlots(hive, { ...lockOpts, allowOfficerMoves: true });
     }
 
-    // 3) Intégrer tous les Actifs manquants (nouveaux + absents de la grille)
+    // 3) Officiers (rôle ou Accès) au plus près du Maréchal
+    seatOfficersNearMarshal(hive, mainState, lockOpts, {
+      reseatAll: mode === 'full',
+    });
+
+    // 4) Membres manquants par puissance héros (plus fort → plus près)
     const activeIds = getActivePlayers().map((p) => p.id);
     placeMissingPlayers(hive, activeIds, mainState, scoreMap, lockOpts);
 

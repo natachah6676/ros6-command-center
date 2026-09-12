@@ -38,8 +38,11 @@ assert(html.includes('id="rucheProposalMode"'), 'Sélecteur de mode');
 assert(html.includes('Optimisation douce'), 'Mode douce');
 assert(html.includes('Nouveau plan complet'), 'Mode complet');
 assert(html.includes('id="rucheAllowOfficerMoves"'), 'Case déplacement R4/R5');
-assert(html.includes('Autoriser le déplacement des R4/R5'), 'Libellé option R4/R5');
+assert(html.includes('Autoriser aussi l’optimiseur'), 'Libellé option R4/R5');
 assert(html.includes('Valider cette proposition comme nouvelle ruche'), 'Libellé validation');
+assert(rucheCode.includes('seatOfficersNearMarshal'), 'Assise officiers près Maréchal');
+assert(rucheCode.includes('isAccessOfficerPlayerId'), 'Officiers via comptes Accès');
+assert(rucheCode.includes('getPlayerPowerSortValue'), 'Tri puissance héros');
 assert(html.includes('ne change jamais automatiquement'), 'Mention non-auto actuelle');
 
 console.log('\n=== Module expose ===');
@@ -280,26 +283,69 @@ assert(propSoft.grid[9][1] === 'r4a', 'Soft : R4a inchangé');
 assert(propSoft.grid[9][2] === 'r4b', 'Soft : R4b inchangé');
 assert(propSoft.allowOfficerMoves !== true, 'Soft : allowOfficerMoves faux');
 
-console.log('\n=== Full sans option : R4/R5 conservés ===');
+function chebyshevToMarshal(grid, playerId) {
+  for (let r = 0; r < 10; r += 1) {
+    for (let c = 0; c < 10; c += 1) {
+      if (grid[r][c] === playerId) {
+        return Math.max(Math.abs(r - MR), Math.abs(c - MC));
+      }
+    }
+  }
+  return 99;
+}
+
+console.log('\n=== Soft : nouveau R4 près du Maréchal ===');
+players.push({
+  id: 'r4new',
+  pseudo: 'NewR4',
+  role: 'R4',
+  status: 'Actif',
+  heroPowerTierId: 'tier_40_45',
+  globalPowerTierId: 'gp_70_75',
+});
+const propNewR4 = Ruche.buildOptimizedProposal(gridSoft, FREE, { mode: 'soft' });
+assert(playerOnProposal(propNewR4, 'r4new'), 'Soft : nouveau R4 intégré');
+assert(propNewR4.grid[9][0] === 'r5', 'Soft + nouveau R4 : anciens officiers inchangés');
+assert(
+  chebyshevToMarshal(propNewR4.grid, 'r4new') <= 2,
+  `Soft : nouveau R4 près du Maréchal (dist=${chebyshevToMarshal(propNewR4.grid, 'r4new')})`
+);
+// Retire le nouveau pour les scénarios suivants
+setPlayerStatus('r4new', 'Parti');
+
+console.log('\n=== Full : R4/R5 réassis près du Maréchal ===');
 const propFullKeep = Ruche.buildOptimizedProposal(gridSoft, FREE, {
   mode: 'full',
   allowOfficerMoves: false,
 });
-assert(propFullKeep.grid[9][0] === 'r5', 'Full défaut : R5 inchangé');
-assert(propFullKeep.grid[9][1] === 'r4a', 'Full défaut : R4a inchangé');
-assert(propFullKeep.grid[9][2] === 'r4b', 'Full défaut : R4b inchangé');
+assert(
+  chebyshevToMarshal(propFullKeep.grid, 'r5') <= 2,
+  `Full : R5 près du Maréchal (dist=${chebyshevToMarshal(propFullKeep.grid, 'r5')})`
+);
+assert(
+  chebyshevToMarshal(propFullKeep.grid, 'r4a') <= 2,
+  `Full : R4a près du Maréchal (dist=${chebyshevToMarshal(propFullKeep.grid, 'r4a')})`
+);
+assert(
+  chebyshevToMarshal(propFullKeep.grid, 'r4b') <= 2,
+  `Full : R4b près du Maréchal (dist=${chebyshevToMarshal(propFullKeep.grid, 'r4b')})`
+);
+assert(
+  chebyshevToMarshal(propFullKeep.grid, 'pStrong') <=
+    chebyshevToMarshal(propFullKeep.grid, 'pWeak'),
+  'Full : Strong (héros) plus près que Weak'
+);
 
-console.log('\n=== Full + option : R4/R5 peuvent bouger ===');
+console.log('\n=== Full + option : R4/R5 peuvent bouger dans l’optimiseur ===');
 const propFullMove = Ruche.buildOptimizedProposal(gridSoft, FREE, {
   mode: 'full',
   allowOfficerMoves: true,
 });
-const officersMoved =
-  propFullMove.grid[9][0] !== 'r5' ||
-  propFullMove.grid[9][1] !== 'r4a' ||
-  propFullMove.grid[9][2] !== 'r4b';
 assert(propFullMove.allowOfficerMoves === true, 'Full+option : flag true');
-assert(officersMoved, 'Full+option : au moins un officier repositionné');
+assert(
+  chebyshevToMarshal(propFullMove.grid, 'r5') <= 2,
+  'Full+option : R5 toujours près du Maréchal'
+);
 
 console.log('\n=== Sync effectif : retrait / ajout / rôle ===');
 // Isole un sous-effectif pour ces scénarios (pas les fill_*)
@@ -392,7 +438,10 @@ const propFullRoster = Ruche.buildOptimizedProposal(gridRoster, FREE, {
 });
 assert(!playerOnProposal(propFullRoster, 'gone_old'), 'Full : ancien parti absent');
 assert(playerOnProposal(propFullRoster, 'newbie'), 'Full : nouveau inclus');
-assert(propFullRoster.grid[0][0] === 'r5', 'Full défaut : R5 conservé');
+assert(
+  chebyshevToMarshal(propFullRoster.grid, 'r5') <= 2,
+  'Full : R5 réassis près du Maréchal'
+);
 assert(propFullRoster.rosterDiff.removedCount >= 1, 'Full : meta retirés');
 assert(propFullRoster.rosterDiff.addedCount >= 1, 'Full : meta nouveaux');
 
