@@ -1160,15 +1160,57 @@
     }
   }
 
+  async function clearDoneFollowUpHistory() {
+    if (!(global.ROSProfiles && ROSProfiles.isActiveR5 && ROSProfiles.isActiveR5())) {
+      AppUI.toast('Seul le R5 peut effacer l’historique des suivis.');
+      return;
+    }
+    const state = ROSStorage.getState();
+    const doneCount = Object.values(state.playerFollowUps || {}).filter(
+      (row) => row && row.status === 'done'
+    ).length;
+    if (!doneCount) {
+      AppUI.toast('Aucun suivi terminé à effacer.');
+      return;
+    }
+    const ok = await AppUI.confirm({
+      title: 'Effacer tout l’historique suivi',
+      message: `Supprimer définitivement ${doneCount} fiche(s) terminée(s) (notes et dates comprises) ? Les suivis encore ouverts dans Gestion des membres ne sont pas touchés.`,
+      confirmLabel: 'Effacer l’historique',
+    });
+    if (!ok) return;
+    ROSStorage.update((s) => {
+      const next = {};
+      Object.keys(s.playerFollowUps || {}).forEach((playerId) => {
+        const row = s.playerFollowUps[playerId];
+        if (!row || row.status === 'done') return;
+        next[playerId] = row;
+      });
+      s.playerFollowUps = next;
+      return s;
+    });
+    renderHistory();
+    render();
+    AppUI.toast('Historique des suivis terminés effacé.');
+  }
+
   function renderHistory() {
     const body = document.getElementById('historiqueSuiviBody');
     const empty = document.getElementById('historiqueSuiviEmpty');
     const counter = document.getElementById('historiqueSuiviCounter');
+    const clearBtn = document.getElementById('btnClearSuiviHistory');
     if (!body) return;
     const state = ROSStorage.getState();
     const rows = getDoneFollowUpRows(state);
     if (counter) counter.textContent = `${rows.length} fiche(s) terminée(s)`;
     if (empty) empty.classList.toggle('hidden', rows.length > 0);
+    if (clearBtn) {
+      const isR5 = Boolean(
+        global.ROSProfiles && ROSProfiles.isActiveR5 && ROSProfiles.isActiveR5()
+      );
+      clearBtn.classList.toggle('hidden', !isR5);
+      clearBtn.disabled = rows.length === 0;
+    }
     const editable = canEditFollowUp();
     body.innerHTML = rows
       .map(({ player, follow, reasons }) => {
@@ -1227,6 +1269,9 @@
     });
     document.getElementById('historiqueSuiviSearch')?.addEventListener('input', () => renderHistory());
     document.getElementById('historiqueSuiviBody')?.addEventListener('click', onHistoryClick);
+    document.getElementById('btnClearSuiviHistory')?.addEventListener('click', () => {
+      void clearDoneFollowUpHistory();
+    });
   }
 
   global.SuiviModule = {
