@@ -215,15 +215,19 @@
         detected.vs || detected.hero || detected.praise || detected.discret;
       if (!autoHit && !hasOpen && !detected.manual) return;
 
-      // Suivi terminé : ne rouvre pas VS/héros. Discret : rouvre si la case liste est encore cochée.
+      // Suivi terminé : reste en historique, mais se rouvre si un motif auto est encore vrai.
       if (existing?.status === 'done') {
-        if (!player.discret) return;
+        if (!autoHit) return;
         existing.status = 'to_contact';
         existing.closedAt = null;
         existing.reasons = ROSModels.emptyFollowUpReasons({
-          ...existing.reasons,
-          discret: true,
+          vs: detected.vs,
+          hero: detected.hero,
+          praise: detected.praise,
+          discret: detected.discret,
+          manual: Boolean(existing.manual || existing.reasons?.manual || detected.manual),
         });
+        existing.manual = Boolean(existing.manual || existing.reasons?.manual || detected.manual);
         existing.updatedAt = new Date().toISOString();
         applySpecialistIfNeeded(existing, existing.reasons, state);
         changed = true;
@@ -1280,5 +1284,7 @@
     renderHistory,
     renderSettings,
     canEditFollowUp,
+    /** Exposé pour les tests (réouverture auto des fiches terminées). */
+    syncAutoReasons,
   };
 })(window);

@@ -315,10 +315,108 @@ assert(html.includes('option value="discret"'), 'filtre motif Discret');
 assert(html.includes('id="playerDiscret"'), 'case Discret fiche joueur');
 assert(suiviCode.includes('isFollowUpVisibleToViewer'), 'filtre visibilité R4');
 assert(suiviCode.includes('pickFollowUpSpecialist'), 'auto référent motif');
+assert(
+  suiviCode.includes('se rouvre si un motif auto est encore vrai'),
+  'réouverture auto des fiches terminées'
+);
 assert(html.includes('js/suivi.js'), 'script suivi inclus');
 assert(appCode.includes("tabName === 'suivi'"), 'app switchTab suivi');
 assert(appCode.includes('SuiviModule.init()'), 'app init SuiviModule');
 assert(suiviCode.includes('SuiviModule'), 'module Suivi exporté');
+
+console.log('\nRéouverture auto fiches terminées');
+const suiviSandbox = {
+  window: {},
+  console,
+  Date,
+  Math,
+  JSON,
+  String,
+  Number,
+  Boolean,
+  Array,
+  Object,
+  document: {
+    getElementById: () => null,
+    querySelector: () => null,
+  },
+};
+suiviSandbox.window = suiviSandbox;
+suiviSandbox.ROSModels = M;
+suiviSandbox.ROSStorage = {
+  getState: () => ({}),
+  update: (fn) => fn({}),
+};
+suiviSandbox.ROSProfiles = {
+  isActiveR5: () => true,
+  listProfiles: () => [],
+};
+suiviSandbox.AppUI = {
+  toast: () => {},
+  confirm: async () => true,
+  switchTab: () => {},
+};
+vm.runInNewContext(suiviCode, suiviSandbox);
+const Suivi = suiviSandbox.SuiviModule;
+assert(typeof Suivi.syncAutoReasons === 'function', 'syncAutoReasons exposé');
+
+const reopenState = {
+  currentWeekId: 'w1',
+  weeks: [week],
+  followUpSettings: { vsMinUnderDays: 2, heroMaxM: 30 },
+  powerTiers: tiers,
+  players: [
+    {
+      id: 'p_hero_done',
+      pseudo: 'HeroDone',
+      status: 'Actif',
+      absent: false,
+      heroPowerTierId: lowHeroTier.id,
+    },
+    {
+      id: 'p_ok_done',
+      pseudo: 'OkDone',
+      status: 'Actif',
+      absent: false,
+      heroPowerTierId: highHeroTier.id,
+    },
+  ],
+  playerFollowUps: {
+    p_hero_done: M.createEmptyFollowUpCase({
+      playerId: 'p_hero_done',
+      status: 'done',
+      closedAt: '2026-09-01T10:00:00.000Z',
+      reasons: { vs: true, hero: false, praise: false, discret: false, manual: false },
+    }),
+    p_ok_done: M.createEmptyFollowUpCase({
+      playerId: 'p_ok_done',
+      status: 'done',
+      closedAt: '2026-09-01T10:00:00.000Z',
+      reasons: { vs: true, hero: false, praise: false, discret: false, manual: false },
+    }),
+  },
+};
+reopenState.weeks[0].scores.p_hero_done = makeScore(0);
+reopenState.weeks[0].scores.p_ok_done = makeScore(0);
+
+const reopened = Suivi.syncAutoReasons(reopenState);
+assert(reopened === true, 'sync détecte une réouverture');
+assert(
+  reopenState.playerFollowUps.p_hero_done.status === 'to_contact',
+  'héros encore vrai → fiche terminée rouverte'
+);
+assert(
+  reopenState.playerFollowUps.p_hero_done.reasons.hero === true,
+  'motif héros posé à la réouverture'
+);
+assert(
+  reopenState.playerFollowUps.p_hero_done.closedAt == null,
+  'closedAt effacé à la réouverture'
+);
+assert(
+  reopenState.playerFollowUps.p_ok_done.status === 'done',
+  'sans motif auto → reste en historique terminé'
+);
 
 console.log(`\n${passed} OK, ${failed} KO`);
 process.exit(failed ? 1 : 0);
