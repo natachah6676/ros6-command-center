@@ -630,11 +630,6 @@
         </select>
       </label>
       <div class="settings-actions" style="margin-top:0.75rem;gap:0.5rem;flex-wrap:wrap">
-        <button type="button" class="btn btn-ghost" data-suivi-contact="${escapeHtml(
-          player.id
-        )}" ${editable ? '' : 'disabled'}>
-          Marquer contacté
-        </button>
         <button type="button" class="btn btn-ghost" data-suivi-done="${escapeHtml(
           player.id
         )}" ${editable ? '' : 'disabled'}>
@@ -851,31 +846,6 @@
     render();
   }
 
-  function markContacted(playerId) {
-    if (!canEditFollowUp()) {
-      AppUI.toast('Seul un R4 ou R5 peut modifier le suivi.');
-      return;
-    }
-    ROSStorage.update((s) => {
-      const player = s.players.find((p) => p.id === playerId);
-      const detected = ROSModels.detectFollowUpReasons(player, s);
-      const row = ensureCase(s, playerId);
-      row.contactedAt = new Date().toISOString();
-      row.contactReasons = ROSModels.emptyFollowUpReasons({
-        vs: Boolean(detected.vs || row.reasons.vs),
-        hero: Boolean(detected.hero || row.reasons.hero),
-        praise: Boolean(detected.praise || row.reasons.praise),
-        discret: Boolean(detected.discret || row.reasons.discret || player?.discret),
-        manual: Boolean(row.manual || row.reasons.manual),
-      });
-      if (row.status === 'to_contact') row.status = 'contacted';
-      row.updatedAt = new Date().toISOString();
-      return s;
-    });
-    AppUI.toast('Contact enregistré.');
-    render();
-  }
-
   function addNote(playerId, text) {
     if (!canEditFollowUp()) {
       AppUI.toast('Seul un R4 ou R5 peut ajouter un commentaire.');
@@ -909,11 +879,6 @@
     if (openBtn) {
       selectedPlayerId = openBtn.dataset.suiviOpen;
       render();
-      return;
-    }
-    const contactBtn = event.target.closest('[data-suivi-contact]');
-    if (contactBtn) {
-      markContacted(contactBtn.dataset.suiviContact);
       return;
     }
     const doneBtn = event.target.closest('[data-suivi-done]');
