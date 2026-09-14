@@ -20,6 +20,7 @@
     els.counter = document.getElementById('suiviCounter');
     els.btnAdd = document.getElementById('btnSuiviAdd');
     els.addSelect = document.getElementById('suiviAddPlayer');
+    els.addAssignee = document.getElementById('suiviAddAssignee');
     els.addWrap = document.getElementById('suiviAddWrap');
     els.detail = document.getElementById('suiviDetail');
     els.detailEmpty = document.getElementById('suiviDetailEmpty');
@@ -364,6 +365,29 @@
         .join('');
   }
 
+  /** Liste des R4/R5 pour l’assignation à l’ajout manuel. */
+  function fillAddAssigneeSelect(state) {
+    if (!els.addAssignee) return;
+    const previous = els.addAssignee.value || '';
+    const officers = getAssignableOfficers(state);
+    const me = viewerPlayerId();
+    els.addAssignee.innerHTML =
+      `<option value="">Suivi par…</option>` +
+      officers
+        .map(
+          (p) =>
+            `<option value="${escapeHtml(p.id)}">${escapeHtml(p.pseudo)} (${escapeHtml(
+              p.role
+            )})</option>`
+        )
+        .join('');
+    if (previous && officers.some((p) => p.id === previous)) {
+      els.addAssignee.value = previous;
+    } else if (me && officers.some((p) => p.id === me)) {
+      els.addAssignee.value = me;
+    }
+  }
+
   function renderList() {
     const probe = ROSStorage.getState();
     const draftFollowUps = JSON.parse(JSON.stringify(probe.playerFollowUps || {}));
@@ -388,6 +412,7 @@
     updateScopeHint(fresh);
     const rows = getActiveFollowUpRows(fresh);
     fillAddSelect(fresh, rows);
+    fillAddAssigneeSelect(fresh);
 
     if (els.counter) {
       const toContact = rows.filter((r) => r.follow.status === 'to_contact').length;
@@ -648,16 +673,36 @@
       return;
     }
     const playerId = els.addSelect?.value;
-    if (!playerId) return;
+    if (!playerId) {
+      AppUI.toast('Choisissez un joueur à ajouter au suivi.');
+      return;
+    }
+    const assigneeId = String(els.addAssignee?.value || '').trim();
+    if (!assigneeId) {
+      AppUI.toast('Choisissez qui s’occupe du suivi.');
+      return;
+    }
+    const actor = stampActor();
     ROSStorage.update((s) => {
+      const officer =
+        getAssignableOfficers(s).find((p) => p.id === assigneeId) ||
+        (s.players || []).find((p) => p && p.id === assigneeId);
       const row = ensureCase(s, playerId, {
         manual: true,
         reasons: ROSModels.emptyFollowUpReasons({ manual: true }),
         status: 'to_contact',
+        assigneePlayerId: assigneeId,
+        assigneeLabel: officer?.pseudo || assigneeId,
+        assignedAt: new Date().toISOString(),
+        assignedByLabel: actor.actorLabel || '',
       });
       row.manual = true;
       row.reasons.manual = true;
-      applySpecialistIfNeeded(row, row.reasons, s);
+      // Assignation explicite à l’ajout (prioritaire sur le référent motif auto).
+      row.assigneePlayerId = assigneeId;
+      row.assigneeLabel = officer?.pseudo || assigneeId;
+      row.assignedAt = new Date().toISOString();
+      row.assignedByLabel = actor.actorLabel || '';
       if (row.status === 'done') {
         row.status = 'to_contact';
         row.closedAt = null;

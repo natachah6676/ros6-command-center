@@ -258,6 +258,18 @@ assert(
   ),
   'R5 voit tout'
 );
+assert(
+  M.isFollowUpVisibleToViewer(
+    {
+      follow: { assigneePlayerId: 'r4_praise' },
+      reasons: { manual: true, vs: false, praise: false, hero: false, discret: false },
+    },
+    specsState,
+    'r4_praise',
+    false
+  ),
+  'R4 voit une fiche manuelle qui lui est assignée'
+);
 
 const opts = M.getDayOptions(M.createDefaultVsSettings());
 assert(opts[0].bracket === 'high' && opts[1].bracket === 'ok', 'options VS : gros score puis Score fait');
@@ -299,6 +311,11 @@ assert(suiviCode.includes('clearDoneFollowUpHistory'), 'fonction clearDoneFollow
 assert(html.includes('id="historiqueSuiviBody"'), 'table historique suivi');
 assert(suiviCode.includes('renderHistory'), 'SuiviModule.renderHistory');
 assert(suiviCode.includes('reactivateFollowUp'), 'réactivation historique');
+assert(html.includes('id="btnSuiviAdd"'), 'bouton ajouter suivi');
+assert(html.includes('id="suiviAddPlayer"'), 'select joueur à ajouter');
+assert(html.includes('id="suiviAddAssignee"'), 'select assigné à l’ajout');
+assert(suiviCode.includes('fillAddAssigneeSelect'), 'remplissage select assigné');
+assert(suiviCode.includes('Choisissez qui s’occupe du suivi'), 'validation assigné requis');
 assert(html.includes('id="panel-suivi"'), 'panneau suivi');
 assert(html.includes('id="followUpVsMinDays"'), 'seuil VS paramètres');
 assert(html.includes('id="btnSuiviCopyList"'), 'bouton copier Discord');
