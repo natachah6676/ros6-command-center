@@ -530,13 +530,6 @@
           .join('')}</ul>`
       : '';
 
-    const statusOptions = ROSModels.FOLLOW_UP_STATUSES.map(
-      (s) =>
-        `<option value="${s.id}" ${follow.status === s.id ? 'selected' : ''}>${escapeHtml(
-          s.label
-        )}</option>`
-    ).join('');
-
     const officers = getAssignableOfficers(state);
     const assigneeOptions =
       `<option value="">— Non assigné —</option>` +
@@ -548,6 +541,8 @@
             }>${escapeHtml(p.pseudo)} (${escapeHtml(p.role)})</option>`
         )
         .join('');
+
+    const statusBtn = (id) => (follow.status === id ? 'btn btn-primary' : 'btn btn-ghost');
 
     const notesHtml = (follow.notes || [])
       .slice()
@@ -613,14 +608,6 @@
           assigneeLabelFor(follow) ? escapeHtml(assigneeLabelFor(follow)) : 'personne'
         }</p>
       </div>
-      <label class="field">
-        <span>Statut du suivi</span>
-        <select id="suiviStatusSelect" class="input" data-suivi-status="${escapeHtml(
-          player.id
-        )}" ${editable ? '' : 'disabled'}>
-          ${statusOptions}
-        </select>
-      </label>
       <label class="field" style="margin-top:0.65rem">
         <span>Qui suit ce joueur (R4 / R5)</span>
         <select id="suiviAssigneeSelect" class="input" data-suivi-assignee="${escapeHtml(
@@ -630,15 +617,20 @@
         </select>
       </label>
       <div class="settings-actions" style="margin-top:0.75rem;gap:0.5rem;flex-wrap:wrap">
-        <button type="button" class="btn btn-ghost" data-suivi-contact="${escapeHtml(
+        <button type="button" class="${statusBtn('contacted')}" data-suivi-contact="${escapeHtml(
           player.id
         )}" ${editable ? '' : 'disabled'}>
           Marquer contacté
         </button>
-        <button type="button" class="btn btn-ghost" data-suivi-done="${escapeHtml(
+        <button type="button" class="${statusBtn('in_progress')}" data-suivi-progress="${escapeHtml(
           player.id
         )}" ${editable ? '' : 'disabled'}>
-          Terminer le suivi
+          En suivi
+        </button>
+        <button type="button" class="${statusBtn('done')}" data-suivi-done="${escapeHtml(
+          player.id
+        )}" ${editable ? '' : 'disabled'}>
+          Suivi terminé
         </button>
       </div>
       <div class="suivi-notes-block">
@@ -916,6 +908,12 @@
       markContacted(contactBtn.dataset.suiviContact);
       return;
     }
+    const progressBtn = event.target.closest('[data-suivi-progress]');
+    if (progressBtn) {
+      setStatus(progressBtn.dataset.suiviProgress, 'in_progress');
+      AppUI.toast('Statut : en suivi.');
+      return;
+    }
     const doneBtn = event.target.closest('[data-suivi-done]');
     if (doneBtn) {
       setStatus(doneBtn.dataset.suiviDone, 'done');
@@ -924,11 +922,6 @@
   }
 
   function onRootChange(event) {
-    const statusSelect = event.target.closest('[data-suivi-status]');
-    if (statusSelect) {
-      setStatus(statusSelect.dataset.suiviStatus, statusSelect.value);
-      return;
-    }
     const assigneeSelect = event.target.closest('[data-suivi-assignee]');
     if (assigneeSelect) {
       setAssignee(assigneeSelect.dataset.suiviAssignee, assigneeSelect.value);
