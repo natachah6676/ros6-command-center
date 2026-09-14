@@ -3088,6 +3088,37 @@ tbody tr:hover {
   color: var(--muted, #9aa3b2);
 }
 
+.suivi-status--month-pending {
+  color: #e8b86d;
+}
+
+.suivi-status--month-done {
+  color: #8fd18f;
+}
+
+.suivi-carnet {
+  margin-top: 0.85rem;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--border-soft, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-sm, 8px);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.suivi-carnet h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.suivi-carnet-meta {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  color: var(--muted, #9aa3b2);
+}
+
+.suivi-carnet-meta strong {
+  color: var(--text, inherit);
+}
+
 .suivi-detail-header h3 {
   margin: 0 0 0.25rem;
 }

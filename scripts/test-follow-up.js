@@ -322,7 +322,12 @@ assert(!suiviCode.includes('Statut du suivi'), 'pas de sélecteur Statut du suiv
 assert(suiviCode.includes('data-suivi-contact'), 'bouton Marquer contacté');
 assert(html.includes('id="panel-suivi"'), 'panneau suivi');
 assert(html.includes('id="followUpVsMinDays"'), 'seuil VS paramètres');
-assert(html.includes('id="btnSuiviCopyList"'), 'bouton copier Discord');
+assert(!html.includes('id="btnSuiviCopyList"'), 'pas de bouton copier Discord');
+assert(!suiviCode.includes('copyDiscordList'), 'pas de fonction copie Discord');
+assert(html.includes('id="suiviFilterDiscretMonth"'), 'filtre Discret par mois');
+assert(suiviCode.includes('Carnet Discret'), 'zone Carnet Discret');
+assert(suiviCode.includes('Noter un contact'), 'bouton Noter un contact');
+assert(suiviCode.includes('isLightOnlyReasons'), 'masquage boutons Discret/félicitations');
 assert(html.includes('id="suiviFilterAssignee"'), 'filtre R4 assigné');
 assert(html.includes('id="trainExportHistoryExcel"'), 'export Excel Train');
 assert(html.includes('id="followUpVsPraiseMinDaysMet"'), 'seuil félicitations jours faits');
@@ -438,6 +443,40 @@ assert(
   reopenState.playerFollowUps.p_ok_done.status === 'done',
   'sans motif auto → reste en historique terminé'
 );
+
+console.log('\nCarnet Discret / boutons légers');
+assert(Suivi.isLightOnlyReasons({ discret: true }), 'discret seul → léger');
+assert(Suivi.isLightOnlyReasons({ praise: true }), 'félicitations seules → léger');
+assert(Suivi.isLightOnlyReasons({ discret: true, praise: true }), 'discret+félicitations → léger');
+assert(
+  !Suivi.isLightOnlyReasons({ discret: true, vs: true }),
+  'discret+VS → dossier (boutons visibles)'
+);
+assert(
+  !Suivi.isLightOnlyReasons({ praise: true, manual: true }),
+  'félicitations+manuel → dossier'
+);
+assert(Suivi.hasDossierReasons({ vs: true }), 'VS = dossier');
+assert(!Suivi.hasDossierReasons({ discret: true, praise: true }), 'léger ≠ dossier');
+
+const now = new Date();
+const thisMonthIso = new Date(now.getFullYear(), now.getMonth(), 12).toISOString();
+const lastMonthIso = new Date(now.getFullYear(), now.getMonth() - 1, 12).toISOString();
+assert(
+  Suivi.isContactedThisMonth({ contactedAt: thisMonthIso }),
+  'contacté ce mois via contactedAt'
+);
+assert(
+  !Suivi.isContactedThisMonth({ contactedAt: lastMonthIso }),
+  'contact mois précédent → pas ce mois'
+);
+assert(
+  Suivi.isContactedThisMonth({
+    notes: [{ at: thisMonthIso, text: 'petit mot' }],
+  }),
+  'contacté ce mois via note'
+);
+assert(!Suivi.isContactedThisMonth({ notes: [] }), 'sans contact → pas ce mois');
 
 console.log(`\n${passed} OK, ${failed} KO`);
 process.exit(failed ? 1 : 0);

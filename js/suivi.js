@@ -14,9 +14,9 @@
     els.search = document.getElementById('suiviSearch');
     els.filterStatus = document.getElementById('suiviFilterStatus');
     els.filterReason = document.getElementById('suiviFilterReason');
+    els.filterDiscretMonth = document.getElementById('suiviFilterDiscretMonth');
     els.showDone = document.getElementById('suiviShowDone');
     els.filterAssignee = document.getElementById('suiviFilterAssignee');
-    els.btnCopyList = document.getElementById('btnSuiviCopyList');
     els.counter = document.getElementById('suiviCounter');
     els.btnAdd = document.getElementById('btnSuiviAdd');
     els.addSelect = document.getElementById('suiviAddPlayer');
@@ -87,6 +87,39 @@
   function assigneeLabelFor(follow) {
     if (!follow?.assigneePlayerId && !follow?.assigneeLabel) return '';
     return follow.assigneeLabel || 'R4';
+  }
+
+  /** Dossier à clôturer (VS / héros / manuel) — hors Discret / félicitations. */
+  function hasDossierReasons(reasons) {
+    return Boolean(reasons?.vs || reasons?.hero || reasons?.manual);
+  }
+
+  /** Uniquement Discret et/ou À féliciter → pas de boutons de statut. */
+  function isLightOnlyReasons(reasons) {
+    return !hasDossierReasons(reasons) && Boolean(reasons?.discret || reasons?.praise);
+  }
+
+  function lastContactAt(follow) {
+    let latest = follow?.contactedAt || '';
+    (follow?.notes || []).forEach((n) => {
+      if (n?.at && String(n.at) > String(latest || '')) latest = n.at;
+    });
+    return latest || null;
+  }
+
+  function isContactedThisMonth(follow, now = new Date()) {
+    const at = lastContactAt(follow);
+    if (!at) return false;
+    const d = new Date(at);
+    if (Number.isNaN(d.getTime())) return false;
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  }
+
+  function updateDiscretMonthFilterVisibility() {
+    if (!els.filterDiscretMonth) return;
+    const show = els.filterReason?.value === 'discret';
+    els.filterDiscretMonth.classList.toggle('hidden', !show);
+    if (!show) els.filterDiscretMonth.value = '';
   }
 
   function canEditFollowUp() {
@@ -302,6 +335,7 @@
     const q = (els.search?.value || '').trim().toLowerCase();
     const statusFilter = els.filterStatus?.value || '';
     const reasonFilter = els.filterReason?.value || '';
+    const discretMonthFilter = els.filterDiscretMonth?.value || '';
     const assigneeFilter = els.filterAssignee?.value || '';
 
     return (state.players || [])
@@ -328,6 +362,11 @@
         if (reasonFilter === 'praise' && !displayReasons.praise) return null;
         if (reasonFilter === 'discret' && !displayReasons.discret) return null;
         if (reasonFilter === 'manual' && !displayReasons.manual) return null;
+        if (reasonFilter === 'discret' && discretMonthFilter) {
+          const contactedMonth = isContactedThisMonth(follow);
+          if (discretMonthFilter === 'pending' && contactedMonth) return null;
+          if (discretMonthFilter === 'done' && !contactedMonth) return null;
+        }
         if (assigneeFilter === 'unassigned' && follow.assigneePlayerId) return null;
         if (
           assigneeFilter &&
@@ -410,6 +449,7 @@
     const fresh = ROSStorage.getState();
     fillAssigneeFilter(fresh);
     updateScopeHint(fresh);
+    updateDiscretMonthFilterVisibility();
     const rows = getActiveFollowUpRows(fresh);
     fillAddSelect(fresh, rows);
     fillAddAssigneeSelect(fresh);
@@ -447,6 +487,14 @@
             ? ROSModels.formatVsPraiseCounterLabel(vsStats)
             : '';
           const assignee = assigneeLabelFor(follow);
+          const lightOnly = isLightOnlyReasons(reasons);
+          const contactedMonth = isContactedThisMonth(follow);
+          let statusClass = follow.status;
+          let statusLabel = ROSModels.getFollowUpStatusLabel(follow.status);
+          if (reasons.discret && lightOnly) {
+            statusClass = contactedMonth ? 'month-done' : 'month-pending';
+            statusLabel = contactedMonth ? 'Contacté ce mois' : 'Pas contacté ce mois';
+          }
           return `
             <button type="button" class="suivi-row${selected}" data-suivi-open="${escapeHtml(player.id)}">
               <span class="suivi-row-main">
@@ -470,8 +518,8 @@
                     : '<span class="suivi-row-assignee is-empty">Non assigné</span>'
                 }
               </span>
-              <span class="suivi-status suivi-status--${escapeHtml(follow.status)}">
-                ${escapeHtml(ROSModels.getFollowUpStatusLabel(follow.status))}
+              <span class="suivi-status suivi-status--${escapeHtml(statusClass)}">
+                ${escapeHtml(statusLabel)}
               </span>
             </button>
           `;
@@ -543,6 +591,12 @@
         .join('');
 
     const statusBtn = (id) => (follow.status === id ? 'btn btn-primary' : 'btn btn-ghost');
+    const showStatusButtons = hasDossierReasons(displayReasons);
+    const showDiscretCarnet = Boolean(displayReasons.discret);
+    const lastContact = lastContactAt(follow);
+    const lastContactLabel = lastContact
+      ? ROSModels.formatCoachingDateTime(lastContact) || lastContact
+      : 'pas encore';
 
     const notesHtml = (follow.notes || [])
       .slice()
@@ -561,6 +615,67 @@
       `
       )
       .join('');
+
+    const historyTitle = showDiscretCarnet
+      ? 'Historique des contacts'
+      : 'Historique des commentaires';
+    const emptyHistory = showDiscretCarnet
+      ? 'Aucun contact noté pour le moment.'
+      : 'Aucun commentaire pour le moment.';
+
+    const carnetHtml = showDiscretCarnet
+      ? `<div class="suivi-carnet">
+        <h4>Carnet Discret</h4>
+        <p class="suivi-carnet-meta"><strong>Dernier contact :</strong> ${escapeHtml(
+          lastContactLabel
+        )}</p>
+        ${
+          editable
+            ? `<form id="suiviContactForm" class="suivi-note-form" data-player="${escapeHtml(
+                player.id
+              )}">
+            <label class="field">
+              <span>Petit mot / commentaire</span>
+              <textarea id="suiviContactText" class="input" rows="3" maxlength="800" placeholder="Ex. : Mamat a envoyé un message" required></textarea>
+            </label>
+            <button type="submit" class="btn btn-primary">Noter un contact</button>
+          </form>`
+            : '<p class="panel-subtitle">Lecture seule — seuls R4/R5 peuvent noter un contact.</p>'
+        }
+      </div>`
+      : '';
+
+    const statusButtonsHtml = showStatusButtons
+      ? `<div class="settings-actions" style="margin-top:0.75rem;gap:0.5rem;flex-wrap:wrap">
+        <button type="button" class="${statusBtn('contacted')}" data-suivi-contact="${escapeHtml(
+          player.id
+        )}" ${editable ? '' : 'disabled'}>
+          Marquer contacté
+        </button>
+        <button type="button" class="${statusBtn('in_progress')}" data-suivi-progress="${escapeHtml(
+          player.id
+        )}" ${editable ? '' : 'disabled'}>
+          En suivi
+        </button>
+        <button type="button" class="${statusBtn('done')}" data-suivi-done="${escapeHtml(
+          player.id
+        )}" ${editable ? '' : 'disabled'}>
+          Suivi terminé
+        </button>
+      </div>`
+      : '';
+
+    const commentsFormHtml = showDiscretCarnet
+      ? ''
+      : editable
+        ? `<form id="suiviNoteForm" class="suivi-note-form" data-player="${escapeHtml(player.id)}">
+            <label class="field">
+              <span>Nouveau commentaire</span>
+              <textarea id="suiviNoteText" class="input" rows="3" maxlength="800" placeholder="Ex. : tout va bien, questions VS / troupes…" required></textarea>
+            </label>
+            <button type="submit" class="btn btn-primary">Ajouter le commentaire</button>
+          </form>`
+        : '<p class="panel-subtitle">Lecture seule — seuls R4/R5 peuvent modifier le suivi.</p>';
 
     els.detail.innerHTML = `
       <div class="suivi-detail-header">
@@ -599,58 +714,37 @@
         <p><strong>Puissance héros :</strong> ${escapeHtml(heroLabel)} · seuil ≤ ${
           settings.heroMaxM
         } M</p>
-        <p><strong>Contact :</strong> ${
-          follow.contactedAt
-            ? escapeHtml(ROSModels.formatCoachingDateTime(follow.contactedAt) || follow.contactedAt)
-            : 'pas encore'
-        }</p>
-        <p><strong>R4 assigné :</strong> ${
+        ${
+          showDiscretCarnet
+            ? ''
+            : `<p><strong>Contact :</strong> ${
+                follow.contactedAt
+                  ? escapeHtml(
+                      ROSModels.formatCoachingDateTime(follow.contactedAt) || follow.contactedAt
+                    )
+                  : 'pas encore'
+              }</p>`
+        }
+        <p><strong>Qui suit :</strong> ${
           assigneeLabelFor(follow) ? escapeHtml(assigneeLabelFor(follow)) : 'personne'
         }</p>
       </div>
       <label class="field" style="margin-top:0.65rem">
-        <span>Qui suit ce joueur (R4 / R5)</span>
+        <span>Qui suit (R4 / R5)</span>
         <select id="suiviAssigneeSelect" class="input" data-suivi-assignee="${escapeHtml(
           player.id
         )}" ${editable ? '' : 'disabled'}>
           ${assigneeOptions}
         </select>
       </label>
-      <div class="settings-actions" style="margin-top:0.75rem;gap:0.5rem;flex-wrap:wrap">
-        <button type="button" class="${statusBtn('contacted')}" data-suivi-contact="${escapeHtml(
-          player.id
-        )}" ${editable ? '' : 'disabled'}>
-          Marquer contacté
-        </button>
-        <button type="button" class="${statusBtn('in_progress')}" data-suivi-progress="${escapeHtml(
-          player.id
-        )}" ${editable ? '' : 'disabled'}>
-          En suivi
-        </button>
-        <button type="button" class="${statusBtn('done')}" data-suivi-done="${escapeHtml(
-          player.id
-        )}" ${editable ? '' : 'disabled'}>
-          Suivi terminé
-        </button>
-      </div>
+      ${carnetHtml}
+      ${statusButtonsHtml}
       <div class="suivi-notes-block">
-        <h4>Historique des commentaires</h4>
+        <h4>${escapeHtml(historyTitle)}</h4>
         <div class="suivi-notes-list">${
-          notesHtml || '<p class="empty-state">Aucun commentaire pour le moment.</p>'
+          notesHtml || `<p class="empty-state">${escapeHtml(emptyHistory)}</p>`
         }</div>
-        ${
-          editable
-            ? `<form id="suiviNoteForm" class="suivi-note-form" data-player="${escapeHtml(
-                player.id
-              )}">
-            <label class="field">
-              <span>Nouveau commentaire</span>
-              <textarea id="suiviNoteText" class="input" rows="3" maxlength="800" placeholder="Ex. : tout va bien, questions VS / troupes…" required></textarea>
-            </label>
-            <button type="submit" class="btn btn-primary">Ajouter le commentaire</button>
-          </form>`
-            : '<p class="panel-subtitle">Lecture seule — seuls R4/R5 peuvent modifier le suivi.</p>'
-        }
+        ${commentsFormHtml}
       </div>
     `;
   }
@@ -733,94 +827,25 @@
     render();
   }
 
-  async function copyDiscordList() {
-    const state = ROSStorage.getState();
-    const rows = getActiveFollowUpRows(state);
-    if (!rows.length) {
-      AppUI.toast('Aucune ligne à copier avec les filtres actuels.');
-      return;
-    }
-
-    const dateLabel = new Date().toLocaleDateString('fr-FR');
-    const used = new Set();
-    const take = (predicate) =>
-      rows.filter((r) => {
-        if (used.has(r.player.id) || !predicate(r)) return false;
-        used.add(r.player.id);
-        return true;
-      });
-
-    const groups = [
-      { title: 'À féliciter', rows: take((r) => r.reasons.praise) },
-      { title: 'Discrets', rows: take((r) => r.reasons.discret) },
-      { title: 'À contacter', rows: take((r) => r.follow.status === 'to_contact') },
-      { title: 'Autres suivis', rows: take(() => true) },
-    ];
-
-    const lines = [`**Suivi membres — ${dateLabel}**`, ''];
-    let written = 0;
-    groups.forEach((group) => {
-      if (!group.rows.length) return;
-      lines.push(`**${group.title}** (${group.rows.length})`);
-      group.rows.forEach((r) => {
-        const motifs = ROSModels.formatFollowUpReasonsLabel(r.reasons);
-        const assignee = assigneeLabelFor(r.follow);
-        const status =
-          r.follow.status !== 'to_contact'
-            ? ` · ${ROSModels.getFollowUpStatusLabel(r.follow.status)}`
-            : '';
-        const who = assignee ? ` · suivi par ${assignee}` : '';
-        lines.push(`• ${r.player.pseudo} — ${motifs}${status}${who}`);
-        written += 1;
-      });
-      lines.push('');
-    });
-
-    if (!written) {
-      AppUI.toast('Aucune ligne à copier.');
-      return;
-    }
-
-    const text = lines.join('\n').trim();
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.setAttribute('readonly', '');
-        ta.style.position = 'fixed';
-        ta.style.left = '-9999px';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
-      }
-      AppUI.toast('Liste copiée — colle-la dans Discord.');
-    } catch (_err) {
-      AppUI.toast('Impossible de copier automatiquement.');
-    }
-  }
-
   function setStatus(playerId, status) {
     if (!canEditFollowUp()) {
       AppUI.toast('Seul un R4 ou R5 peut modifier le suivi.');
       return;
     }
+    let keptDiscretCarnet = false;
     ROSStorage.update((s) => {
       const row = ensureCase(s, playerId);
       const player = (s.players || []).find((p) => p.id === playerId);
+      const displayReasons = buildDisplayReasons(player, row, s);
+      // Les boutons de statut ne concernent que les dossiers VS / héros / manuel.
+      if (!hasDossierReasons(displayReasons)) return s;
       row.status = ROSModels.normalizeFollowUpStatus(status);
       row.updatedAt = new Date().toISOString();
       if (row.status === 'done') {
         row.closedAt = new Date().toISOString();
-        // Terminer un Discret = retirer la case liste, sinon le sync le rouvre aussitôt.
-        if (player && (player.discret || row.reasons?.discret)) {
-          player.discret = false;
-          row.reasons = ROSModels.emptyFollowUpReasons({
-            ...row.reasons,
-            discret: false,
-          });
+        // Discret reste coché : le carnet se rouvre au prochain sync si besoin.
+        if (player?.discret || row.reasons?.discret) {
+          keptDiscretCarnet = true;
         }
       } else {
         row.closedAt = null;
@@ -840,6 +865,13 @@
       }
       return s;
     });
+    if (status === 'done') {
+      AppUI.toast(
+        keptDiscretCarnet
+          ? 'Dossier terminé — le carnet Discret reste actif.'
+          : 'Suivi terminé — retiré de la liste active.'
+      );
+    }
     render();
   }
 
@@ -865,6 +897,47 @@
       return s;
     });
     AppUI.toast('Contact enregistré.');
+    render();
+  }
+
+  function noteContact(playerId, text) {
+    if (!canEditFollowUp()) {
+      AppUI.toast('Seul un R4 ou R5 peut noter un contact.');
+      return;
+    }
+    const clean = String(text || '').trim();
+    if (!clean) return;
+    const actor = stampActor();
+    ROSStorage.update((s) => {
+      const player = (s.players || []).find((p) => p.id === playerId);
+      const detected = ROSModels.detectFollowUpReasons(player, s);
+      const row = ensureCase(s, playerId);
+      const now = new Date().toISOString();
+      row.notes = row.notes || [];
+      row.notes.push({
+        id: ROSModels.uid('funote'),
+        at: now,
+        text: clean,
+        authorLabel: actor.actorLabel || '',
+        authorUserId: actor.actorUserId || '',
+      });
+      row.contactedAt = now;
+      row.contactReasons = ROSModels.emptyFollowUpReasons({
+        vs: Boolean(detected.vs || row.reasons.vs),
+        hero: Boolean(detected.hero || row.reasons.hero),
+        praise: Boolean(detected.praise || row.reasons.praise),
+        discret: Boolean(detected.discret || row.reasons.discret || player?.discret),
+        manual: Boolean(row.manual || row.reasons.manual),
+      });
+      // Carnet Discret : on note le contact sans clôturer ni forcer un statut dossier.
+      if (row.status === 'done') {
+        row.status = 'to_contact';
+        row.closedAt = null;
+      }
+      row.updatedAt = now;
+      return s;
+    });
+    AppUI.toast('Contact noté.');
     render();
   }
 
@@ -917,7 +990,6 @@
     const doneBtn = event.target.closest('[data-suivi-done]');
     if (doneBtn) {
       setStatus(doneBtn.dataset.suiviDone, 'done');
-      AppUI.toast('Suivi terminé — retiré de la liste active.');
     }
   }
 
@@ -929,6 +1001,14 @@
   }
 
   function onRootSubmit(event) {
+    const contactForm = event.target.closest('#suiviContactForm');
+    if (contactForm) {
+      event.preventDefault();
+      const playerId = contactForm.dataset.player;
+      const text = document.getElementById('suiviContactText')?.value || '';
+      noteContact(playerId, text);
+      return;
+    }
     const form = event.target.closest('#suiviNoteForm');
     if (!form) return;
     event.preventDefault();
@@ -1292,11 +1372,9 @@
     els.search?.addEventListener('input', () => render());
     els.filterStatus?.addEventListener('change', () => render());
     els.filterReason?.addEventListener('change', () => render());
+    els.filterDiscretMonth?.addEventListener('change', () => render());
     els.filterAssignee?.addEventListener('change', () => render());
     els.showDone?.addEventListener('change', () => render());
-    els.btnCopyList?.addEventListener('click', () => {
-      void copyDiscordList();
-    });
     els.btnAdd?.addEventListener('click', addManualPlayer);
     els.root?.addEventListener('click', onRootClick);
     els.root?.addEventListener('change', onRootChange);
@@ -1320,5 +1398,9 @@
     canEditFollowUp,
     /** Exposé pour les tests (réouverture auto des fiches terminées). */
     syncAutoReasons,
+    /** Exposé pour les tests (carnet Discret / boutons masqués). */
+    isLightOnlyReasons,
+    isContactedThisMonth,
+    hasDossierReasons,
   };
 })(window);
