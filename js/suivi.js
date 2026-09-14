@@ -608,10 +608,6 @@
           follow.contactedAt
             ? escapeHtml(ROSModels.formatCoachingDateTime(follow.contactedAt) || follow.contactedAt)
             : 'pas encore'
-        }${
-          follow.contactedAt
-            ? ` · ${escapeHtml(ROSModels.formatFollowUpReasonsLabel(follow.contactReasons))}`
-            : ''
         }</p>
         <p><strong>R4 assigné :</strong> ${
           assigneeLabelFor(follow) ? escapeHtml(assigneeLabelFor(follow)) : 'personne'
@@ -637,7 +633,7 @@
         <button type="button" class="btn btn-ghost" data-suivi-contact="${escapeHtml(
           player.id
         )}" ${editable ? '' : 'disabled'}>
-          Marquer contacté (date + raisons)
+          Marquer contacté
         </button>
         <button type="button" class="btn btn-ghost" data-suivi-done="${escapeHtml(
           player.id
