@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20260916-discret-liste1" />
+  <link rel="stylesheet" href="css/styles.css?v=20260916-vs-signals1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -216,7 +216,7 @@
         <div class="panel-header">
           <div>
             <h2>VS hebdomadaire</h2>
-            <p class="panel-subtitle">Semaines VS à fond · clôture sans historique · scores de la semaine active uniquement</p>
+            <p class="panel-subtitle">Semaine VS à fond · coaching / félicitations en ligne · résumé sous seuil à la clôture</p>
           </div>
           <div class="panel-header-actions">
             <button type="button" id="btnCloseWeek" class="btn btn-ghost">Clôturer la semaine</button>
@@ -257,20 +257,36 @@
               <thead>
                 <tr>
                   <th>Joueur</th>
-                  <th>Rôle</th>
                   <th>Lun</th>
                   <th>Mar</th>
                   <th>Mer</th>
                   <th>Jeu</th>
                   <th>Ven</th>
-                  <th>Jours sous objectif</th>
-                  <th>Objectifs atteints</th>
+                  <th>Signal</th>
+                  <th>Contact</th>
                 </tr>
               </thead>
               <tbody id="vsTableBody"></tbody>
             </table>
           </div>
+          <div class="toolbar toolbar-members" style="margin-top:0.75rem">
+            <select id="vsContactFilter" class="input" aria-label="Filtrer coaching / félicitations">
+              <option value="">Tous</option>
+              <option value="coach">À coacher</option>
+              <option value="praise">À féliciter</option>
+              <option value="contacted">Déjà contactés</option>
+            </select>
+          </div>
           <p id="vsEmpty" class="empty-state hidden">Aucun joueur actif. Ajoutez des joueurs pour saisir le VS.</p>
+
+          <details id="vsPastUnderWrap" class="vs-past-under">
+            <summary>Semaines passées (sous seuil)</summary>
+            <p class="panel-subtitle" id="vsPastUnderHint">
+              Joueurs ayant atteint le seuil de coaching à la clôture (paramètre Gestion des membres).
+            </p>
+            <div id="vsPastUnderList"></div>
+            <p id="vsPastUnderEmpty" class="empty-state">Aucune semaine sous seuil archivée pour le moment.</p>
+          </details>
         </div>
       </section>
 
@@ -1435,7 +1451,7 @@
   <script src="js/supabase-client.js?v=20260804-4"></script>
   <script src="js/profiles.js?v=20260911-refaccess1"></script>
   <script src="js/supabase-sync.js?v=20260912-backups-local1"></script>
-  <script src="js/models.js?v=20260916-close-hero1"></script>
+  <script src="js/models.js?v=20260916-vs-signals1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
   <script src="js/player-identity.js?v=20260911-vscounter1"></script>
   <script src="js/storage.js?v=20260910-vsclose1"></script>
@@ -1446,7 +1462,7 @@
   <script src="js/suivi.js?v=20260916-close-hero1"></script>
   <script src="js/command.js?v=20260806-cmd1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
-  <script src="js/vs.js?v=20260911-novshist1"></script>
+  <script src="js/vs.js?v=20260916-vs-signals1"></script>
   <script src="js/train.js?v=20260911-export1"></script>
   <script src="js/ruche.js?v=20260912-marshal-fixed"></script>
   <script src="js/tempete.js?v=20260809-scoped1"></script>

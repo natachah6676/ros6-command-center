@@ -252,6 +252,125 @@
     );
   }
 
+  /**
+   * Signal VS pour la ligne : félicitations ou coaching (exclusifs).
+   * @returns {'praise'|'coach'|null}
+   */
+  function getVsWeekSignal(score, state) {
+    if (!score || isScoreAbsent(score)) return null;
+    if (isPraiseWeekScore(score, state)) return 'praise';
+    const underDays = countDaysUnderObjective(score);
+    const minUnder = getFollowUpSettings(state).vsMinUnderDays;
+    if (underDays >= minUnder) return 'coach';
+    return null;
+  }
+
+  function normalizeVsWeekContact(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const kind = raw.kind === 'praise' || raw.kind === 'coach' ? raw.kind : null;
+    if (!kind) return null;
+    return {
+      kind,
+      at: raw.at ? String(raw.at) : new Date().toISOString(),
+      authorLabel: raw.authorLabel != null ? String(raw.authorLabel) : '',
+      authorUserId: raw.authorUserId != null ? String(raw.authorUserId) : '',
+    };
+  }
+
+  function normalizeVsWeekContacts(raw) {
+    if (!raw || typeof raw !== 'object') return {};
+    const out = {};
+    Object.keys(raw).forEach((playerId) => {
+      if (!playerId) return;
+      const contact = normalizeVsWeekContact(raw[playerId]);
+      if (contact) out[playerId] = contact;
+    });
+    return out;
+  }
+
+  const VS_UNDER_WEEK_HISTORY_LIMIT = 12;
+
+  function normalizeVsUnderWeekHistoryEntry(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const weekId = raw.weekId ? String(raw.weekId) : '';
+    if (!weekId) return null;
+    const players = Array.isArray(raw.players)
+      ? raw.players
+          .filter((p) => p && p.playerId)
+          .map((p) => ({
+            playerId: String(p.playerId),
+            pseudo: String(p.pseudo || '').trim() || 'Sans pseudo',
+            underDays: Math.max(0, Number(p.underDays) || 0),
+            contacted: Boolean(p.contacted),
+            contactedAt: p.contactedAt || null,
+            contactedBy: p.contactedBy != null ? String(p.contactedBy) : '',
+          }))
+      : [];
+    return {
+      weekId,
+      weekLabel: raw.weekLabel != null ? String(raw.weekLabel) : '',
+      startDate: raw.startDate || '',
+      endDate: raw.endDate || '',
+      closedAt: raw.closedAt || null,
+      underMinDays: Math.max(1, Number(raw.underMinDays) || 2),
+      players,
+    };
+  }
+
+  function normalizeVsUnderWeekHistory(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map(normalizeVsUnderWeekHistoryEntry)
+      .filter(Boolean)
+      .slice(0, VS_UNDER_WEEK_HISTORY_LIMIT);
+  }
+
+  /**
+   * Archive légère à la clôture : uniquement les joueurs sous seuil (≥ vsMinUnderDays).
+   */
+  function pushVsUnderWeekArchive(state, week) {
+    if (!state || !week) return state;
+    const settings = getFollowUpSettings(state);
+    if (settings.vsFollowUpMutedWeekId && week.id === settings.vsFollowUpMutedWeekId) {
+      return state;
+    }
+    const contacts = normalizeVsWeekContacts(week.vsContacts);
+    const underMin = settings.vsMinUnderDays;
+    const players = [];
+    (state.players || []).forEach((player) => {
+      if (!player || player.status !== 'Actif' || player.absent) return;
+      const score = week.scores?.[player.id];
+      if (!score || isScoreAbsent(score)) return;
+      const underDays = countDaysUnderObjective(score);
+      if (underDays < underMin) return;
+      const contact = contacts[player.id];
+      const contacted = Boolean(contact && contact.kind === 'coach');
+      players.push({
+        playerId: player.id,
+        pseudo: player.pseudo,
+        underDays,
+        contacted,
+        contactedAt: contacted ? contact.at : null,
+        contactedBy: contacted ? contact.authorLabel || '' : '',
+      });
+    });
+    players.sort((a, b) => a.pseudo.localeCompare(b.pseudo, 'fr', { sensitivity: 'base' }));
+    const entry = {
+      weekId: week.id,
+      weekLabel: week.label || `Semaine ${week.number || ''}`.trim(),
+      startDate: week.startDate || '',
+      endDate: week.endDate || '',
+      closedAt: week.closedAt || new Date().toISOString(),
+      underMinDays: underMin,
+      players,
+    };
+    const prev = normalizeVsUnderWeekHistory(state.vsUnderWeekHistory).filter(
+      (e) => e.weekId !== week.id
+    );
+    state.vsUnderWeekHistory = [entry, ...prev].slice(0, VS_UNDER_WEEK_HISTORY_LIMIT);
+    return state;
+  }
+
   /** Tranches de puissance héros par défaut (liste centrale — ne pas dupliquer ailleurs). */
   const DEFAULT_POWER_TIER_DEFS = [
     { label: '25 à 30 M', min: 25, max: 30 },
@@ -632,6 +751,8 @@
       archived: Boolean(options.archived),
       donationsVerified: false,
       scores: {},
+      /** Contacts coaching / félicitations de la semaine active. */
+      vsContacts: {},
     };
   }
 
@@ -945,6 +1066,8 @@
       playerFollowUps: {},
       /** Compteur léger VS sous seuil (fenêtre glissante, sans garder les semaines). */
       playerVsUnderStats: {},
+      /** Résumés « sous seuil » des semaines clôturées (consultation Semaines passées). */
+      vsUnderWeekHistory: [],
       alliance: createDefaultAllianceSettings(),
       /** Journal minimal des changements de Puissance globale (sync / audit). */
       globalPowerAudit: [],
@@ -1553,6 +1676,7 @@
             closedByPlayerId: w.closedByPlayerId || null,
             donationsVerified: Boolean(w.donationsVerified),
             scores,
+            vsContacts: normalizeVsWeekContacts(w.vsContacts),
           };
         })
       : Array.isArray(raw.weeks)
@@ -1630,6 +1754,7 @@
     const followUpSettings = normalizeFollowUpSettings(raw.followUpSettings);
     const playerFollowUps = normalizePlayerFollowUps(raw.playerFollowUps);
     const playerVsUnderStats = normalizePlayerVsUnderStats(raw.playerVsUnderStats);
+    const vsUnderWeekHistory = normalizeVsUnderWeekHistory(raw.vsUnderWeekHistory);
     const alliance = normalizeAllianceSettings(raw.alliance);
 
     const normalized = {
@@ -1651,6 +1776,7 @@
       followUpSettings,
       playerFollowUps,
       playerVsUnderStats,
+      vsUnderWeekHistory,
       alliance,
       globalPowerAudit: normalizeGlobalPowerAudit(raw.globalPowerAudit),
     };
@@ -1748,6 +1874,11 @@
     countObjectivesMet,
     countHighDays,
     isPraiseWeekScore,
+    getVsWeekSignal,
+    normalizeVsWeekContact,
+    normalizeVsWeekContacts,
+    VS_UNDER_WEEK_HISTORY_LIMIT,
+    normalizeVsUnderWeekHistory,
     createDefaultPowerTiers,
     normalizePowerTier,
     normalizePowerTiers,
@@ -1810,6 +1941,7 @@
     formatVsUnderCounterLabel,
     formatVsPraiseCounterLabel,
     recordVsUnderSnapshotsForWeek,
+    pushVsUnderWeekArchive,
     emptyFollowUpReasons,
     createDefaultAllianceSettings,
     normalizeAllianceSettings,

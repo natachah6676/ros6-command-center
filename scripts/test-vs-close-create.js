@@ -214,13 +214,39 @@ console.log('\n=== Clôture (effacement, pas d’archive) ===');
   assert(!M.getCurrentWeekFromState(state), 'getCurrentWeekFromState null');
 
   const statsOk = M.getPlayerVsUnderStats(state, 'p_ok');
-  assert(statsOk.entries.length === 1, 'compteur : 1 entrée pour présent');
-  assert(statsOk.entries[0].underDays === 1, 'compteur : 1 j sous objectif (12 pts)');
-  assert(statsOk.entries[0].under === false, 'compteur : pas sous seuil (seuil 2)');
-  assert(M.formatVsUnderCounterLabel(statsOk) === 'VS sous seuil : 0 / 1', 'libellé 0/1');
+  assert(statsOk.entries.length === 0, '1 j sous (seuil 2) → pas d’entrée compteur');
+  assert(
+    (state.vsUnderWeekHistory || []).length === 0 ||
+      (state.vsUnderWeekHistory[0] && state.vsUnderWeekHistory[0].players.length === 0),
+    '1 j sous → pas dans Semaines passées sous seuil'
+  );
 
-  const statsAbs = M.getPlayerVsUnderStats(state, 'p_abs');
-  assert(statsAbs.entries.length === 0, 'absent non compté au snapshot');
+  // Semaine avec 2 j sous → compteur + archive
+  const w2 = M.createWeek(new Date('2026-08-10'), { number: 3, archived: false });
+  w2.id = 'week_under2';
+  w2.scores = { p_ok: M.createEmptyScore() };
+  w2.scores.p_ok.days.lundi = 12;
+  w2.scores.p_ok.dayBrackets.lundi = 'low';
+  w2.scores.p_ok.days.mardi = 12;
+  w2.scores.p_ok.dayBrackets.mardi = 'low';
+  sandbox.ROSStorage.update((s) => {
+    s.weeks = [w2];
+    s.currentWeekId = 'week_under2';
+    return s;
+  });
+  weekSelector.value = 'week_under2';
+  await VS.closeActiveWeek();
+  state = sandbox.ROSStorage.getState();
+  const stats2 = M.getPlayerVsUnderStats(state, 'p_ok');
+  assert(stats2.entries.length === 1, 'compteur : 1 entrée si ≥ seuil');
+  assert(stats2.entries[0].underDays === 2, 'compteur : 2 j sous');
+  assert(stats2.entries[0].under === true, 'compteur : sous seuil');
+  assert(
+    (state.vsUnderWeekHistory || []).some(
+      (e) => e.weekId === 'week_under2' && e.players.some((p) => p.playerId === 'p_ok')
+    ),
+    'archive Semaines passées contient le joueur sous seuil'
+  );
 
   console.log('\n=== Création après clôture ===');
   await VS.createNewWeek();

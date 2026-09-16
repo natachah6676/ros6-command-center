@@ -322,7 +322,11 @@ assert(html.includes('id="filterDiscretAdmin"'), 'filtre Discret liste membres')
 assert(html.includes('Pas contacté depuis 30 jours'), 'filtre 30 jours Discret');
 assert(playersCode.includes('markDiscretContact'), 'bouton Contact pris');
 assert(!html.includes('option value="vs">VS'), 'pas de filtre VS suivi');
-assert(!html.includes('option value="praise"'), 'pas de filtre félicitations suivi');
+assert(
+  !html.includes('id="suiviFilterReason"') ||
+    !html.match(/id="suiviFilterReason"[\s\S]*?option value="praise"/),
+  'pas de filtre félicitations suivi'
+);
 assert(html.includes('id="trainExportHistoryExcel"'), 'export Excel Train');
 assert(html.includes('id="followUpVsPraiseMinDaysMet"'), 'seuil félicitations jours faits');
 assert(html.includes('id="vsAfondPraiseGoal"'), 'seuil gros score VS paramètres');
