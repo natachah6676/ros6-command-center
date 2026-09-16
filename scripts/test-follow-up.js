@@ -91,7 +91,7 @@ assert(M.normalizeFollowUpSettings({ vsMinUnderDays: 0 }).vsMinUnderDays === 2, 
 assert(M.getFollowUpStatusLabel('in_progress') === 'En suivi', 'label statut En suivi');
 
 const rVs = M.detectFollowUpReasons(state.players[0], state);
-assert(rVs.vs === true && rVs.hero === false, 'détection VS seule');
+assert(rVs.vs === false && rVs.hero === false, 'VS seul → hors Gestion des membres');
 
 const rOk = M.detectFollowUpReasons(state.players[1], state);
 assert(rOk.vs === false && rOk.hero === false, 'joueur OK non détecté');
@@ -100,7 +100,7 @@ const rHero = M.detectFollowUpReasons(state.players[2], state);
 assert(rHero.hero === true, 'détection héros');
 
 const rBoth = M.detectFollowUpReasons(state.players[3], state);
-assert(rBoth.vs && rBoth.hero, 'détection VS + héros');
+assert(!rBoth.vs && rBoth.hero, 'VS+héros → seul héros en Gestion des membres');
 
 const perfect = M.createPlayer({
   pseudo: 'Perfect',
@@ -109,13 +109,10 @@ const perfect = M.createPlayer({
 });
 perfect.id = 'p_praise';
 state.players.push(perfect);
-state.weeks[0].scores.p_praise = makeScore(0, 0);
-const rNoHigh = M.detectFollowUpReasons(perfect, state);
-assert(rNoHigh.praise === false, '5 j score fait sans gros score → pas féliciter');
-
 state.weeks[0].scores.p_praise = makeScore(0, 1);
 const rPraise = M.detectFollowUpReasons(perfect, state);
-assert(rPraise.praise === true && rPraise.vs === false, '5 j score fait + 1 gros score → féliciter');
+assert(rPraise.praise === false && rPraise.vs === false, 'félicitations → hors Gestion des membres');
+assert(M.isPraiseWeekScore(state.weeks[0].scores.p_praise, state) === true, 'isPraiseWeekScore toujours actif');
 
 const absentP = state.players.find((p) => p.id === 'p_absent');
 const rAbs = M.detectFollowUpReasons(absentP, state);
@@ -154,25 +151,24 @@ assert(
   'mute VS conserve weekId'
 );
 
-const mutedState = {
-  ...state,
-  followUpSettings: { ...state.followUpSettings, vsFollowUpMutedWeekId: state.currentWeekId },
-};
-const rMuted = M.detectFollowUpReasons(state.players[0], mutedState);
-assert(!rMuted.vs && !rMuted.praise, 'semaine muette : pas de VS / félicitations auto');
-
-const mutedNoWeek = {
-  ...state,
-  currentWeekId: null,
-  weeks: [],
-  followUpSettings: { ...state.followUpSettings, vsFollowUpMutedWeekId: 'week_old' },
-  playerVsUnderStats: {
-    p_vs: { entries: [{ weekId: 'week_old', under: true, praise: false, underDays: 3 }] },
-  },
-};
 assert(
-  !M.detectFollowUpReasons(state.players[0], mutedNoWeek).vs,
-  'mute sans semaine : ignore historique VS'
+  M.FOLLOW_UP_CLOSE_REASONS.some((r) => r.id === 'not_interested'),
+  'raison fin : pas intéressé'
+);
+assert(
+  M.getFollowUpCloseReasonLabel('coaching_done') === 'Coaching terminé',
+  'libellé Coaching terminé'
+);
+assert(M.normalizeFollowUpCloseReason('no_reply') === 'no_reply', 'normalize closeReason');
+assert(M.normalizeFollowUpCase({ status: 'done', closeReason: 'no_reply' }).closeReason === 'no_reply', 'closeReason conservé');
+
+assert(M.normalizeFollowUpSettings({}).vsPraiseMinDaysMet === 5, 'défaut félicitations = 5 j score fait');
+assert(M.normalizeFollowUpSettings({}).vsPraiseMinHighDays === 1, 'défaut félicitations = 1 j gros score');
+assert(M.createDefaultVsSettings().afond.praiseGoal === 20000000, 'défaut seuil gros score = 20 M');
+assert(M.normalizeFollowUpSettings({}).specialists.vs === null, 'spécialiste VS défaut null');
+assert(
+  !M.FOLLOW_UP_SPECIALIST_KEYS.some((k) => k.id === 'absent'),
+  'pas de référent absent'
 );
 
 let snapState = {
@@ -204,15 +200,6 @@ M.recordVsUnderSnapshotsForWeek(snapState, {
 assert(
   !snapState.playerVsUnderStats.p_vs,
   'clôture semaine muette : pas d’historique'
-);
-
-assert(M.normalizeFollowUpSettings({}).vsPraiseMinDaysMet === 5, 'défaut félicitations = 5 j score fait');
-assert(M.normalizeFollowUpSettings({}).vsPraiseMinHighDays === 1, 'défaut félicitations = 1 j gros score');
-assert(M.createDefaultVsSettings().afond.praiseGoal === 20000000, 'défaut seuil gros score = 20 M');
-assert(M.normalizeFollowUpSettings({}).specialists.vs === null, 'spécialiste VS défaut null');
-assert(
-  !M.FOLLOW_UP_SPECIALIST_KEYS.some((k) => k.id === 'absent'),
-  'pas de référent absent'
 );
 
 const specsState = {
@@ -320,19 +307,22 @@ assert(suiviCode.includes('Choisissez qui s’occupe du suivi'), 'validation ass
 assert(suiviCode.includes('data-suivi-progress'), 'bouton En suivi');
 assert(suiviCode.includes('Suivi terminé'), 'bouton Suivi terminé');
 assert(!suiviCode.includes('Statut du suivi'), 'pas de sélecteur Statut du suivi');
-assert(suiviCode.includes('data-suivi-contact'), 'bouton Marquer contacté');
+assert(suiviCode.includes('data-suivi-contact'), 'bouton Contacté');
+assert(suiviCode.includes('Contacté'), 'libellé Contacté');
+assert(html.includes('id="suiviCloseModal"'), 'modal raison de fin');
+assert(html.includes('data-close-reason="not_interested"'), 'choix pas intéressé');
+assert(html.includes('data-close-reason="no_reply"'), 'choix ne répond pas');
+assert(html.includes('data-close-reason="coaching_done"'), 'choix coaching terminé');
+assert(html.includes('<th>Fin</th>'), 'colonne Fin historique');
+assert(suiviCode.includes('requestCloseFollowUp'), 'clôture avec raison');
 assert(html.includes('id="panel-suivi"'), 'panneau suivi');
-assert(html.includes('id="followUpVsMinDays"'), 'seuil VS paramètres');
-assert(!html.includes('id="btnSuiviCopyList"'), 'pas de bouton copier Discord');
-assert(!suiviCode.includes('copyDiscordList'), 'pas de fonction copie Discord');
-assert(!html.includes('id="suiviFilterDiscretMonth"'), 'pas de filtre mois Discret dans suivi');
-assert(!suiviCode.includes('Carnet Discret'), 'pas de carnet Discret dans suivi');
+assert(html.includes('id="followUpVsMinDays"'), 'seuil VS paramètres (futur onglet VS)');
+assert(html.includes('id="suiviFilterAssignee"'), 'filtre R4 assigné');
 assert(html.includes('id="filterDiscretAdmin"'), 'filtre Discret liste membres');
 assert(html.includes('Pas contacté depuis 30 jours'), 'filtre 30 jours Discret');
 assert(playersCode.includes('markDiscretContact'), 'bouton Contact pris');
-assert(playersCode.includes('discret-contact'), 'action Contact pris liste');
-assert(suiviCode.includes('isLightOnlyReasons'), 'masquage boutons félicitations');
-assert(html.includes('id="suiviFilterAssignee"'), 'filtre R4 assigné');
+assert(!html.includes('option value="vs">VS'), 'pas de filtre VS suivi');
+assert(!html.includes('option value="praise"'), 'pas de filtre félicitations suivi');
 assert(html.includes('id="trainExportHistoryExcel"'), 'export Excel Train');
 assert(html.includes('id="followUpVsPraiseMinDaysMet"'), 'seuil félicitations jours faits');
 assert(html.includes('id="vsAfondPraiseGoal"'), 'seuil gros score VS paramètres');
@@ -347,15 +337,16 @@ assert(html.includes('id="playerDiscret"'), 'case Discret fiche joueur');
 assert(suiviCode.includes('isFollowUpVisibleToViewer'), 'filtre visibilité R4');
 assert(suiviCode.includes('pickFollowUpSpecialist'), 'auto référent motif');
 assert(
-  suiviCode.includes('se rouvre si un motif auto est encore vrai'),
-  'réouverture auto des fiches terminées'
+  suiviCode.includes('réactivation manuelle') ||
+    suiviCode.includes('Ne rouvre jamais une fiche terminée'),
+  'réouverture auto désactivée'
 );
 assert(html.includes('js/suivi.js'), 'script suivi inclus');
 assert(appCode.includes("tabName === 'suivi'"), 'app switchTab suivi');
 assert(appCode.includes('SuiviModule.init()'), 'app init SuiviModule');
 assert(suiviCode.includes('SuiviModule'), 'module Suivi exporté');
 
-console.log('\nRéouverture auto fiches terminées');
+console.log('\nPas de réouverture auto des fiches terminées');
 const suiviSandbox = {
   window: {},
   console,
@@ -404,64 +395,35 @@ const reopenState = {
       absent: false,
       heroPowerTierId: lowHeroTier.id,
     },
-    {
-      id: 'p_ok_done',
-      pseudo: 'OkDone',
-      status: 'Actif',
-      absent: false,
-      heroPowerTierId: highHeroTier.id,
-    },
   ],
   playerFollowUps: {
     p_hero_done: M.createEmptyFollowUpCase({
       playerId: 'p_hero_done',
       status: 'done',
       closedAt: '2026-09-01T10:00:00.000Z',
-      reasons: { vs: true, hero: false, praise: false, discret: false, manual: false },
-    }),
-    p_ok_done: M.createEmptyFollowUpCase({
-      playerId: 'p_ok_done',
-      status: 'done',
-      closedAt: '2026-09-01T10:00:00.000Z',
-      reasons: { vs: true, hero: false, praise: false, discret: false, manual: false },
+      closeReason: 'not_interested',
+      reasons: { vs: false, hero: true, praise: false, discret: false, manual: false },
     }),
   },
 };
 reopenState.weeks[0].scores.p_hero_done = makeScore(0);
-reopenState.weeks[0].scores.p_ok_done = makeScore(0);
 
 const reopened = Suivi.syncAutoReasons(reopenState);
-assert(reopened === true, 'sync détecte une réouverture');
+assert(reopened === false, 'sync ne rouvre pas une fiche terminée');
 assert(
-  reopenState.playerFollowUps.p_hero_done.status === 'to_contact',
-  'héros encore vrai → fiche terminée rouverte'
+  reopenState.playerFollowUps.p_hero_done.status === 'done',
+  'héros encore vrai → reste en historique'
 );
 assert(
-  reopenState.playerFollowUps.p_hero_done.reasons.hero === true,
-  'motif héros posé à la réouverture'
-);
-assert(
-  reopenState.playerFollowUps.p_hero_done.closedAt == null,
-  'closedAt effacé à la réouverture'
-);
-assert(
-  reopenState.playerFollowUps.p_ok_done.status === 'done',
-  'sans motif auto → reste en historique terminé'
+  reopenState.playerFollowUps.p_hero_done.closeReason === 'not_interested',
+  'raison de fin conservée'
 );
 
-console.log('\nCarnet Discret / boutons légers');
-assert(!Suivi.isLightOnlyReasons({ discret: true }), 'discret seul n’est plus un motif suivi');
-assert(Suivi.isLightOnlyReasons({ praise: true }), 'félicitations seules → léger');
-assert(
-  !Suivi.isLightOnlyReasons({ praise: true, vs: true }),
-  'félicitations+VS → dossier'
-);
-assert(
-  !Suivi.isLightOnlyReasons({ praise: true, manual: true }),
-  'félicitations+manuel → dossier'
-);
-assert(Suivi.hasDossierReasons({ vs: true }), 'VS = dossier');
-assert(!Suivi.hasDossierReasons({ praise: true }), 'félicitations seules ≠ dossier');
+console.log('\nBoutons / motifs Gestion des membres');
+assert(!Suivi.isLightOnlyReasons({ praise: true }), 'plus de motif léger');
+assert(Suivi.hasDossierReasons({ hero: true }), 'héros = dossier');
+assert(Suivi.hasDossierReasons({ manual: true }), 'manuel = dossier');
+assert(!Suivi.hasDossierReasons({ vs: true }), 'VS seul ≠ dossier gestion');
 
 console.log('\nContacts Discret (liste membres)');
 const overduePlayer = M.createPlayer({ pseudo: 'Due', discret: true });
@@ -474,8 +436,6 @@ const contact = M.pushDiscretContact(overduePlayer, {
 assert(contact && contact.text === 'Contact pris', 'pushDiscretContact ajoute une entrée');
 assert(!M.isDiscretContactOverdue(overduePlayer), 'contact récent → pas dû');
 const oldIso = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
-M.pushDiscretContact(overduePlayer, { at: oldIso, text: 'Ancien' });
-// last contact is the newest — still recent from first push; force only old:
 overduePlayer.discretContacts = M.normalizeDiscretContacts([{ at: oldIso, text: 'Ancien' }]);
 assert(M.isDiscretContactOverdue(overduePlayer), 'contact > 30 j → à faire');
 

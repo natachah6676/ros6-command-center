@@ -88,14 +88,14 @@
     return follow.assigneeLabel || 'R4';
   }
 
-  /** Dossier à clôturer (VS / héros / manuel) — hors félicitations seules. */
+  /** Dossier à clôturer : héros / manuel (VS & félicitations hors module pour l’instant). */
   function hasDossierReasons(reasons) {
-    return Boolean(reasons?.vs || reasons?.hero || reasons?.manual);
+    return Boolean(reasons?.hero || reasons?.manual);
   }
 
-  /** Uniquement À féliciter → pas de boutons de statut. */
-  function isLightOnlyReasons(reasons) {
-    return !hasDossierReasons(reasons) && Boolean(reasons?.praise);
+  /** @deprecated conservé pour tests — plus de motif « léger » dans Gestion des membres. */
+  function isLightOnlyReasons(_reasons) {
+    return false;
   }
 
   function canEditFollowUp() {
@@ -180,22 +180,20 @@
   function buildDisplayReasons(player, follow, state) {
     const detected = ROSModels.detectFollowUpReasons(player, state);
     return {
-      vs: Boolean(detected.vs || follow?.reasons?.vs),
+      vs: false,
       hero: Boolean(detected.hero || follow?.reasons?.hero),
-      praise: Boolean(detected.praise || follow?.reasons?.praise),
-      // Discret n’est plus un motif de Gestion des membres (legacy éventuel seulement).
-      discret: Boolean(follow?.reasons?.discret),
+      praise: false,
+      discret: false,
       manual: Boolean(follow?.manual || follow?.reasons?.manual || detected.manual),
     };
   }
 
-  /** Applique les détections auto. Retourne true si l’état a changé. */
+  /** Applique les détections auto (héros uniquement). Ne rouvre jamais une fiche terminée. */
   function syncAutoReasons(state) {
     let changed = false;
     (state.players || []).forEach((player) => {
       if (!player || player.status !== 'Actif') return;
       if (player.absent) {
-        // Hors suivi auto : l’absence (et Discret) se gèrent dans Liste des membres.
         const existing = state.playerFollowUps?.[player.id];
         if (
           existing &&
@@ -204,15 +202,15 @@
           !existing.reasons?.manual
         ) {
           let rowChanged = false;
-          if (existing.reasons?.discret) {
-            existing.reasons.discret = false;
-            rowChanged = true;
-          }
-          const still =
-            existing.reasons?.vs || existing.reasons?.hero || existing.reasons?.praise;
-          if (!still) {
+          ['vs', 'praise', 'discret', 'hero'].forEach((key) => {
+            if (existing.reasons?.[key]) {
+              existing.reasons[key] = false;
+              rowChanged = true;
+            }
+          });
+          if (!existing.reasons?.manual && !existing.manual) {
             existing.status = 'done';
-            existing.closedAt = new Date().toISOString();
+            existing.closedAt = existing.closedAt || new Date().toISOString();
             rowChanged = true;
           }
           if (rowChanged) {
@@ -222,68 +220,52 @@
         }
         return;
       }
+
       const detected = ROSModels.detectFollowUpReasons(player, state);
       const existing = state.playerFollowUps?.[player.id];
       const hasOpen = existing && existing.status !== 'done';
-      const autoHit = detected.vs || detected.hero || detected.praise;
+      const autoHit = Boolean(detected.hero);
       if (!autoHit && !hasOpen && !detected.manual) return;
 
-      // Suivi terminé : reste en historique, mais se rouvre si un motif auto est encore vrai.
-      if (existing?.status === 'done') {
-        if (!autoHit) return;
-        existing.status = 'to_contact';
-        existing.closedAt = null;
-        existing.reasons = ROSModels.emptyFollowUpReasons({
-          vs: detected.vs,
-          hero: detected.hero,
-          praise: detected.praise,
-          discret: false,
-          manual: Boolean(existing.manual || existing.reasons?.manual || detected.manual),
-        });
-        existing.manual = Boolean(existing.manual || existing.reasons?.manual || detected.manual);
-        existing.updatedAt = new Date().toISOString();
-        applySpecialistIfNeeded(existing, existing.reasons, state);
-        changed = true;
-      }
+      // Fiche terminée : reste en historique jusqu’à réactivation manuelle.
+      if (existing?.status === 'done') return;
 
-      if (!existing || existing.status === 'done') {
-        if (!existing && autoHit) {
-          const seedReasons = {
-            vs: detected.vs,
-            hero: detected.hero,
-            praise: detected.praise,
-            discret: false,
-            manual: Boolean(detected.manual),
-          };
-          const row = ensureCase(state, player.id, {
-            reasons: seedReasons,
-            manual: Boolean(detected.manual),
-          });
-          applySpecialistIfNeeded(row, seedReasons, state);
-          changed = true;
-        }
+      if (!existing) {
+        if (!autoHit && !detected.manual) return;
+        const seedReasons = {
+          vs: false,
+          hero: detected.hero,
+          praise: false,
+          discret: false,
+          manual: Boolean(detected.manual),
+        };
+        const row = ensureCase(state, player.id, {
+          reasons: seedReasons,
+          manual: Boolean(detected.manual),
+        });
+        applySpecialistIfNeeded(row, seedReasons, state);
+        changed = true;
         return;
       }
 
       const row = ensureCase(state, player.id);
       if (row.status === 'done') return;
       let rowChanged = false;
-      ['vs', 'hero', 'praise'].forEach((key) => {
-        if (detected[key] && !row.reasons[key]) {
-          row.reasons[key] = true;
-          rowChanged = true;
-        }
-        // Retire les motifs auto qui ne sont plus vrais (évite les fiches « fantômes »).
-        if (!detected[key] && row.reasons[key] && key !== 'manual') {
+      if (detected.hero && !row.reasons.hero) {
+        row.reasons.hero = true;
+        rowChanged = true;
+      }
+      if (!detected.hero && row.reasons.hero) {
+        row.reasons.hero = false;
+        rowChanged = true;
+      }
+      // Retire les anciens motifs VS / félicitations / Discret de Gestion des membres.
+      ['vs', 'praise', 'discret'].forEach((key) => {
+        if (row.reasons[key]) {
           row.reasons[key] = false;
           rowChanged = true;
         }
       });
-      // Ancien motif Discret : plus géré ici → retire de la fiche.
-      if (row.reasons.discret) {
-        row.reasons.discret = false;
-        rowChanged = true;
-      }
       if (row.reasons?.absent) {
         row.reasons.absent = false;
         rowChanged = true;
@@ -292,15 +274,11 @@
         row.reasons.manual = true;
         rowChanged = true;
       }
-      const stillRelevant =
-        row.reasons.vs ||
-        row.reasons.hero ||
-        row.reasons.praise ||
-        row.manual ||
-        row.reasons.manual;
+      const stillRelevant = row.reasons.hero || row.manual || row.reasons.manual;
       if (!stillRelevant && row.status !== 'done') {
         row.status = 'done';
         row.closedAt = new Date().toISOString();
+        if (!row.closeReason) row.closeReason = 'coaching_done';
         rowChanged = true;
       }
       if (stillRelevant && applySpecialistIfNeeded(row, { ...row.reasons, ...detected }, state)) {
@@ -330,17 +308,13 @@
         if (isDone && !showDone && statusFilter !== 'done') return null;
         if (
           !isDone &&
-          !displayReasons.vs &&
           !displayReasons.hero &&
-          !displayReasons.praise &&
           !displayReasons.manual
         ) {
           return null;
         }
         if (statusFilter && follow.status !== statusFilter) return null;
-        if (reasonFilter === 'vs' && !displayReasons.vs) return null;
         if (reasonFilter === 'hero' && !displayReasons.hero) return null;
-        if (reasonFilter === 'praise' && !displayReasons.praise) return null;
         if (reasonFilter === 'manual' && !displayReasons.manual) return null;
         if (assigneeFilter === 'unassigned' && follow.assigneePlayerId) return null;
         if (
@@ -450,16 +424,6 @@
       els.list.innerHTML = rows
         .map(({ player, follow, reasons }) => {
           const selected = player.id === selectedPlayerId ? ' is-selected' : '';
-          const vsStats = ROSModels.getPlayerVsUnderStats(fresh, player.id);
-          const vsSummary = ROSModels.summarizeVsUnderStats(vsStats);
-          const showVsCounter = reasons.vs || vsSummary.underCount > 0;
-          const showPraiseCounter = reasons.praise || vsSummary.praiseCount > 0;
-          const vsCounter = showVsCounter
-            ? ROSModels.formatVsUnderCounterLabel(vsStats)
-            : '';
-          const praiseCounter = showPraiseCounter
-            ? ROSModels.formatVsPraiseCounterLabel(vsStats)
-            : '';
           const assignee = assigneeLabelFor(follow);
           return `
             <button type="button" class="suivi-row${selected}" data-suivi-open="${escapeHtml(player.id)}">
@@ -468,16 +432,6 @@
                 <span class="suivi-row-reasons">${escapeHtml(
                   ROSModels.formatFollowUpReasonsLabel(reasons)
                 )}</span>
-                ${
-                  vsCounter
-                    ? `<span class="suivi-row-vs-counter">${escapeHtml(vsCounter)}</span>`
-                    : ''
-                }
-                ${
-                  praiseCounter
-                    ? `<span class="suivi-row-vs-counter">${escapeHtml(praiseCounter)}</span>`
-                    : ''
-                }
                 ${
                   assignee
                     ? `<span class="suivi-row-assignee">Suivi par ${escapeHtml(assignee)}</span>`
@@ -520,29 +474,8 @@
 
     const reasons = buildDisplayReasons(player, follow, state);
     const displayReasons = reasons;
-    const week = ROSModels.getFollowUpReferenceWeek(state);
-    const underDays = week ? ROSModels.countPlayerVsUnderDays(week, player.id) : 0;
     const settings = ROSModels.getFollowUpSettings(state);
     const heroLabel = ROSModels.getPlayerPowerLabel(player, state);
-    const vsStats = ROSModels.getPlayerVsUnderStats(state, player.id);
-    const vsSummary = ROSModels.summarizeVsUnderStats(vsStats);
-    const hasVsHistory = vsSummary.underCount > 0 || vsSummary.praiseCount > 0;
-    const showVsBlock = Boolean(week) || displayReasons.vs || displayReasons.praise || hasVsHistory;
-    const vsHistoryHtml = hasVsHistory
-      ? `<ul class="suivi-vs-history">${vsSummary.entries
-          .filter((e) => e.under || e.praise)
-          .map(
-            (e) =>
-              `<li class="${
-                e.under ? 'is-under' : e.praise ? 'is-ok' : ''
-              }">${escapeHtml(e.weekLabel || e.startDate || 'Semaine')} · ${
-                e.underDays
-              } j sous objectif · ${
-                e.under ? 'sous seuil' : e.praise ? 'à féliciter' : 'neutre'
-              }</li>`
-          )
-          .join('')}</ul>`
-      : '';
 
     const officers = getAssignableOfficers(state);
     const assigneeOptions =
@@ -557,7 +490,7 @@
         .join('');
 
     const statusBtn = (id) => (follow.status === id ? 'btn btn-primary' : 'btn btn-ghost');
-    const showStatusButtons = hasDossierReasons(displayReasons);
+    const showStatusButtons = hasDossierReasons(displayReasons) && follow.status !== 'done';
 
     const notesHtml = (follow.notes || [])
       .slice()
@@ -582,7 +515,7 @@
         <button type="button" class="${statusBtn('contacted')}" data-suivi-contact="${escapeHtml(
           player.id
         )}" ${editable ? '' : 'disabled'}>
-          Marquer contacté
+          Contacté
         </button>
         <button type="button" class="${statusBtn('in_progress')}" data-suivi-progress="${escapeHtml(
           player.id
@@ -601,7 +534,7 @@
       ? `<form id="suiviNoteForm" class="suivi-note-form" data-player="${escapeHtml(player.id)}">
             <label class="field">
               <span>Nouveau commentaire</span>
-              <textarea id="suiviNoteText" class="input" rows="3" maxlength="800" placeholder="Ex. : tout va bien, questions VS / troupes…" required></textarea>
+              <textarea id="suiviNoteText" class="input" rows="3" maxlength="800" placeholder="Ex. : intéressé, questions puissance…" required></textarea>
             </label>
             <button type="submit" class="btn btn-primary">Ajouter le commentaire</button>
           </form>`
@@ -617,30 +550,6 @@
         </div>
       </div>
       <div class="suivi-detail-meta">
-        ${
-          showVsBlock
-            ? `<p><strong>VS (semaine active) :</strong> ${
-                player.absent
-                  ? 'absent — hors scores'
-                  : week
-                    ? `${underDays} jour(s) sous objectif (${escapeHtml(week.label || '')})`
-                    : 'aucune'
-              } · seuil suivi ≥ ${settings.vsMinUnderDays} j · félicitations ≥ ${
-                settings.vsPraiseMinDaysMet
-              } j score fait + ≥ ${settings.vsPraiseMinHighDays} j gros score</p>
-        ${
-          hasVsHistory
-            ? `<p><strong>${escapeHtml(ROSModels.formatVsUnderCounterLabel(vsStats))}</strong>
-          · <strong>${escapeHtml(ROSModels.formatVsPraiseCounterLabel(vsStats))}</strong>
-          <span class="panel-subtitle"> · ${
-            ROSModels.VS_UNDER_HISTORY_LIMIT
-          } dernières semaines clôturées</span>
-        </p>
-        ${vsHistoryHtml}`
-            : '<p class="panel-subtitle">Aucun historique VS sous seuil / à féliciter.</p>'
-        }`
-            : ''
-        }
         <p><strong>Puissance héros :</strong> ${escapeHtml(heroLabel)} · seuil ≤ ${
           settings.heroMaxM
         } M</p>
@@ -712,6 +621,7 @@
         row.status = 'to_contact';
         row.closedAt = null;
       }
+      row.closeReason = null;
       row.updatedAt = new Date().toISOString();
       return s;
     });
@@ -750,33 +660,32 @@
     render();
   }
 
-  function setStatus(playerId, status) {
+  function setStatus(playerId, status, options = {}) {
     if (!canEditFollowUp()) {
       AppUI.toast('Seul un R4 ou R5 peut modifier le suivi.');
       return;
     }
+    const closeReason = ROSModels.normalizeFollowUpCloseReason(options.closeReason);
     ROSStorage.update((s) => {
       const row = ensureCase(s, playerId);
       const player = (s.players || []).find((p) => p.id === playerId);
       const displayReasons = buildDisplayReasons(player, row, s);
-      // Les boutons de statut ne concernent que les dossiers VS / héros / manuel.
-      if (!hasDossierReasons(displayReasons)) return s;
+      if (!hasDossierReasons(displayReasons) && status !== 'done') return s;
       row.status = ROSModels.normalizeFollowUpStatus(status);
       row.updatedAt = new Date().toISOString();
       if (row.status === 'done') {
         row.closedAt = new Date().toISOString();
+        row.closeReason = closeReason || row.closeReason || 'coaching_done';
       } else {
         row.closedAt = null;
+        row.closeReason = null;
       }
       if (row.status === 'contacted' || row.status === 'in_progress') {
         if (!row.contactedAt) {
           const detected = ROSModels.detectFollowUpReasons(player, s);
           row.contactedAt = new Date().toISOString();
           row.contactReasons = ROSModels.emptyFollowUpReasons({
-            vs: Boolean(detected.vs || row.reasons.vs),
             hero: Boolean(detected.hero || row.reasons.hero),
-            praise: Boolean(detected.praise || row.reasons.praise),
-            discret: false,
             manual: Boolean(row.manual || row.reasons.manual),
           });
         }
@@ -784,9 +693,63 @@
       return s;
     });
     if (status === 'done') {
-      AppUI.toast('Suivi terminé — retiré de la liste active.');
+      AppUI.toast('Suivi terminé — visible dans l’historique.');
+      if (global.SuiviModule) {
+        // refresh history if user is there later
+      }
+      renderHistory();
     }
     render();
+  }
+
+  function chooseCloseReason() {
+    const modal = document.getElementById('suiviCloseModal');
+    if (!modal || typeof modal.showModal !== 'function') {
+      return Promise.resolve('coaching_done');
+    }
+    return new Promise((resolve) => {
+      const onClick = (event) => {
+        const btn = event.target.closest('[data-close-reason]');
+        if (!btn) return;
+        cleanup();
+        modal.close();
+        resolve(btn.dataset.closeReason || null);
+      };
+      const onCancel = (event) => {
+        event.preventDefault();
+        cleanup();
+        modal.close();
+        resolve(null);
+      };
+      const onCloseBtn = () => {
+        cleanup();
+        modal.close();
+        resolve(null);
+      };
+      function cleanup() {
+        modal.removeEventListener('click', onClick);
+        modal.removeEventListener('cancel', onCancel);
+        modal.querySelectorAll('[data-close-modal]').forEach((el) => {
+          el.removeEventListener('click', onCloseBtn);
+        });
+      }
+      modal.addEventListener('click', onClick);
+      modal.addEventListener('cancel', onCancel);
+      modal.querySelectorAll('[data-close-modal]').forEach((el) => {
+        el.addEventListener('click', onCloseBtn);
+      });
+      modal.showModal();
+    });
+  }
+
+  async function requestCloseFollowUp(playerId) {
+    if (!canEditFollowUp()) {
+      AppUI.toast('Seul un R4 ou R5 peut modifier le suivi.');
+      return;
+    }
+    const reason = await chooseCloseReason();
+    if (!reason) return;
+    setStatus(playerId, 'done', { closeReason: reason });
   }
 
   function markContacted(playerId) {
@@ -800,17 +763,14 @@
       const row = ensureCase(s, playerId);
       row.contactedAt = new Date().toISOString();
       row.contactReasons = ROSModels.emptyFollowUpReasons({
-        vs: Boolean(detected.vs || row.reasons.vs),
         hero: Boolean(detected.hero || row.reasons.hero),
-        praise: Boolean(detected.praise || row.reasons.praise),
-        discret: false,
         manual: Boolean(row.manual || row.reasons.manual),
       });
       if (row.status === 'to_contact') row.status = 'contacted';
       row.updatedAt = new Date().toISOString();
       return s;
     });
-    AppUI.toast('Contact enregistré.');
+    AppUI.toast('Contacté.');
     render();
   }
 
@@ -862,7 +822,7 @@
     }
     const doneBtn = event.target.closest('[data-suivi-done]');
     if (doneBtn) {
-      setStatus(doneBtn.dataset.suiviDone, 'done');
+      void requestCloseFollowUp(doneBtn.dataset.suiviDone);
     }
   }
 
@@ -1066,14 +1026,15 @@
         if (!follow || follow.status !== 'done') return null;
         // Motifs au moment du suivi (pas la redétection live actuelle).
         const reasons = ROSModels.emptyFollowUpReasons({
-          vs: Boolean(follow.reasons?.vs || follow.contactReasons?.vs),
           hero: Boolean(follow.reasons?.hero || follow.contactReasons?.hero),
-          praise: Boolean(follow.reasons?.praise || follow.contactReasons?.praise),
-          discret: Boolean(follow.reasons?.discret || follow.contactReasons?.discret),
           manual: Boolean(
             follow.manual || follow.reasons?.manual || follow.contactReasons?.manual
           ),
         });
+        // Conserve les motifs historiques VS/félicitations pour l’affichage des anciennes fiches.
+        if (follow.reasons?.vs || follow.contactReasons?.vs) reasons.vs = true;
+        if (follow.reasons?.praise || follow.contactReasons?.praise) reasons.praise = true;
+        if (follow.reasons?.discret || follow.contactReasons?.discret) reasons.discret = true;
         return { kind: 'follow', player, follow, reasons, sortAt: follow.closedAt || follow.updatedAt || '' };
       })
       .filter(Boolean)
@@ -1130,23 +1091,21 @@
       if (!row || row.status !== 'done') return s;
       row.status = 'to_contact';
       row.closedAt = null;
+      row.closeReason = null;
       row.updatedAt = new Date().toISOString();
-      if (row.reasons?.discret) {
+      if (row.reasons?.discret || row.reasons?.vs || row.reasons?.praise) {
         row.reasons = ROSModels.emptyFollowUpReasons({
-          ...row.reasons,
-          discret: false,
+          hero: Boolean(row.reasons?.hero),
+          manual: Boolean(row.manual || row.reasons?.manual),
         });
       }
       const still =
-        row.reasons?.vs ||
         row.reasons?.hero ||
-        row.reasons?.praise ||
         row.manual ||
         row.reasons?.manual;
       if (!still) {
         row.manual = true;
         row.reasons = ROSModels.emptyFollowUpReasons({
-          ...row.reasons,
           manual: true,
         });
       }
@@ -1236,6 +1195,7 @@
           <tr>
             <td><strong>${escapeHtml(player.pseudo)}</strong></td>
             <td>Discret · Contact</td>
+            <td>—</td>
             <td>${escapeHtml(who)}</td>
             <td>${escapeHtml(when)}</td>
             <td class="historique-suivi-notes">${escapeHtml(note)}</td>
@@ -1251,10 +1211,13 @@
         const r4 = contactOfficerLabel(follow);
         const notes = formatNotesPreview(follow);
         const motifs = ROSModels.formatFollowUpReasonsLabel(reasons);
+        const fin =
+          ROSModels.getFollowUpCloseReasonLabel(follow.closeReason) || '—';
         return `
           <tr>
             <td><strong>${escapeHtml(player.pseudo)}</strong></td>
             <td>${escapeHtml(motifs)}</td>
+            <td>${escapeHtml(fin)}</td>
             <td>${escapeHtml(r4)}</td>
             <td>${escapeHtml(closed)}</td>
             <td class="historique-suivi-notes">${escapeHtml(notes)}</td>

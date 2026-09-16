@@ -1143,6 +1143,7 @@
       createdAt: options.createdAt || now,
       updatedAt: options.updatedAt || now,
       closedAt: options.closedAt || null,
+      closeReason: normalizeFollowUpCloseReason(options.closeReason),
     };
   }
 
@@ -1182,6 +1183,7 @@
       createdAt: raw.createdAt || new Date().toISOString(),
       updatedAt: raw.updatedAt || raw.createdAt || new Date().toISOString(),
       closedAt: raw.closedAt || null,
+      closeReason: normalizeFollowUpCloseReason(raw.closeReason),
     };
   }
 
@@ -1223,27 +1225,11 @@
 
     const existing = state?.playerFollowUps?.[player.id];
     if (existing?.manual || existing?.reasons?.manual) reasons.manual = true;
-    // Discret se gère dans Liste des membres (contacts), pas comme dossier de suivi.
+    // VS / À féliciter : hors Gestion des membres pour l’instant (prévu onglet VS).
+    // Discret : Liste des membres uniquement.
 
-    // Absent = hors VS / héros auto.
+    // Absent = hors détection héros auto.
     if (player.absent) return reasons;
-
-    const week = getFollowUpReferenceWeek(state);
-    const mutedWeekId = settings.vsFollowUpMutedWeekId;
-    const mutedForWeek = Boolean(week && mutedWeekId && week.id === mutedWeekId);
-    // Mute actif sans semaine (ex. après clôture) : ne pas relire l’historique VS.
-    const mutedHistory = Boolean(mutedWeekId) && (!week || mutedForWeek);
-    if (week && !mutedForWeek) {
-      const underDays = countPlayerVsUnderDays(week, player.id);
-      const score = week.scores?.[player.id];
-      const hasScore = Boolean(score && !isScoreAbsent(score));
-      if (hasScore && underDays >= settings.vsMinUnderDays) reasons.vs = true;
-      if (hasScore && isPraiseWeekScore(score, state)) reasons.praise = true;
-    } else if (!week && !mutedHistory) {
-      const last = getPlayerVsUnderStats(state, player.id).entries[0];
-      if (last?.under) reasons.vs = true;
-      if (last?.praise) reasons.praise = true;
-    }
 
     const heroSort = getPlayerPowerSortValue(player, state);
     if (heroSort >= 0 && heroSort <= settings.heroMaxM) {
@@ -1251,6 +1237,21 @@
     }
 
     return reasons;
+  }
+
+  const FOLLOW_UP_CLOSE_REASONS = [
+    { id: 'not_interested', label: "N'est pas intéressé" },
+    { id: 'no_reply', label: 'Ne répond pas' },
+    { id: 'coaching_done', label: 'Coaching terminé' },
+  ];
+
+  function normalizeFollowUpCloseReason(value) {
+    const id = String(value || '').trim();
+    return FOLLOW_UP_CLOSE_REASONS.some((r) => r.id === id) ? id : null;
+  }
+
+  function getFollowUpCloseReasonLabel(reasonId) {
+    return FOLLOW_UP_CLOSE_REASONS.find((r) => r.id === reasonId)?.label || '';
   }
 
   function formatFollowUpReasonsLabel(reasons) {
@@ -1799,6 +1800,9 @@
     countPlayerVsUnderDays,
     detectFollowUpReasons,
     formatFollowUpReasonsLabel,
+    FOLLOW_UP_CLOSE_REASONS,
+    normalizeFollowUpCloseReason,
+    getFollowUpCloseReasonLabel,
     VS_UNDER_HISTORY_LIMIT,
     normalizePlayerVsUnderStats,
     getPlayerVsUnderStats,
