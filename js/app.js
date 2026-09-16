@@ -466,32 +466,18 @@
       return;
     }
 
-    let incomingGp = 0;
     try {
-      const parsed = JSON.parse(text);
-      const players = Array.isArray(parsed?.players) ? parsed.players : [];
-      incomingGp = players.filter((p) => p && p.globalPowerTierId).length;
+      JSON.parse(text);
     } catch (error) {
       toast('Import impossible : fichier JSON invalide.');
       ui.importFile.value = '';
       return;
     }
 
-    const currentGp = (ROSStorage.getState().players || []).filter(
-      (p) => p && p.globalPowerTierId
-    ).length;
-
-    const risk =
-      currentGp > incomingGp
-        ? `\n\n⚠ Attention Puissances globales : local ${currentGp} renseignée(s) · fichier ${incomingGp}.\nLes valeurs locales déjà remplies ne seront pas effacées par des cases vides du fichier (protection).`
-        : `\n\nPuissances globales dans le fichier : ${incomingGp} (local : ${currentGp}).`;
-
     const ok = await confirm({
       title: 'Importer une sauvegarde',
       message:
-        'Cette action remplacera les données locales du centre de commande par le contenu du fichier JSON.' +
-        risk +
-        '\n\nContinuer ?',
+        'Cette action remplacera les données locales du centre de commande par le contenu du fichier JSON.\n\nContinuer ?',
       confirmLabel: 'Importer',
     });
     if (!ok) {

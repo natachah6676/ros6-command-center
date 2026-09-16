@@ -207,23 +207,6 @@
       let text = typeof value === 'string' ? value : value != null ? JSON.stringify(value) : null;
       if (text == null) return;
 
-      // Protection PG : ne pas laisser une sauvegarde incomplète effacer les PG locales actuelles
-      if (key === 'ros6_command_center_v1') {
-        try {
-          const incoming = JSON.parse(text);
-          const currentRaw = localStorage.getItem(key);
-          if (currentRaw && incoming && Array.isArray(incoming.players)) {
-            const current = JSON.parse(currentRaw);
-            if (global.ROSSync && typeof ROSSync.protectPlayersGlobalPowers === 'function') {
-              ROSSync.protectPlayersGlobalPowers(current.players || [], incoming.players);
-            }
-            text = JSON.stringify(incoming);
-          }
-        } catch (error) {
-          /* conserver text tel quel si parse échoue — déjà validé plus haut */
-        }
-      }
-
       localStorage.setItem(key, text);
     });
 
@@ -295,28 +278,9 @@
       ? new Date(entry.createdAt).toLocaleString('fr-FR')
       : 'cette sauvegarde';
 
-    const currentRaw = localStorage.getItem('ros6_command_center_v1');
-    let currentGp = 0;
-    let backupGp = 0;
-    try {
-      const current = currentRaw ? JSON.parse(currentRaw) : null;
-      currentGp = (current?.players || []).filter((p) => p && p.globalPowerTierId).length;
-      const payload = parseBackupPayload(entry);
-      const cc = payload?.data?.ros6_command_center_v1;
-      const ccObj = typeof cc === 'string' ? JSON.parse(cc) : cc;
-      backupGp = (ccObj?.players || []).filter((p) => p && p.globalPowerTierId).length;
-    } catch (error) {
-      /* ignore */
-    }
-
-    const gpWarn =
-      currentGp > backupGp
-        ? `\n\n⚠ Puissances globales : état actuel ${currentGp} · sauvegarde ${backupGp}. Les PG locales déjà remplies ne seront pas effacées par des valeurs vides de la sauvegarde.`
-        : `\n\nPuissances globales dans la sauvegarde : ${backupGp} (actuel : ${currentGp}).`;
-
     const ok = await AppUI.confirm({
       title: 'Restaurer une sauvegarde',
-      message: `Restaurer la sauvegarde du ${label} ? Une sauvegarde de sécurité de l’état actuel sera créée avant la restauration. L’application sera ensuite rechargée.${gpWarn}`,
+      message: `Restaurer la sauvegarde du ${label} ? Une sauvegarde de sécurité de l’état actuel sera créée avant la restauration. L’application sera ensuite rechargée.`,
       confirmLabel: 'Restaurer',
     });
     if (!ok) return;

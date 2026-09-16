@@ -577,7 +577,7 @@
   }
 
   function buildRuchePowerScoreMap(mainState) {
-    // Placement Ruche : puissance héros seule (plus haut = plus près du Maréchal).
+    // Placement Ruche : puissance héros 100 % (plus haut = plus près du Maréchal).
     const map = new Map();
     (mainState?.players || []).forEach((p) => {
       if (!p || p.status !== 'Actif') return;
@@ -590,13 +590,8 @@
   /** Score héros ; null = non renseignée (neutre / placé plus loin). */
   function playerPowerValue(playerId, mainState, scoreMap) {
     const map = scoreMap || buildRuchePowerScoreMap(mainState);
-    if (map instanceof Map) {
-      if (!map.has(playerId)) return null;
-      return map.get(playerId);
-    }
-    // Compat si une Map composite était encore passée
-    const score = ROSModels.getPlayerCompositePowerScore?.(getPlayerById(playerId), map);
-    return score == null ? null : score;
+    if (!(map instanceof Map) || !map.has(playerId)) return null;
+    return map.get(playerId);
   }
 
   function compareByHeroPowerDesc(aId, bId, mainState, scoreMap) {

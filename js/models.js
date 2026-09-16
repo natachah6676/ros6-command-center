@@ -485,70 +485,6 @@
   }
 
   /**
-   * Tranches de puissance globale (M) — distinctes de la puissance héros.
-   * Ordre de force croissant via sortValue.
-   */
-  function createGlobalPowerTiers() {
-    const tiers = [{ id: 'gp_lt_45', label: 'Moins de 45 M', sortValue: 44.9 }];
-    for (let start = 45; start <= 195; start += 5) {
-      const endLabel = `${start + 4},9`;
-      tiers.push({
-        id: `gp_${start}_${start + 5}`,
-        label: `${start} à ${endLabel} M`,
-        sortValue: start + 4.9,
-      });
-    }
-    tiers.push({ id: 'gp_ge_200', label: '200 M et plus', sortValue: 200 });
-    return tiers;
-  }
-
-  const GLOBAL_POWER_TIERS = createGlobalPowerTiers();
-  const GLOBAL_POWER_TIER_IDS = new Set(GLOBAL_POWER_TIERS.map((t) => t.id));
-
-  function getGlobalPowerTiers() {
-    return GLOBAL_POWER_TIERS.slice();
-  }
-
-  function normalizeGlobalPowerTierId(value) {
-    const id = String(value || '').trim();
-    if (!id) return null;
-    return GLOBAL_POWER_TIER_IDS.has(id) ? id : null;
-  }
-
-  function getGlobalPowerTierById(tierId) {
-    const id = normalizeGlobalPowerTierId(tierId);
-    if (!id) return null;
-    return GLOBAL_POWER_TIERS.find((t) => t.id === id) || null;
-  }
-
-  function getPlayerGlobalPowerTier(player) {
-    return getGlobalPowerTierById(player?.globalPowerTierId);
-  }
-
-  function getPlayerGlobalPowerLabel(player) {
-    const tier = getPlayerGlobalPowerTier(player);
-    return tier ? tier.label : 'Non renseignée';
-  }
-
-  /** Plus élevé = plus fort. Non renseignée = -1. */
-  function getPlayerGlobalPowerSortValue(player) {
-    const tier = getPlayerGlobalPowerTier(player);
-    return tier ? Number(tier.sortValue) : -1;
-  }
-
-  function buildGlobalPowerSelectOptions(selectedId = '') {
-    const selected = normalizeGlobalPowerTierId(selectedId) || '';
-    const opts = [`<option value="">Non renseignée</option>`];
-    GLOBAL_POWER_TIERS.forEach((tier) => {
-      const sel = tier.id === selected ? ' selected' : '';
-      opts.push(
-        `<option value="${escapeAttr(tier.id)}"${sel}>${escapeHtmlLite(tier.label)}</option>`
-      );
-    });
-    return opts.join('');
-  }
-
-  /**
    * Valeur représentative d’une tranche héros (milieu min/max).
    * Ex. 35–40 → 37,5. Null si non renseignée.
    */
@@ -559,99 +495,6 @@
     const max = Number(tier.max);
     if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
     return (min + max) / 2;
-  }
-
-  /**
-   * Valeur représentative d’une tranche globale.
-   * Bandes fermées : milieu ; ouvertes : même largeur 5 M sans avantage artificiel.
-   */
-  function getGlobalPowerRepresentativeValue(player) {
-    const tier = getPlayerGlobalPowerTier(player);
-    if (!tier) return null;
-    if (tier.id === 'gp_lt_45') return 42.5;
-    if (tier.id === 'gp_ge_200') return 202.5;
-    const match = String(tier.id).match(/^gp_(\d+)_(\d+)$/);
-    if (match) {
-      const start = Number(match[1]);
-      const endExclusive = Number(match[2]);
-      if (Number.isFinite(start) && Number.isFinite(endExclusive)) {
-        return (start + (endExclusive - 0.1)) / 2;
-      }
-    }
-    const sort = Number(tier.sortValue);
-    return Number.isFinite(sort) ? sort - 2.45 : null;
-  }
-
-  function hasCompletePowerData(player, stateOrTiers) {
-    return (
-      getHeroPowerRepresentativeValue(player, stateOrTiers) != null &&
-      getGlobalPowerRepresentativeValue(player) != null
-    );
-  }
-
-  function normalizeValueList(values) {
-    if (!values.length) return [];
-    let min = values[0];
-    let max = values[0];
-    values.forEach((v) => {
-      if (v < min) min = v;
-      if (v > max) max = v;
-    });
-    if (max === min) return values.map(() => 50);
-    return values.map((v) => ((v - min) / (max - min)) * 100);
-  }
-
-  /**
-   * Score puissance commun (0–100) : 70 % héros normalisé + 30 % global normalisé.
-   * Normalisation relative à la population fournie (joueurs aux données complètes).
-   * Retourne Map(playerId → { score, heroNorm, globalNorm, heroRaw, globalRaw }).
-   */
-  function buildCompositePowerScoreMap(players, stateOrTiers) {
-    const list = Array.isArray(players) ? players : [];
-    const complete = list.filter((p) => hasCompletePowerData(p, stateOrTiers));
-    const map = new Map();
-    if (!complete.length) return map;
-
-    const heroRaws = complete.map((p) => getHeroPowerRepresentativeValue(p, stateOrTiers));
-    const globalRaws = complete.map((p) => getGlobalPowerRepresentativeValue(p));
-    const heroNorms = normalizeValueList(heroRaws);
-    const globalNorms = normalizeValueList(globalRaws);
-
-    complete.forEach((player, index) => {
-      const heroNorm = heroNorms[index];
-      const globalNorm = globalNorms[index];
-      const score = 0.7 * heroNorm + 0.3 * globalNorm;
-      map.set(player.id, {
-        score,
-        heroNorm,
-        globalNorm,
-        heroRaw: heroRaws[index],
-        globalRaw: globalRaws[index],
-      });
-    });
-    return map;
-  }
-
-  function getPlayerCompositePowerScore(player, scoreMap) {
-    if (!player?.id || !scoreMap) return null;
-    const row = scoreMap.get(player.id);
-    return row && Number.isFinite(row.score) ? row.score : null;
-  }
-
-  /** Puissance globale : édition réservée aux R4 et R5 actifs. */
-  function canEditGlobalPower() {
-    if (global.ROSProfiles && typeof global.ROSProfiles.isActiveR4OrR5 === 'function') {
-      return Boolean(global.ROSProfiles.isActiveR4OrR5());
-    }
-    if (global.ROSProfiles && typeof global.ROSProfiles.isAccessAllowed === 'function') {
-      if (!global.ROSProfiles.isAccessAllowed()) return false;
-    }
-    if (global.ROSProfiles && typeof global.ROSProfiles.getAppRole === 'function') {
-      const role = global.ROSProfiles.getAppRole();
-      return role === 'R5' || role === 'R4';
-    }
-    const shared = global.ROSStorage ? global.ROSStorage.getState()?.appRole : null;
-    return shared === 'R5' || shared === 'R4';
   }
 
   function escapeAttr(value) {
@@ -770,7 +613,6 @@
     discret = false,
     inactive = false,
     heroPowerTierId = null,
-    globalPowerTierId = null,
     preferredVolant = false,
     coachingException = 'always',
   }) {
@@ -784,7 +626,6 @@
       discret: Boolean(discret),
       inactive: Boolean(inactive),
       heroPowerTierId: heroPowerTierId ? String(heroPowerTierId) : null,
-      globalPowerTierId: normalizeGlobalPowerTierId(globalPowerTierId),
       preferredVolant: Boolean(preferredVolant),
       coachingException: coachingException === 'never' ? 'never' : 'always',
       stormAbsencesUnexcused: 0,
@@ -1069,26 +910,7 @@
       /** Résumés « sous seuil » des semaines clôturées (consultation Semaines passées). */
       vsUnderWeekHistory: [],
       alliance: createDefaultAllianceSettings(),
-      /** Journal minimal des changements de Puissance globale (sync / audit). */
-      globalPowerAudit: [],
     };
-  }
-
-  function normalizeGlobalPowerAudit(raw) {
-    if (!Array.isArray(raw)) return [];
-    return raw
-      .filter((e) => e && typeof e === 'object' && e.playerId)
-      .map((e) => ({
-        id: e.id || uid('gpa'),
-        playerId: String(e.playerId),
-        pseudo: e.pseudo != null ? String(e.pseudo) : '',
-        from: normalizeGlobalPowerTierId(e.from),
-        to: normalizeGlobalPowerTierId(e.to),
-        at: e.at || new Date().toISOString(),
-        actorUserId: e.actorUserId != null ? String(e.actorUserId) : '',
-        actorLabel: e.actorLabel != null ? String(e.actorLabel) : '',
-      }))
-      .slice(0, 200);
   }
 
   function createDefaultCoachingThreshold() {
@@ -1442,9 +1264,8 @@
   }
 
   function formatVsUnderCounterLabel(stats) {
-    const { tracked, underCount } = summarizeVsUnderStats(stats);
-    if (!tracked) return 'VS sous seuil : —';
-    return `VS sous seuil : ${underCount} / ${tracked}`;
+    const { underCount } = summarizeVsUnderStats(stats);
+    return `VS Sous Seuil : ${underCount}`;
   }
 
   function formatVsPraiseCounterLabel(stats) {
@@ -1590,7 +1411,6 @@
             discret: Boolean(p.discret),
             inactive: Boolean(p.inactive),
             heroPowerTierId,
-            globalPowerTierId: normalizeGlobalPowerTierId(p.globalPowerTierId),
             preferredVolant: Boolean(p.preferredVolant),
             coachingException: normalizeCoachingException(p.coachingException),
             stormAbsencesUnexcused: Math.max(0, Number(p.stormAbsencesUnexcused) || 0),
@@ -1778,7 +1598,6 @@
       playerVsUnderStats,
       vsUnderWeekHistory,
       alliance,
-      globalPowerAudit: normalizeGlobalPowerAudit(raw.globalPowerAudit),
     };
 
     // Compatibilité : anciennes clés « pseudo » → identifiant interne
@@ -1891,18 +1710,6 @@
     getHeroPowerRepresentativeValue,
     countPlayersUsingPowerTier,
     buildPowerTierSelectOptions,
-    getGlobalPowerTiers,
-    normalizeGlobalPowerTierId,
-    getGlobalPowerTierById,
-    getPlayerGlobalPowerTier,
-    getPlayerGlobalPowerLabel,
-    getPlayerGlobalPowerSortValue,
-    getGlobalPowerRepresentativeValue,
-    buildGlobalPowerSelectOptions,
-    hasCompletePowerData,
-    buildCompositePowerScoreMap,
-    getPlayerCompositePowerScore,
-    canEditGlobalPower,
     createDefaultCoachingThreshold,
     normalizeCoachingThreshold,
     getCoachingThreshold,
@@ -1952,7 +1759,6 @@
     createBlankUiState,
     createInitialState,
     normalizeState,
-    normalizeGlobalPowerAudit,
     canReset,
     canImportOverwrite,
   };

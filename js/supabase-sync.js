@@ -32,7 +32,6 @@
     'role',
     'status',
     'heroPowerTierId',
-    'globalPowerTierId',
     'coachingException',
     'createdAt',
     'leftAt',
@@ -254,63 +253,12 @@
     };
   }
 
-  function countFilledGlobalPower(dataOrStores) {
-    const stores = dataOrStores?.stores || dataOrStores || {};
-    const players = stores[COMMAND_CENTER_KEY]?.players;
-    if (!Array.isArray(players)) return 0;
-    return players.filter(
-      (p) => p && !isEmptyFieldValue(p.globalPowerTierId)
-    ).length;
-  }
-
-  function countFilledGlobalPowerInPlayers(players) {
-    if (!Array.isArray(players)) return 0;
-    return players.filter((p) => p && !isEmptyFieldValue(p.globalPowerTierId)).length;
-  }
-
-  /**
-   * Restaure les Puissances globales non vides d’une liste source
-   * lorsque la cible a null/undefined sans clear volontaire.
-   */
-  function protectPlayersGlobalPowers(sourcePlayers, targetPlayers) {
-    if (!Array.isArray(sourcePlayers) || !Array.isArray(targetPlayers)) return targetPlayers;
-    const sourceById = new Map(sourcePlayers.filter((p) => p?.id).map((p) => [p.id, p]));
-    targetPlayers.forEach((target) => {
-      if (!target?.id) return;
-      const source = sourceById.get(target.id);
-      if (!source) return;
-      const sourceVal = source.globalPowerTierId;
-      const targetVal = target.globalPowerTierId;
-      const clears = target.syncClears && typeof target.syncClears === 'object' ? target.syncClears : {};
-      if (
-        !isEmptyFieldValue(sourceVal) &&
-        isEmptyFieldValue(targetVal) &&
-        !clears.globalPowerTierId
-      ) {
-        target.globalPowerTierId = sourceVal;
-      }
-    });
-    return targetPlayers;
-  }
-
   function stripPlayerSyncMeta(player) {
     if (!player || typeof player !== 'object') return player;
     const next = { ...player };
     delete next.syncClears;
+    delete next.globalPowerTierId;
     return next;
-  }
-
-  function mergeGlobalPowerAudit(remoteList, localList) {
-    const map = new Map();
-    [...(Array.isArray(remoteList) ? remoteList : []), ...(Array.isArray(localList) ? localList : [])].forEach(
-      (entry) => {
-        if (!entry || !entry.id) return;
-        map.set(entry.id, cloneJson(entry));
-      }
-    );
-    return [...map.values()]
-      .sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))
-      .slice(0, 200);
   }
 
   /**
@@ -377,24 +325,9 @@
       ...cloneJson(remoteStore),
       ...cloneJson(localStore),
       players: mergedPlayers,
-      globalPowerAudit: mergeGlobalPowerAudit(
-        remoteStore.globalPowerAudit,
-        localStore.globalPowerAudit
-      ),
     };
-
-    // Filet final : aucune PG distante non vide ne doit disparaître sans clear
-    protectPlayersGlobalPowers(remotePlayers, merged.players);
+    delete merged.globalPowerAudit;
     return merged;
-  }
-
-  /**
-   * Empêche un force-push destructeur quand le cache local a moins de PG renseignées.
-   */
-  function shouldBlockDestructiveGlobalPowerOverwrite(remoteData, localStoresMap) {
-    const remoteGp = countFilledGlobalPower(remoteData);
-    const localGp = countFilledGlobalPower({ stores: localStoresMap || collectLocalStoresMap() });
-    return remoteGp > localGp;
   }
 
   /**
@@ -638,7 +571,7 @@
     return data;
   }
 
-  async function pushToSupabase({ force = false, allStores = false, allowFewerGlobalPowers = false } = {}) {
+  async function pushToSupabase({ force = false, allStores = false } = {}) {
     if (!cloudWritesAllowed()) return { ok: false, reason: 'local-runtime' };
     if (!session || !client || suppressPush) return { ok: false, reason: 'noop' };
     if (!navigator.onLine) {
@@ -646,7 +579,7 @@
       return { ok: false, reason: 'offline' };
     }
 
-    const run = () => runPushAttempt({ force, allStores, allowFewerGlobalPowers });
+    const run = () => runPushAttempt({ force, allStores });
     const resultPromise = pushChain.then(run, run);
     pushChain = resultPromise.then(
       () => undefined,
@@ -655,7 +588,7 @@
     return resultPromise;
   }
 
-  async function runPushAttempt({ force = false, allStores = false, allowFewerGlobalPowers = false } = {}) {
+  async function runPushAttempt({ force = false, allStores = false } = {}) {
     pushing = true;
     setSyncStatus('saving');
     let lastResult = { ok: false, reason: 'noop' };
@@ -699,22 +632,6 @@
 
         const remoteVersion = Number(remote.version) || 0;
         const localStoresMap = collectLocalStoresMap();
-
-        if (
-          force &&
-          allStores &&
-          !allowFewerGlobalPowers &&
-          shouldBlockDestructiveGlobalPowerOverwrite(remote.data || {}, localStoresMap)
-        ) {
-          setSyncStatus('error', 'protection puissances');
-          if (global.AppUI) {
-            AppUI.toast(
-              'Écriture complète bloquée : le cache local a moins de Puissances globales renseignées que Supabase.'
-            );
-          }
-          lastResult = { ok: false, reason: 'blocked-global-power' };
-          break;
-        }
 
         if (!force && isExternalRemoteConflict(remoteVersion)) {
           // Rebase : remote gagne pour les stores non dirty ; dirty conservés/fusionnés.
@@ -897,27 +814,11 @@
   async function confirmOverwriteRemoteIfNeeded(remote) {
     if (remoteIsEmpty(remote?.data)) return true;
 
-    const localStoresMap = collectLocalStoresMap();
-    const remoteGp = countFilledGlobalPower(remote.data);
-    const localGp = countFilledGlobalPower({ stores: localStoresMap });
     const remoteUpdated = remote.updated_at
       ? new Date(remote.updated_at).toLocaleString('fr-FR')
       : '—';
 
-    // Priorité absolue : un cache local plus pauvre en PG ne peut pas écraser Supabase.
-    if (remoteGp > localGp) {
-      if (global.AppUI) {
-        AppUI.toast(
-          `Cache local incomplet (${localGp} PG vs ${remoteGp} sur Supabase) — version distante conservée.`
-        );
-      }
-      return false;
-    }
-
     const riskLines = [];
-    if (remoteGp === localGp && remoteGp > 0) {
-      riskLines.push(`Puissances globales renseignées : ${remoteGp} (local = distant).`);
-    }
     if ((Number(remote.version) || 0) < localVersion) {
       riskLines.push(
         `Version locale (${localVersion}) > version Supabase (${Number(remote.version) || 0}).`
@@ -977,29 +878,15 @@
           writeMeta(remoteVersion);
           pendingDirty.clear();
         } else if (remoteVersion < localVersion) {
-          const remoteGp = countFilledGlobalPower(remote.data);
-          const localGp = countFilledGlobalPower({ stores: collectLocalStoresMap() });
-          if (remoteGp > localGp) {
-            // Cache local plus ancien/incomplet : ne jamais forcer l’écrasement des PG.
+          const overwrite = await confirmOverwriteRemoteIfNeeded(remote);
+          if (overwrite) {
+            STORE_KEYS.forEach((key) => pendingDirty.add(key));
+            await pushToSupabase({ force: true, allStores: true });
+          } else {
             applyStoresToLocal(remote.data, { reload: false });
             writeMeta(remoteVersion);
             pendingDirty.clear();
-            if (global.AppUI) {
-              AppUI.toast(
-                `Cache local incomplet (${localGp} PG vs ${remoteGp} Supabase) — données distantes conservées.`
-              );
-            }
-          } else {
-            const overwrite = await confirmOverwriteRemoteIfNeeded(remote);
-            if (overwrite) {
-              STORE_KEYS.forEach((key) => pendingDirty.add(key));
-              await pushToSupabase({ force: true, allStores: true });
-            } else {
-              applyStoresToLocal(remote.data, { reload: false });
-              writeMeta(remoteVersion);
-              pendingDirty.clear();
-              AppUI.toast('Version Supabase conservée (cache local ignoré).');
-            }
+            AppUI.toast('Version Supabase conservée (cache local ignoré).');
           }
         }
       }
@@ -1214,7 +1101,7 @@
   }
 
   /**
-   * Marque un clear volontaire d’un champ membre (ex. Puissance globale → Non renseignée).
+   * Marque un clear volontaire d’un champ membre (ex. Puissance héros → Non renseignée).
    * À appeler depuis Gestion des membres uniquement.
    */
   function markPlayerFieldCleared(player, field) {
@@ -1244,9 +1131,6 @@
     refreshUserLabel: updateUserLabel,
     markPlayerFieldCleared,
     clearPlayerFieldCleared,
-    protectPlayersGlobalPowers,
-    countFilledGlobalPower,
-    shouldBlockDestructiveGlobalPowerOverwrite,
     STORE_KEYS,
     BACKUPS_KEY,
     COMMAND_CENTER_KEY,
@@ -1260,11 +1144,6 @@
       markDirty,
       isQuotaExceededError,
       safeLocalStorageSetItem,
-      countFilledGlobalPower,
-      countFilledGlobalPowerInPlayers,
-      protectPlayersGlobalPowers,
-      shouldBlockDestructiveGlobalPowerOverwrite,
-      mergeGlobalPowerAudit,
       isEmptyFieldValue,
       PROTECTED_NONEMPTY_PLAYER_FIELDS,
       pendingDirty,
