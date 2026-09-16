@@ -13,6 +13,7 @@
     els.filterStatus = document.getElementById('filterStatus');
     els.filterRole = document.getElementById('filterRoleAdmin');
     els.filterPower = document.getElementById('filterPowerAdmin');
+    els.filterDiscret = document.getElementById('filterDiscretAdmin');
     els.powerCounter = document.getElementById('playersPowerCounter');
     els.btnAdd = document.getElementById('btnAddPlayer');
     els.modal = document.getElementById('playerModal');
@@ -77,6 +78,7 @@
     const status = els.filterStatus.value;
     const role = els.filterRole?.value || '';
     const powerFilter = els.filterPower?.value || '';
+    const discretFilter = els.filterDiscret?.value || '';
 
     return ROSStorage.getState()
       .players.filter((player) => {
@@ -93,6 +95,11 @@
           if (ROSModels.normalizeGlobalPowerTierId(player.globalPowerTierId) !== powerFilter) {
             return false;
           }
+        }
+        if (discretFilter === 'discret') {
+          if (!player.discret || player.status !== 'Actif') return false;
+        } else if (discretFilter === 'discret_due') {
+          if (!ROSModels.isDiscretContactOverdue(player)) return false;
         }
         return true;
       })
@@ -562,6 +569,37 @@
     AppUI.toast(absent ? 'Joueur marqué Absent (hors VS).' : 'Joueur de nouveau présent dans le VS.');
   }
 
+  function canEditDiscretContact() {
+    return Boolean(
+      global.ROSProfiles &&
+        typeof ROSProfiles.isActiveR4OrR5 === 'function' &&
+        ROSProfiles.isActiveR4OrR5()
+    );
+  }
+
+  function markDiscretContact(playerId) {
+    if (!canEditDiscretContact()) {
+      AppUI.toast('Seul un R4 ou R5 peut noter un contact Discret.');
+      return;
+    }
+    const actor = actorStamp();
+    ROSStorage.update((state) => {
+      const target = state.players.find((p) => p.id === playerId);
+      if (!target || !target.discret) return state;
+      ROSModels.pushDiscretContact(target, {
+        text: 'Contact pris',
+        authorLabel: actor.actorLabel || '',
+        authorUserId: actor.actorUserId || '',
+      });
+      return state;
+    });
+    AppUI.toast('Contact Discret enregistré.');
+    if (global.SuiviModule && typeof SuiviModule.renderHistory === 'function') {
+      SuiviModule.renderHistory();
+    }
+    render();
+  }
+
   function setDiscret(playerId, discret) {
     ROSStorage.update((state) => {
       const target = state.players.find((p) => p.id === playerId);
@@ -572,7 +610,7 @@
     if (global.SuiviModule && typeof SuiviModule.render === 'function') SuiviModule.render();
     AppUI.toast(
       discret
-        ? 'Joueur marqué Discret — visible dans Gestion des membres.'
+        ? 'Joueur marqué Discret — contact dans Liste des membres.'
         : 'Marqueur Discret retiré.'
     );
   }
@@ -683,7 +721,24 @@
     const state = ROSStorage.getState();
     const powerMissing = !hasHeroPowerTier(player);
     const absentBadge = player.absent ? '<span class="badge badge-absent">Absent</span>' : '';
-    const discretBadge = player.discret ? '<span class="badge badge-role">Discret</span>' : '';
+    const discretOverdue = ROSModels.isDiscretContactOverdue(player);
+    const lastDiscretAt = ROSModels.getLastDiscretContactAt(player);
+    const lastDiscretLabel = lastDiscretAt
+      ? ROSModels.formatCoachingDateTime(lastDiscretAt) || lastDiscretAt
+      : '';
+    const discretBadge = player.discret
+      ? `<span class="badge badge-role${discretOverdue ? ' badge-discret-due' : ''}">Discret${
+          discretOverdue ? ' · à contacter' : ''
+        }</span>`
+      : '';
+    const discretContactMeta =
+      player.discret && player.status === 'Actif'
+        ? `<span class="member-discret-contact${discretOverdue ? ' is-due' : ''}">${
+            lastDiscretLabel
+              ? `Dernier contact : ${ROSUI.escapeHtml(lastDiscretLabel)}`
+              : 'Pas encore contacté'
+          }</span>`
+        : '';
     const powerMissingBadge = powerMissing
       ? '<span class="badge badge-power-missing">Puissance non renseignée</span>'
       : '';
@@ -699,13 +754,17 @@
     const discretToggle =
       player.status === 'Actif'
         ? `
-          <label class="absent-toggle" title="Discret mais fort — suivi léger">
+          <label class="absent-toggle" title="Discret mais fort — prise de nouvelles dans la liste">
             <input type="checkbox" data-action="discret" data-id="${player.id}" ${
               player.discret ? 'checked' : ''
             } />
             <span>Discret</span>
           </label>
         `
+        : '';
+    const discretContactBtn =
+      player.status === 'Actif' && player.discret && canEditDiscretContact()
+        ? `<button type="button" class="btn btn-primary btn-sm" data-action="discret-contact" data-id="${player.id}">Contact pris</button>`
         : '';
 
     const globalMissing = !ROSModels.normalizeGlobalPowerTierId(player.globalPowerTierId);
@@ -767,6 +826,7 @@
         ? `
           ${absentToggle}
           ${discretToggle}
+          ${discretContactBtn}
           <button type="button" class="btn btn-ghost btn-sm" data-action="edit" data-id="${player.id}">Modifier</button>
           <button type="button" class="btn btn-danger btn-sm" data-action="leave" data-id="${player.id}">Passer en Parti</button>
         `
@@ -776,7 +836,9 @@
         `;
 
     return `
-      <article class="member-row${powerMissing ? ' member-row--power-missing' : ''}" data-open-player="${player.id}">
+      <article class="member-row${powerMissing ? ' member-row--power-missing' : ''}${
+        discretOverdue ? ' member-row--discret-due' : ''
+      }" data-open-player="${player.id}">
         <div class="member-row-main">
           <h3 class="player-name">${ROSUI.escapeHtml(player.pseudo)}</h3>
           <div class="player-meta">
@@ -786,6 +848,7 @@
             ${discretBadge}
             ${powerMissingBadge}
           </div>
+          ${discretContactMeta}
         </div>
         ${globalPowerSelect}
         ${powerSelect}
@@ -821,6 +884,7 @@
       if (action === 'edit') openEditModal(id);
       if (action === 'leave') markAsLeft(id);
       if (action === 'reactivate') reactivate(id);
+      if (action === 'discret-contact') markDiscretContact(id);
       return;
     }
 
@@ -869,6 +933,7 @@
     els.filterStatus.addEventListener('change', render);
     els.filterRole.addEventListener('change', render);
     if (els.filterPower) els.filterPower.addEventListener('change', render);
+    if (els.filterDiscret) els.filterDiscret.addEventListener('change', render);
 
     els.modal.querySelectorAll('[data-close-modal]').forEach((btn) => {
       btn.addEventListener('click', closeModal);

@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20260914-discret-carnet1" />
+  <link rel="stylesheet" href="css/styles.css?v=20260916-discret-liste1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -150,6 +150,11 @@
             <option value="">Toutes les puissances</option>
             <option value="missing">Non renseignée</option>
           </select>
+          <select id="filterDiscretAdmin" class="input" aria-label="Filtrer Discret">
+            <option value="">Tous (Discret inclus)</option>
+            <option value="discret">Discrets uniquement</option>
+            <option value="discret_due">Pas contacté depuis 30 jours</option>
+          </select>
         </div>
 
         <p id="playersPowerCounter" class="members-power-counter" aria-live="polite">
@@ -166,7 +171,7 @@
           <div>
             <h2>Historique suivi</h2>
             <p class="panel-subtitle">
-              Suivis terminés : joueur, R4, date de clôture, commentaires — réactivation possible
+              Suivis terminés et contacts Discret — réactivation possible pour les dossiers
             </p>
           </div>
           <div class="panel-header-actions">
@@ -625,7 +630,7 @@
           <div>
             <h2>Gestion des membres</h2>
             <p class="panel-subtitle">
-              Suivi : VS sous seuil, à féliciter, puissance héros, ou aide manuelle
+              Suivi : VS sous seuil, à féliciter, puissance héros, ou aide manuelle — Discret se gère dans Liste des membres
             </p>
             <p id="suiviScopeHint" class="panel-subtitle hidden"></p>
           </div>
@@ -652,17 +657,7 @@
             <option value="vs">VS sous seuil</option>
             <option value="praise">À féliciter</option>
             <option value="hero">Puissance héros</option>
-            <option value="discret">Discret</option>
             <option value="manual">Aide / manuel</option>
-          </select>
-          <select
-            id="suiviFilterDiscretMonth"
-            class="input hidden"
-            aria-label="Filtrer Discret par contact du mois"
-          >
-            <option value="">Tous</option>
-            <option value="pending">Pas contacté ce mois</option>
-            <option value="done">Contacté ce mois</option>
           </select>
           <label class="checkbox-field suivi-show-done">
             <span class="checkbox-line">
@@ -1106,7 +1101,7 @@
             <span>Discret</span>
           </span>
           <small class="field-hint"
-            >Discret mais fort — suivi léger (prise de nouvelles) dans Gestion des membres</small
+            >Discret mais fort — prise de nouvelles dans Liste des membres (bouton Contact pris)</small
           >
         </label>
       </div>
@@ -1414,15 +1409,15 @@
   <script src="js/supabase-client.js?v=20260804-4"></script>
   <script src="js/profiles.js?v=20260911-refaccess1"></script>
   <script src="js/supabase-sync.js?v=20260912-backups-local1"></script>
-  <script src="js/models.js?v=20260912-discret1"></script>
+  <script src="js/models.js?v=20260916-discret-liste1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
   <script src="js/player-identity.js?v=20260911-vscounter1"></script>
   <script src="js/storage.js?v=20260910-vsclose1"></script>
   <script src="js/ui-helpers.js?v=20260802-4"></script>
   <script src="js/insights.js?v=20260910-vsclose1"></script>
   <script src="js/player-stats.js?v=20260802-4"></script>
-  <script src="js/players.js?v=20260912-discret1"></script>
-  <script src="js/suivi.js?v=20260914-discret-carnet1"></script>
+  <script src="js/players.js?v=20260916-discret-liste1"></script>
+  <script src="js/suivi.js?v=20260916-discret-liste1"></script>
   <script src="js/command.js?v=20260806-cmd1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260911-novshist1"></script>

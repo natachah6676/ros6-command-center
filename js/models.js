@@ -659,7 +659,7 @@
       role,
       status,
       absent: Boolean(absent),
-      /** Discret mais fort : suivi léger (prise de nouvelles) dans Gestion des membres. */
+      /** Discret mais fort : prise de nouvelles dans Liste des membres (pas Gestion des membres). */
       discret: Boolean(discret),
       inactive: Boolean(inactive),
       heroPowerTierId: heroPowerTierId ? String(heroPowerTierId) : null,
@@ -668,9 +668,64 @@
       coachingException: coachingException === 'never' ? 'never' : 'always',
       stormAbsencesUnexcused: 0,
       stormAbsencesExcused: 0,
+      discretContacts: [],
       createdAt: new Date().toISOString(),
       leftAt: status === 'Parti' ? new Date().toISOString() : null,
     };
+  }
+
+  const DISCRET_CONTACT_HISTORY_LIMIT = 100;
+  const DISCRET_CONTACT_OVERDUE_DAYS = 30;
+
+  function normalizeDiscretContact(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const at = raw.at ? String(raw.at) : '';
+    if (!at) return null;
+    return {
+      id: raw.id || uid('dcontact'),
+      at,
+      text: raw.text != null ? String(raw.text).trim() : '',
+      authorLabel: raw.authorLabel != null ? String(raw.authorLabel) : '',
+      authorUserId: raw.authorUserId != null ? String(raw.authorUserId) : '',
+    };
+  }
+
+  function normalizeDiscretContacts(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map(normalizeDiscretContact)
+      .filter(Boolean)
+      .sort((a, b) => (a.at < b.at ? 1 : -1))
+      .slice(0, DISCRET_CONTACT_HISTORY_LIMIT);
+  }
+
+  function getLastDiscretContactAt(player) {
+    const contacts = normalizeDiscretContacts(player?.discretContacts);
+    return contacts[0]?.at || null;
+  }
+
+  function isDiscretContactOverdue(player, days = DISCRET_CONTACT_OVERDUE_DAYS, now = new Date()) {
+    if (!player?.discret) return false;
+    const last = getLastDiscretContactAt(player);
+    if (!last) return true;
+    const at = new Date(last);
+    if (Number.isNaN(at.getTime())) return true;
+    const ms = Math.max(1, Number(days) || DISCRET_CONTACT_OVERDUE_DAYS) * 24 * 60 * 60 * 1000;
+    return now.getTime() - at.getTime() >= ms;
+  }
+
+  function pushDiscretContact(player, entry = {}) {
+    if (!player || typeof player !== 'object') return null;
+    const contact = normalizeDiscretContact({
+      id: entry.id || uid('dcontact'),
+      at: entry.at || new Date().toISOString(),
+      text: entry.text != null ? entry.text : 'Contact pris',
+      authorLabel: entry.authorLabel,
+      authorUserId: entry.authorUserId,
+    });
+    if (!contact) return null;
+    player.discretContacts = normalizeDiscretContacts([contact, ...(player.discretContacts || [])]);
+    return contact;
   }
 
   /** Actif et présent : participe au VS / KPI / contacts. */
@@ -1168,9 +1223,9 @@
 
     const existing = state?.playerFollowUps?.[player.id];
     if (existing?.manual || existing?.reasons?.manual) reasons.manual = true;
-    if (player.discret) reasons.discret = true;
+    // Discret se gère dans Liste des membres (contacts), pas comme dossier de suivi.
 
-    // Absent = hors VS / héros auto — le suivi « Discret » reste possible.
+    // Absent = hors VS / héros auto.
     if (player.absent) return reasons;
 
     const week = getFollowUpReferenceWeek(state);
@@ -1416,6 +1471,7 @@
             coachingException: normalizeCoachingException(p.coachingException),
             stormAbsencesUnexcused: Math.max(0, Number(p.stormAbsencesUnexcused) || 0),
             stormAbsencesExcused: Math.max(0, Number(p.stormAbsencesExcused) || 0),
+            discretContacts: normalizeDiscretContacts(p.discretContacts),
             createdAt: p.createdAt || new Date().toISOString(),
             leftAt: p.leftAt || null,
           };
@@ -1644,6 +1700,13 @@
     createWeek,
     isWeekEditable,
     createPlayer,
+    DISCRET_CONTACT_HISTORY_LIMIT,
+    DISCRET_CONTACT_OVERDUE_DAYS,
+    normalizeDiscretContact,
+    normalizeDiscretContacts,
+    getLastDiscretContactAt,
+    isDiscretContactOverdue,
+    pushDiscretContact,
     getPlayerDisplayName(stateOrPlayers, playerId, fallback) {
       if (global.ROSPlayerIdentity) {
         return global.ROSPlayerIdentity.getDisplayName(stateOrPlayers, playerId, fallback);

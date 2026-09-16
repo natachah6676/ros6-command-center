@@ -11,6 +11,7 @@ const modelsCode = fs.readFileSync(path.join(root, 'js/models.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const appCode = fs.readFileSync(path.join(root, 'js/app.js'), 'utf8');
 const suiviCode = fs.readFileSync(path.join(root, 'js/suivi.js'), 'utf8');
+const playersCode = fs.readFileSync(path.join(root, 'js/players.js'), 'utf8');
 
 let passed = 0;
 let failed = 0;
@@ -133,14 +134,14 @@ discretP.id = 'p_discret';
 state.players.push(discretP);
 state.weeks[0].scores.p_discret = makeScore(0);
 const rDiscret = M.detectFollowUpReasons(discretP, state);
-assert(rDiscret.discret === true && !rDiscret.vs, 'flag discret → motif Discret');
+assert(rDiscret.discret === false && !rDiscret.vs, 'flag discret → hors Gestion des membres');
 assert(
   M.formatFollowUpReasonsLabel({ discret: true }).includes('Discret'),
-  'libellé Discret'
+  'libellé Discret (historique)'
 );
 assert(
   M.FOLLOW_UP_SPECIALIST_KEYS.some((k) => k.id === 'discret'),
-  'référent Discret présent'
+  'référent Discret présent (paramètres)'
 );
 assert(
   M.normalizeFollowUpSettings({}).specialists.discret === null,
@@ -324,10 +325,13 @@ assert(html.includes('id="panel-suivi"'), 'panneau suivi');
 assert(html.includes('id="followUpVsMinDays"'), 'seuil VS paramètres');
 assert(!html.includes('id="btnSuiviCopyList"'), 'pas de bouton copier Discord');
 assert(!suiviCode.includes('copyDiscordList'), 'pas de fonction copie Discord');
-assert(html.includes('id="suiviFilterDiscretMonth"'), 'filtre Discret par mois');
-assert(suiviCode.includes('Carnet Discret'), 'zone Carnet Discret');
-assert(suiviCode.includes('Noter un contact'), 'bouton Noter un contact');
-assert(suiviCode.includes('isLightOnlyReasons'), 'masquage boutons Discret/félicitations');
+assert(!html.includes('id="suiviFilterDiscretMonth"'), 'pas de filtre mois Discret dans suivi');
+assert(!suiviCode.includes('Carnet Discret'), 'pas de carnet Discret dans suivi');
+assert(html.includes('id="filterDiscretAdmin"'), 'filtre Discret liste membres');
+assert(html.includes('Pas contacté depuis 30 jours'), 'filtre 30 jours Discret');
+assert(playersCode.includes('markDiscretContact'), 'bouton Contact pris');
+assert(playersCode.includes('discret-contact'), 'action Contact pris liste');
+assert(suiviCode.includes('isLightOnlyReasons'), 'masquage boutons félicitations');
 assert(html.includes('id="suiviFilterAssignee"'), 'filtre R4 assigné');
 assert(html.includes('id="trainExportHistoryExcel"'), 'export Excel Train');
 assert(html.includes('id="followUpVsPraiseMinDaysMet"'), 'seuil félicitations jours faits');
@@ -337,7 +341,8 @@ assert(!html.includes('id="followUpSpecialistAbsent"'), 'pas de référent Absen
 assert(!html.includes('option value="absent"'), 'pas de filtre motif Absent');
 assert(html.includes('id="followUpSpecialistVs"'), 'référent VS paramètres');
 assert(html.includes('id="followUpSpecialistDiscret"'), 'référent Discret paramètres');
-assert(html.includes('option value="discret"'), 'filtre motif Discret');
+assert(html.includes('id="filterDiscretAdmin"'), 'filtre Discret liste');
+assert(!html.includes('<option value="discret">Discret</option>'), 'pas de filtre motif Discret dans suivi');
 assert(html.includes('id="playerDiscret"'), 'case Discret fiche joueur');
 assert(suiviCode.includes('isFollowUpVisibleToViewer'), 'filtre visibilité R4');
 assert(suiviCode.includes('pickFollowUpSpecialist'), 'auto référent motif');
@@ -445,38 +450,34 @@ assert(
 );
 
 console.log('\nCarnet Discret / boutons légers');
-assert(Suivi.isLightOnlyReasons({ discret: true }), 'discret seul → léger');
+assert(!Suivi.isLightOnlyReasons({ discret: true }), 'discret seul n’est plus un motif suivi');
 assert(Suivi.isLightOnlyReasons({ praise: true }), 'félicitations seules → léger');
-assert(Suivi.isLightOnlyReasons({ discret: true, praise: true }), 'discret+félicitations → léger');
 assert(
-  !Suivi.isLightOnlyReasons({ discret: true, vs: true }),
-  'discret+VS → dossier (boutons visibles)'
+  !Suivi.isLightOnlyReasons({ praise: true, vs: true }),
+  'félicitations+VS → dossier'
 );
 assert(
   !Suivi.isLightOnlyReasons({ praise: true, manual: true }),
   'félicitations+manuel → dossier'
 );
 assert(Suivi.hasDossierReasons({ vs: true }), 'VS = dossier');
-assert(!Suivi.hasDossierReasons({ discret: true, praise: true }), 'léger ≠ dossier');
+assert(!Suivi.hasDossierReasons({ praise: true }), 'félicitations seules ≠ dossier');
 
-const now = new Date();
-const thisMonthIso = new Date(now.getFullYear(), now.getMonth(), 12).toISOString();
-const lastMonthIso = new Date(now.getFullYear(), now.getMonth() - 1, 12).toISOString();
-assert(
-  Suivi.isContactedThisMonth({ contactedAt: thisMonthIso }),
-  'contacté ce mois via contactedAt'
-);
-assert(
-  !Suivi.isContactedThisMonth({ contactedAt: lastMonthIso }),
-  'contact mois précédent → pas ce mois'
-);
-assert(
-  Suivi.isContactedThisMonth({
-    notes: [{ at: thisMonthIso, text: 'petit mot' }],
-  }),
-  'contacté ce mois via note'
-);
-assert(!Suivi.isContactedThisMonth({ notes: [] }), 'sans contact → pas ce mois');
+console.log('\nContacts Discret (liste membres)');
+const overduePlayer = M.createPlayer({ pseudo: 'Due', discret: true });
+assert(M.isDiscretContactOverdue(overduePlayer), 'sans contact → à faire');
+const contact = M.pushDiscretContact(overduePlayer, {
+  at: new Date().toISOString(),
+  text: 'Contact pris',
+  authorLabel: 'Mamat',
+});
+assert(contact && contact.text === 'Contact pris', 'pushDiscretContact ajoute une entrée');
+assert(!M.isDiscretContactOverdue(overduePlayer), 'contact récent → pas dû');
+const oldIso = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+M.pushDiscretContact(overduePlayer, { at: oldIso, text: 'Ancien' });
+// last contact is the newest — still recent from first push; force only old:
+overduePlayer.discretContacts = M.normalizeDiscretContacts([{ at: oldIso, text: 'Ancien' }]);
+assert(M.isDiscretContactOverdue(overduePlayer), 'contact > 30 j → à faire');
 
 console.log(`\n${passed} OK, ${failed} KO`);
 process.exit(failed ? 1 : 0);
