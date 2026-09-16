@@ -687,6 +687,64 @@ select.input,
   font-variant-numeric: tabular-nums;
 }
 
+.vs-signal {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.vs-signal--coach {
+  color: #e8b86d;
+}
+
+.vs-signal--praise {
+  color: #8fd18f;
+}
+
+.vs-signal--none {
+  color: var(--muted, #9aa3b2);
+}
+
+.vs-contact-done {
+  font-size: 0.8rem;
+  color: var(--accent, #7eb8d4);
+}
+
+.vs-past-under {
+  margin-top: 1.25rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border-soft, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-sm, 8px);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.vs-past-under summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.vs-past-under-week {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-soft, rgba(255, 255, 255, 0.06));
+}
+
+.vs-past-under-week header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.85rem;
+  align-items: baseline;
+  margin-bottom: 0.35rem;
+}
+
+.vs-past-under-players {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.9rem;
+  color: var(--muted, #9aa3b2);
+}
+
 .tempete-presence-pct {
   border: 0;
   background: transparent;

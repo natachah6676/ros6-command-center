@@ -19,6 +19,10 @@
     els.legend = document.getElementById('vsLegend');
     els.settingsForm = document.getElementById('vsSettingsForm');
     els.settingsBlock = document.getElementById('settingsVsBlock');
+    els.contactFilter = document.getElementById('vsContactFilter');
+    els.pastUnderList = document.getElementById('vsPastUnderList');
+    els.pastUnderEmpty = document.getElementById('vsPastUnderEmpty');
+    els.pastUnderHint = document.getElementById('vsPastUnderHint');
   }
 
   function escapeHtml(value) {
@@ -31,6 +35,80 @@
 
   function canEditVsSettings() {
     return Boolean(global.ROSProfiles && typeof ROSProfiles.isActiveR5 === 'function' && ROSProfiles.isActiveR5());
+  }
+
+  function canMarkVsContact() {
+    return Boolean(
+      global.ROSProfiles &&
+        typeof ROSProfiles.isActiveR4OrR5 === 'function' &&
+        ROSProfiles.isActiveR4OrR5()
+    );
+  }
+
+  function stampActor() {
+    if (global.ROSProfiles && typeof ROSProfiles.stampActor === 'function') {
+      return ROSProfiles.stampActor();
+    }
+    return { actorUserId: '', actorPlayerId: null, actorLabel: '' };
+  }
+
+  function getEffectiveContact(week, playerId, signal) {
+    if (!signal || !week) return null;
+    const contacts = ROSModels.normalizeVsWeekContacts(week.vsContacts);
+    const contact = contacts[playerId];
+    if (!contact || contact.kind !== signal) return null;
+    return contact;
+  }
+
+  function contactedLabel(signal) {
+    if (signal === 'coach') return 'Coaché';
+    if (signal === 'praise') return 'Félicité';
+    return 'Contacté';
+  }
+
+  function renderPastUnderHistory(state) {
+    if (!els.pastUnderList) return;
+    const history = ROSModels.normalizeVsUnderWeekHistory(state.vsUnderWeekHistory);
+    const minDays = ROSModels.getFollowUpSettings(state).vsMinUnderDays;
+    if (els.pastUnderHint) {
+      els.pastUnderHint.textContent = `Joueurs avec ≥ ${minDays} j sous objectif à la clôture (paramètre suivi).`;
+    }
+    if (!history.length) {
+      els.pastUnderList.innerHTML = '';
+      if (els.pastUnderEmpty) els.pastUnderEmpty.classList.remove('hidden');
+      return;
+    }
+    if (els.pastUnderEmpty) els.pastUnderEmpty.classList.add('hidden');
+    els.pastUnderList.innerHTML = history
+      .map((entry) => {
+        const when =
+          ROSModels.formatCoachingDateTime(entry.closedAt) ||
+          ROSModels.formatDateFR(entry.startDate) ||
+          entry.weekLabel ||
+          'Semaine';
+        const rows = (entry.players || [])
+          .map((p) => {
+            const contactBit = p.contacted
+              ? ` · Coaché${p.contactedBy ? ` par ${escapeHtml(p.contactedBy)}` : ''}`
+              : '';
+            return `<li><strong>${escapeHtml(p.pseudo)}</strong> — ${p.underDays} j sous${contactBit}</li>`;
+          })
+          .join('');
+        return `
+          <article class="vs-past-under-week">
+            <header>
+              <strong>${escapeHtml(entry.weekLabel || 'Semaine')}</strong>
+              <span class="panel-subtitle">${escapeHtml(when)} · seuil ≥ ${entry.underMinDays} j</span>
+            </header>
+            ${
+              rows
+                ? `<ul class="vs-past-under-players">${rows}</ul>`
+                : '<p class="panel-subtitle">Aucun joueur sous seuil.</p>'
+            }
+          </article>
+        `;
+      })
+      .join('');
   }
 
   function getSelectedWeek() {
@@ -284,6 +362,7 @@
         els.empty.classList.remove('hidden');
         els.empty.textContent =
           'Aucune semaine VS. Cliquez sur « Nouvelle semaine VS » lorsque vous jouez le VS à fond.';
+        renderPastUnderHistory(state);
         return;
       }
 
@@ -294,6 +373,7 @@
         els.empty.textContent = editable
           ? 'Aucun joueur actif. Ajoutez des joueurs pour saisir le VS.'
           : 'Aucun snapshot pour cette semaine archivée.';
+        renderPastUnderHistory(state);
         return;
       }
 
@@ -309,15 +389,48 @@
 
       const freshState = ROSStorage.getState();
       const freshWeek = freshState.weeks.find((w) => w.id === week.id) || week;
+      const contactFilter = els.contactFilter?.value || '';
+      const canContact = canMarkVsContact() && editable;
 
-      els.tbody.innerHTML = players
+      const filteredPlayers = players.filter((player) => {
+        const localScore = freshWeek.scores[player.id] || ROSModels.createEmptyScore();
+        ROSModels.ensureDayBrackets(localScore);
+        const signal = ROSModels.getVsWeekSignal(localScore, freshState);
+        const contact = getEffectiveContact(freshWeek, player.id, signal);
+        if (contactFilter === 'coach') return signal === 'coach' && !contact;
+        if (contactFilter === 'praise') return signal === 'praise' && !contact;
+        if (contactFilter === 'contacted') return Boolean(contact);
+        return true;
+      });
+
+      if (!filteredPlayers.length) {
+        els.tbody.innerHTML = '';
+        els.table.classList.remove('hidden');
+        els.empty.classList.remove('hidden');
+        els.empty.textContent =
+          contactFilter === 'coach'
+            ? 'Aucun joueur à coacher avec les scores actuels.'
+            : contactFilter === 'praise'
+              ? 'Aucun joueur à féliciter avec les scores actuels.'
+              : contactFilter === 'contacted'
+                ? 'Aucun contact enregistré pour cette semaine.'
+                : 'Aucun joueur actif. Ajoutez des joueurs pour saisir le VS.';
+        renderPastUnderHistory(freshState);
+        return;
+      }
+
+      els.table.classList.remove('hidden');
+      els.empty.classList.add('hidden');
+
+      els.tbody.innerHTML = filteredPlayers
         .map((player) => {
           const localScore = freshWeek.scores[player.id] || ROSModels.createEmptyScore();
           ROSModels.ensureDayBrackets(localScore);
-          const under = ROSModels.countDaysUnderObjective(localScore);
-          const met = ROSModels.countObjectivesMet(localScore);
-          const color = ROSModels.getColorClass(under, freshState);
+          const signal = ROSModels.getVsWeekSignal(localScore, freshState);
+          const contact = getEffectiveContact(freshWeek, player.id, signal);
           const rowEditable = editable;
+          const under = ROSModels.countDaysUnderObjective(localScore);
+          const color = ROSModels.getColorClass(under, freshState);
 
           const dayCells = ROSModels.DAYS.map((day) =>
             dayCellHtml(
@@ -330,17 +443,44 @@
             )
           ).join('');
 
+          let signalHtml = `<span class="vs-signal vs-signal--none">—</span>`;
+          if (signal === 'coach') {
+            signalHtml = `<span class="vs-signal vs-signal--coach ${color}">À coacher</span>`;
+          } else if (signal === 'praise') {
+            signalHtml = `<span class="vs-signal vs-signal--praise">À féliciter</span>`;
+          }
+
+          let contactHtml = '—';
+          if (contact) {
+            const when =
+              ROSModels.formatCoachingDateTime(contact.at) ||
+              contact.at ||
+              '';
+            const who = contact.authorLabel ? ` · ${escapeHtml(contact.authorLabel)}` : '';
+            contactHtml = `<span class="vs-contact-done" data-contact-for="${escapeHtml(
+              player.id
+            )}">${escapeHtml(contactedLabel(signal))}${
+              when ? ` · ${escapeHtml(when)}` : ''
+            }${who}</span>`;
+          } else if (signal && canContact) {
+            contactHtml = `<button type="button" class="btn btn-primary btn-sm" data-vs-contact="${escapeHtml(
+              player.id
+            )}" data-vs-contact-kind="${escapeHtml(signal)}">Contacté</button>`;
+          } else if (signal) {
+            contactHtml = `<span class="panel-subtitle">À contacter</span>`;
+          }
+
           return `
             <tr data-player-row="${player.id}">
               <td><strong>${escapeHtml(player.pseudo)}</strong></td>
-              <td>${escapeHtml(player.role)}</td>
               ${dayCells}
-              <td class="vs-indicator-cell ${color}" data-under-for="${player.id}">${under} / 5</td>
-              <td class="vs-indicator-cell" data-met-for="${player.id}">${met} / 5</td>
+              <td class="vs-signal-cell" data-signal-for="${player.id}">${signalHtml}</td>
+              <td class="vs-contact-cell" data-contact-cell-for="${player.id}">${contactHtml}</td>
             </tr>
           `;
         })
         .join('');
+      renderPastUnderHistory(freshState);
     } finally {
       rendering = false;
     }
@@ -355,18 +495,81 @@
     const week = getSelectedWeek();
     if (!week) return;
     const score = week.scores[playerId] || ROSModels.createEmptyScore();
+    const signal = ROSModels.getVsWeekSignal(score, state);
+    const contact = getEffectiveContact(week, playerId, signal);
     const under = ROSModels.countDaysUnderObjective(score);
-    const met = ROSModels.countObjectivesMet(score);
     const color = ROSModels.getColorClass(under, state);
+    const canContact = canMarkVsContact();
 
-    const underCell = els.tbody.querySelector(`[data-under-for="${playerId}"]`);
-    if (underCell) {
-      underCell.textContent = `${under} / 5`;
-      underCell.classList.remove('color-green', 'color-orange', 'color-red');
-      underCell.classList.add(color);
+    const signalCell = els.tbody?.querySelector(`[data-signal-for="${playerId}"]`);
+    if (signalCell) {
+      if (signal === 'coach') {
+        signalCell.innerHTML = `<span class="vs-signal vs-signal--coach ${color}">À coacher</span>`;
+      } else if (signal === 'praise') {
+        signalCell.innerHTML = `<span class="vs-signal vs-signal--praise">À féliciter</span>`;
+      } else {
+        signalCell.innerHTML = `<span class="vs-signal vs-signal--none">—</span>`;
+      }
     }
-    const metCell = els.tbody.querySelector(`[data-met-for="${playerId}"]`);
-    if (metCell) metCell.textContent = `${met} / 5`;
+
+    const contactCell = els.tbody?.querySelector(`[data-contact-cell-for="${playerId}"]`);
+    if (contactCell) {
+      if (contact) {
+        const when = ROSModels.formatCoachingDateTime(contact.at) || contact.at || '';
+        const who = contact.authorLabel ? ` · ${escapeHtml(contact.authorLabel)}` : '';
+        contactCell.innerHTML = `<span class="vs-contact-done">${escapeHtml(
+          contactedLabel(signal)
+        )}${when ? ` · ${escapeHtml(when)}` : ''}${who}</span>`;
+      } else if (signal && canContact) {
+        contactCell.innerHTML = `<button type="button" class="btn btn-primary btn-sm" data-vs-contact="${escapeHtml(
+          playerId
+        )}" data-vs-contact-kind="${escapeHtml(signal)}">Contacté</button>`;
+      } else if (signal) {
+        contactCell.innerHTML = `<span class="panel-subtitle">À contacter</span>`;
+      } else {
+        contactCell.textContent = '—';
+      }
+    }
+
+    // Si un filtre est actif, un changement de score peut faire sortir la ligne.
+    const contactFilter = els.contactFilter?.value || '';
+    if (contactFilter) render();
+  }
+
+  function markVsContact(playerId, kind) {
+    if (!canMarkVsContact()) {
+      AppUI.toast('Seul un R4 ou R5 peut noter un contact VS.');
+      return;
+    }
+    if (kind !== 'coach' && kind !== 'praise') return;
+    const state = ROSStorage.getState();
+    const week = getActiveWeek(state);
+    if (!week || !ROSModels.isWeekEditable(week, state.currentWeekId)) {
+      AppUI.toast('Contact possible uniquement sur la semaine VS active.');
+      return;
+    }
+    const score = week.scores?.[playerId];
+    const signal = ROSModels.getVsWeekSignal(score, state);
+    if (signal !== kind) {
+      AppUI.toast('Le signal a changé — actualisez la ligne.');
+      render();
+      return;
+    }
+    const actor = stampActor();
+    ROSStorage.update((s) => {
+      const target = s.weeks.find((w) => w.id === week.id);
+      if (!target || !ROSModels.isWeekEditable(target, s.currentWeekId)) return s;
+      if (!target.vsContacts || typeof target.vsContacts !== 'object') target.vsContacts = {};
+      target.vsContacts[playerId] = ROSModels.normalizeVsWeekContact({
+        kind,
+        at: new Date().toISOString(),
+        authorLabel: actor.actorLabel || '',
+        authorUserId: actor.actorUserId || '',
+      });
+      return s;
+    });
+    AppUI.toast(kind === 'praise' ? 'Félicitations notées.' : 'Contact coaching noté.');
+    render();
   }
 
   function syncSideViews() {
@@ -462,7 +665,7 @@
     const ok = await AppUI.confirm({
       title: 'Clôturer la semaine VS',
       message:
-        'Clôturer la semaine active ? Les scores détaillés seront effacés. Un compteur léger « semaines sous seuil / à féliciter » est conservé par joueur (8 dernières). Les absents ne sont pas comptés. Aucune nouvelle semaine ne sera créée automatiquement.',
+        'Clôturer la semaine active ? Les scores détaillés seront effacés. Un résumé « sous seuil » (selon le paramètre, ex. ≥ 2 j) est conservé dans Semaines passées, ainsi qu’un compteur léger par joueur. Les absents ne sont pas comptés.',
       confirmLabel: 'Clôturer et effacer',
     });
     if (!ok) return;
@@ -471,7 +674,9 @@
     ROSStorage.update((s) => {
       const week = s.weeks.find((w) => w.id === s.currentWeekId);
       if (!week || week.id !== closedId) return s;
+      stampClosedWeek(week);
       ROSModels.recordVsUnderSnapshotsForWeek(s, week);
+      ROSModels.pushVsUnderWeekArchive(s, week);
       s.weeks = (s.weeks || []).filter((w) => w.id !== closedId);
       s.currentWeekId = null;
       if (s.playerWeekNotes && typeof s.playerWeekNotes === 'object') {
@@ -488,7 +693,7 @@
     if (els.weekSelector) els.weekSelector.value = '';
     render();
     syncSideViews();
-    AppUI.toast('Semaine VS clôturée. Compteur sous seuil mis à jour.');
+    AppUI.toast('Semaine VS clôturée — résumé sous seuil archivé.');
   }
 
   async function createNewWeek() {
@@ -600,12 +805,20 @@
     }
   }
 
+  function onTableClick(event) {
+    const btn = event.target.closest('[data-vs-contact]');
+    if (!btn) return;
+    markVsContact(btn.dataset.vsContact, btn.dataset.vsContactKind);
+  }
+
   function init() {
     cacheDom();
     els.btnNewWeek?.addEventListener('click', createNewWeek);
     els.btnCloseWeek?.addEventListener('click', closeActiveWeek);
     els.weekSelector?.addEventListener('change', render);
+    els.contactFilter?.addEventListener('change', render);
     els.tbody?.addEventListener('change', onTableChange);
+    els.tbody?.addEventListener('click', onTableClick);
     els.settingsForm?.addEventListener('submit', saveSettings);
   }
 
