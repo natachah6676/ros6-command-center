@@ -171,7 +171,7 @@
           <div>
             <h2>Historique suivi</h2>
             <p class="panel-subtitle">
-              Suivis terminés et contacts Discret — réactivation possible pour les dossiers
+              Suivis terminés (raison de fin) et contacts Discret — réactivation possible pour les dossiers
             </p>
           </div>
           <div class="panel-header-actions">
@@ -198,6 +198,7 @@
               <tr>
                 <th>Joueur</th>
                 <th>Motifs</th>
+                <th>Fin</th>
                 <th>R4</th>
                 <th>Terminé le</th>
                 <th>Commentaires</th>
@@ -630,7 +631,7 @@
           <div>
             <h2>Gestion des membres</h2>
             <p class="panel-subtitle">
-              Suivi : VS sous seuil, à féliciter, puissance héros, ou aide manuelle — Discret se gère dans Liste des membres
+              Suivi puissance héros et aide manuelle — VS / À féliciter prévus dans l’onglet VS · Discret dans Liste des membres
             </p>
             <p id="suiviScopeHint" class="panel-subtitle hidden"></p>
           </div>
@@ -654,8 +655,6 @@
           </select>
           <select id="suiviFilterReason" class="input" aria-label="Filtrer par motif">
             <option value="">Tous les motifs</option>
-            <option value="vs">VS sous seuil</option>
-            <option value="praise">À féliciter</option>
             <option value="hero">Puissance héros</option>
             <option value="manual">Aide / manuel</option>
           </select>
@@ -1277,6 +1276,33 @@
     </div>
   </dialog>
 
+  <!-- Modal fin de suivi -->
+  <dialog id="suiviCloseModal" class="modal">
+    <div class="modal-card">
+      <header class="modal-header">
+        <h3>Suivi terminé</h3>
+        <button type="button" class="icon-btn" data-close-modal aria-label="Fermer">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="panel-subtitle" style="margin-top:0">Choisissez la raison de fin de suivi :</p>
+        <div class="settings-actions" style="flex-direction:column;align-items:stretch;gap:0.55rem">
+          <button type="button" class="btn btn-ghost" data-close-reason="not_interested">
+            N'est pas intéressé
+          </button>
+          <button type="button" class="btn btn-ghost" data-close-reason="no_reply">
+            Ne répond pas
+          </button>
+          <button type="button" class="btn btn-primary" data-close-reason="coaching_done">
+            Coaching terminé
+          </button>
+        </div>
+      </div>
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-ghost" data-close-modal>Annuler</button>
+      </footer>
+    </div>
+  </dialog>
+
   <dialog id="tempeteSelectionModal" class="modal">
     <div class="modal-card modal-wide">
       <header class="modal-header">
@@ -1409,7 +1435,7 @@
   <script src="js/supabase-client.js?v=20260804-4"></script>
   <script src="js/profiles.js?v=20260911-refaccess1"></script>
   <script src="js/supabase-sync.js?v=20260912-backups-local1"></script>
-  <script src="js/models.js?v=20260916-discret-liste1"></script>
+  <script src="js/models.js?v=20260916-close-hero1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
   <script src="js/player-identity.js?v=20260911-vscounter1"></script>
   <script src="js/storage.js?v=20260910-vsclose1"></script>
@@ -1417,7 +1443,7 @@
   <script src="js/insights.js?v=20260910-vsclose1"></script>
   <script src="js/player-stats.js?v=20260802-4"></script>
   <script src="js/players.js?v=20260916-discret-liste1"></script>
-  <script src="js/suivi.js?v=20260916-discret-liste1"></script>
+  <script src="js/suivi.js?v=20260916-close-hero1"></script>
   <script src="js/command.js?v=20260806-cmd1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260911-novshist1"></script>
