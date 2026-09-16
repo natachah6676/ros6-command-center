@@ -829,7 +829,5 @@
     openEditModal,
     openDetail,
     closeDetail,
-    setGlobalPowerTier,
-    clearGlobalPowerTier,
   };
 })(window);
