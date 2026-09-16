@@ -31,8 +31,6 @@
     els.inactive = document.getElementById('playerInactive');
     els.inactiveField = document.getElementById('playerInactiveField');
     els.heroPower = document.getElementById('playerHeroPower');
-    els.globalPower = document.getElementById('playerGlobalPower');
-    els.globalPowerHint = document.getElementById('playerGlobalPowerHint');
     els.preferredVolant = document.getElementById('playerPreferredVolant');
     els.overlay = document.getElementById('playerDetailOverlay');
     els.drawer = document.getElementById('playerDetailDrawer');
@@ -48,19 +46,16 @@
     return Boolean(player?.heroPowerTierId);
   }
 
-  function hasGlobalPowerTier(player) {
-    return Boolean(ROSModels.normalizeGlobalPowerTierId(player?.globalPowerTierId));
-  }
-
-  /** Un seul menu « Puissance globale » : Toutes + Non renseignée + tranches. */
-  function fillGlobalPowerFilterOptions() {
+  /** Filtre puissance héros : Toutes + Non renseignée + tranches. */
+  function fillHeroPowerFilterOptions() {
     if (!els.filterPower) return;
     const current = els.filterPower.value || '';
     const opts = [
       '<option value="">Toutes les puissances</option>',
       '<option value="missing">Non renseignée</option>',
     ];
-    ROSModels.getGlobalPowerTiers().forEach((tier) => {
+    const tiers = ROSModels.getPowerTiers(ROSStorage.getState());
+    tiers.forEach((tier) => {
       opts.push(
         `<option value="${ROSUI.escapeHtml(tier.id)}">${ROSUI.escapeHtml(tier.label)}</option>`
       );
@@ -69,7 +64,7 @@
     const keep =
       current === '' ||
       current === 'missing' ||
-      Boolean(ROSModels.normalizeGlobalPowerTierId(current));
+      Boolean(ROSModels.getPowerTierById(ROSStorage.getState(), current));
     els.filterPower.value = keep ? current : '';
   }
 
@@ -90,11 +85,9 @@
         if (role && player.role !== role) return false;
         if (search && !player.pseudo.toLowerCase().includes(search)) return false;
         if (powerFilter === 'missing') {
-          if (hasGlobalPowerTier(player)) return false;
+          if (hasHeroPowerTier(player)) return false;
         } else if (powerFilter) {
-          if (ROSModels.normalizeGlobalPowerTierId(player.globalPowerTierId) !== powerFilter) {
-            return false;
-          }
+          if (player.heroPowerTierId !== powerFilter) return false;
         }
         if (discretFilter === 'discret') {
           if (!player.discret || player.status !== 'Actif') return false;
@@ -134,26 +127,10 @@
     };
   }
 
-  function canEditGlobalPower() {
-    return Boolean(ROSModels.canEditGlobalPower && ROSModels.canEditGlobalPower());
-  }
-
   function fillHeroPowerSelect(selectedId = '') {
     if (!els.heroPower) return;
     const tiers = ROSModels.getPowerTiers(ROSStorage.getState());
     els.heroPower.innerHTML = ROSModels.buildPowerTierSelectOptions(tiers, selectedId || '');
-  }
-
-  function fillGlobalPowerSelect(selectedId = '') {
-    if (!els.globalPower) return;
-    els.globalPower.innerHTML = ROSModels.buildGlobalPowerSelectOptions(selectedId || '');
-    const allowed = canEditGlobalPower();
-    els.globalPower.disabled = !allowed;
-    if (els.globalPowerHint) {
-      els.globalPowerHint.textContent = allowed
-        ? 'Tranche de puissance globale (R4 / R5)'
-        : 'Lecture seule — modifiable uniquement par un R4 ou R5 actif';
-    }
   }
 
   function openCreateModal() {
@@ -166,7 +143,6 @@
     if (els.discret) els.discret.checked = false;
     if (els.inactive) els.inactive.checked = false;
     fillHeroPowerSelect('');
-    fillGlobalPowerSelect('');
     if (els.preferredVolant) els.preferredVolant.checked = false;
     els.statusField.hidden = true;
     els.absentField.hidden = false;
@@ -188,7 +164,6 @@
     if (els.discret) els.discret.checked = Boolean(player.discret);
     if (els.inactive) els.inactive.checked = Boolean(player.inactive);
     fillHeroPowerSelect(player.heroPowerTierId || '');
-    fillGlobalPowerSelect(player.globalPowerTierId || '');
     if (els.preferredVolant) els.preferredVolant.checked = Boolean(player.preferredVolant);
     els.statusField.hidden = false;
     els.absentField.hidden = player.status === 'Parti';
@@ -299,10 +274,6 @@
         }</div>
       </div>
       <div class="detail-item">
-        <strong>Puissance globale</strong>
-        <div>${ROSUI.escapeHtml(ROSModels.getPlayerGlobalPowerLabel(player))}</div>
-      </div>
-      <div class="detail-item">
         <strong>Puissance héros</strong>
         <div>${ROSUI.escapeHtml(ROSModels.getPlayerPowerLabel(player, ROSStorage.getState()))}</div>
       </div>
@@ -373,11 +344,7 @@
     const discret = status === 'Parti' ? false : Boolean(els.discret?.checked);
     const inactive = status === 'Parti' ? false : Boolean(els.inactive?.checked);
     const heroPowerTierId = (els.heroPower?.value || '').trim() || null;
-    const requestedGlobalPowerTierId = ROSModels.normalizeGlobalPowerTierId(
-      els.globalPower?.value || ''
-    );
     const preferredVolant = Boolean(els.preferredVolant?.checked);
-    const mayEditGlobal = canEditGlobalPower();
 
     if (heroPowerTierId && !ROSModels.getPowerTierById(ROSStorage.getState(), heroPowerTierId)) {
       AppUI.toast('Tranche de puissance invalide. Rechargez la fiche.');
@@ -430,11 +397,6 @@
         } else if (heroPowerTierId && global.ROSSync?.clearPlayerFieldCleared) {
           ROSSync.clearPlayerFieldCleared(player, 'heroPowerTierId');
         }
-        if (mayEditGlobal) {
-          applyGlobalPowerChange(state, player, requestedGlobalPowerTierId, {
-            explicitClear: !requestedGlobalPowerTierId,
-          });
-        }
         player.preferredVolant = preferredVolant;
         if (previousStatus === 'Actif' && status === 'Parti') {
           player.leftAt = new Date().toISOString();
@@ -470,15 +432,9 @@
           discret,
           inactive,
           heroPowerTierId,
-          globalPowerTierId: mayEditGlobal ? requestedGlobalPowerTierId : null,
           preferredVolant,
         });
         state.players.push(created);
-        if (mayEditGlobal && requestedGlobalPowerTierId) {
-          appendGlobalPowerAudit(state, created, null, requestedGlobalPowerTierId);
-        } else if (mayEditGlobal && !requestedGlobalPowerTierId) {
-          // Création sans PG : pas un clear (rien à protéger côté serveur encore)
-        }
         const week = state.weeks.find((w) => w.id === state.currentWeekId);
         if (week && !absent) week.scores[created.id] = ROSModels.createEmptyScore();
       }
@@ -637,86 +593,6 @@
     AppUI.toast(nextId ? 'Puissance héros enregistrée.' : 'Puissance héros : Non renseignée.');
   }
 
-  function appendGlobalPowerAudit(state, player, fromValue, toValue) {
-    if (!state || !player) return;
-    if (!Array.isArray(state.globalPowerAudit)) state.globalPowerAudit = [];
-    const actor = actorStamp();
-    state.globalPowerAudit.unshift({
-      id: `gpa_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-      playerId: player.id,
-      pseudo: player.pseudo || '',
-      from: fromValue || null,
-      to: toValue || null,
-      at: new Date().toISOString(),
-      actorUserId: actor.actorUserId || '',
-      actorLabel: actor.actorLabel || '',
-    });
-    if (state.globalPowerAudit.length > 200) {
-      state.globalPowerAudit.length = 200;
-    }
-  }
-
-  /**
-   * Applique une modification explicite de Puissance globale (set ou clear).
-   * Un null implicite sans clear n’est jamais une suppression.
-   */
-  function applyGlobalPowerChange(state, player, nextTierId, { explicitClear = false } = {}) {
-    if (!player) return false;
-    const prev = ROSModels.normalizeGlobalPowerTierId(player.globalPowerTierId);
-    const next = ROSModels.normalizeGlobalPowerTierId(nextTierId);
-    if (!next && !explicitClear && !prev) return false;
-    if (prev === next && !(explicitClear && !next)) return false;
-
-    player.globalPowerTierId = next;
-    if (!next) {
-      if (global.ROSSync?.markPlayerFieldCleared) {
-        ROSSync.markPlayerFieldCleared(player, 'globalPowerTierId');
-      }
-    } else if (global.ROSSync?.clearPlayerFieldCleared) {
-      ROSSync.clearPlayerFieldCleared(player, 'globalPowerTierId');
-    }
-    appendGlobalPowerAudit(state, player, prev, next);
-    return true;
-  }
-
-  function setGlobalPowerTier(playerId, tierId) {
-    if (!canEditGlobalPower()) {
-      AppUI.toast('Seuls les R4 et R5 actifs peuvent modifier la puissance globale.');
-      render();
-      return;
-    }
-    const nextId = ROSModels.normalizeGlobalPowerTierId(tierId);
-    if (!nextId) {
-      clearGlobalPowerTier(playerId);
-      return;
-    }
-    ROSStorage.update((state) => {
-      const target = state.players.find((p) => p.id === playerId);
-      if (!target) return state;
-      applyGlobalPowerChange(state, target, nextId, { explicitClear: false });
-      return state;
-    });
-    AppUI.toast(
-      `Puissance globale : ${ROSModels.getPlayerGlobalPowerLabel({ globalPowerTierId: nextId })}.`
-    );
-  }
-
-  /** Suppression volontaire uniquement — jamais via un save partiel / cache incomplet. */
-  function clearGlobalPowerTier(playerId) {
-    if (!canEditGlobalPower()) {
-      AppUI.toast('Seuls les R4 et R5 actifs peuvent modifier la puissance globale.');
-      render();
-      return;
-    }
-    ROSStorage.update((state) => {
-      const target = state.players.find((p) => p.id === playerId);
-      if (!target) return state;
-      applyGlobalPowerChange(state, target, null, { explicitClear: true });
-      return state;
-    });
-    AppUI.toast('Puissance globale : Non renseignée.');
-  }
-
   function renderCard(player) {
     const state = ROSStorage.getState();
     const powerMissing = !hasHeroPowerTier(player);
@@ -767,32 +643,18 @@
         ? `<button type="button" class="btn btn-primary btn-sm" data-action="discret-contact" data-id="${player.id}">Contact pris</button>`
         : '';
 
-    const globalMissing = !ROSModels.normalizeGlobalPowerTierId(player.globalPowerTierId);
-    const globalEditable = canEditGlobalPower();
-    const globalPowerSelect =
-      player.status === 'Actif'
-        ? `
-          <label class="member-power-field" title="Puissance globale">
-            <span class="member-power-label">Puissance globale</span>
-            <select
-              class="input member-power-select${globalMissing ? ' is-missing' : ''}"
-              data-action="global-power"
-              data-id="${player.id}"
-              aria-label="Puissance globale de ${ROSUI.escapeHtml(player.pseudo)}"
-              ${globalEditable ? '' : 'disabled'}
-            >
-              ${ROSModels.buildGlobalPowerSelectOptions(player.globalPowerTierId || '')}
-            </select>
-          </label>
-        `
-        : `
-          <div class="member-power-field member-power-readonly">
-            <span class="member-power-label">Puissance globale</span>
-            <span class="member-power-value${globalMissing ? ' is-missing' : ''}">${ROSUI.escapeHtml(
-              ROSModels.getPlayerGlobalPowerLabel(player)
-            )}</span>
-          </div>
-        `;
+    const vsUnderStats = ROSModels.getPlayerVsUnderStats(state, player.id);
+    const vsUnderLabel = ROSModels.formatVsUnderCounterLabel(vsUnderStats);
+    const tempeteCount =
+      globalThis.PlayerStats && typeof PlayerStats.computePlayerStats === 'function'
+        ? PlayerStats.computePlayerStats(player.id).storms || 0
+        : 0;
+    const memberCounters = `
+      <div class="member-counters" aria-label="Compteurs membre">
+        <span class="member-counter">${ROSUI.escapeHtml(vsUnderLabel)}</span>
+        <span class="member-counter">Inscrit Tempete : ${tempeteCount}</span>
+      </div>
+    `;
 
     const powerSelect =
       player.status === 'Actif'
@@ -850,7 +712,7 @@
           </div>
           ${discretContactMeta}
         </div>
-        ${globalPowerSelect}
+        ${memberCounters}
         ${powerSelect}
         <div class="player-actions">${actions}</div>
       </article>
@@ -907,12 +769,6 @@
     const powerSelect = event.target.closest('select[data-action="hero-power"]');
     if (powerSelect) {
       setHeroPowerTier(powerSelect.dataset.id, powerSelect.value);
-      return;
-    }
-
-    const globalSelect = event.target.closest('select[data-action="global-power"]');
-    if (globalSelect) {
-      setGlobalPowerTier(globalSelect.dataset.id, globalSelect.value);
     }
   }
 
@@ -924,7 +780,7 @@
 
   function init() {
     cacheDom();
-    fillGlobalPowerFilterOptions();
+    fillHeroPowerFilterOptions();
     els.btnAdd.addEventListener('click', openCreateModal);
     els.form.addEventListener('submit', savePlayer);
     els.list.addEventListener('click', onListClick);

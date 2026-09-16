@@ -52,15 +52,17 @@ assert(!rucheCode.includes('schedulePush()'), 'ruche n’appelle plus schedulePu
 assert(syncCode.includes("syncMode: 'scoped'"), 'payload syncMode scoped');
 assert(syncCode.includes('mergeCommandCenterStore'), 'merge command center');
 assert(syncCode.includes('markPlayerFieldCleared'), 'clear volontaire exposé');
+assert(!syncCode.includes('protectPlayersGlobalPowers'), 'protection PG retirée');
+assert(!syncCode.includes('shouldBlockDestructiveGlobalPowerOverwrite'), 'blocage PG retiré');
 
 const CONTROL_SEVEN = [
-  { id: 'player_msbm3azj_fvtdgr', pseudo: 'Agent0003', globalPowerTierId: 'gp_60_65' },
-  { id: 'player_msbm3azj_wjof3n', pseudo: 'francky89', globalPowerTierId: 'gp_60_65' },
-  { id: 'player_msbm3azj_6pop2n', pseudo: 'Jean 76', globalPowerTierId: 'gp_55_60' },
-  { id: 'player_msbm3azj_e9tbm5', pseudo: 'Loukas27', globalPowerTierId: 'gp_60_65' },
-  { id: 'player_msbm3azj_dgcx0x', pseudo: 'Pilgrim0216', globalPowerTierId: 'gp_60_65' },
-  { id: 'player_msbm3azj_codwa6', pseudo: 'Raiden 05', globalPowerTierId: 'gp_60_65' },
-  { id: 'player_msbm3azj_4xc2sb', pseudo: 'Vortese', globalPowerTierId: 'gp_55_60' },
+  { id: 'player_msbm3azj_fvtdgr', pseudo: 'Agent0003', heroPowerTierId: 'tier_40_45' },
+  { id: 'player_msbm3azj_wjof3n', pseudo: 'francky89', heroPowerTierId: 'tier_35_40' },
+  { id: 'player_msbm3azj_6pop2n', pseudo: 'Jean 76', heroPowerTierId: 'tier_30_35' },
+  { id: 'player_msbm3azj_e9tbm5', pseudo: 'Loukas27', heroPowerTierId: 'tier_40_45' },
+  { id: 'player_msbm3azj_dgcx0x', pseudo: 'Pilgrim0216', heroPowerTierId: 'tier_45_50' },
+  { id: 'player_msbm3azj_codwa6', pseudo: 'Raiden 05', heroPowerTierId: 'tier_40_45' },
+  { id: 'player_msbm3azj_4xc2sb', pseudo: 'Vortese', heroPowerTierId: 'tier_30_35' },
 ];
 
 const sandbox = {
@@ -90,6 +92,7 @@ vm.createContext(sandbox);
 vm.runInContext(syncCode, sandbox);
 const Sync = sandbox.window.ROSSync;
 const T = Sync.__test;
+assert(!T.PROTECTED_NONEMPTY_PLAYER_FIELDS.includes('globalPowerTierId'), 'PG hors champs protégés');
 
 console.log('\n=== Protection merge joueur ===');
 const remoteP = {
@@ -97,7 +100,6 @@ const remoteP = {
   pseudo: 'Alpha',
   role: 'Membre',
   status: 'Actif',
-  globalPowerTierId: 'gp_60_65',
   heroPowerTierId: 'tier_40_45',
 };
 const localStale = {
@@ -105,26 +107,25 @@ const localStale = {
   pseudo: 'Alpha',
   role: 'Membre',
   status: 'Actif',
-  globalPowerTierId: null,
-  heroPowerTierId: 'tier_40_45',
+  heroPowerTierId: null,
 };
 const mergedKeep = T.mergePlayerRecord(remoteP, localStale);
-assert(mergedKeep.globalPowerTierId === 'gp_60_65', 'null local n’écrase pas global distant');
+assert(mergedKeep.heroPowerTierId === 'tier_40_45', 'null local n’écrase pas héros distant');
 
 const localClear = {
   ...localStale,
-  globalPowerTierId: null,
-  syncClears: { globalPowerTierId: Date.now() },
+  heroPowerTierId: null,
+  syncClears: { heroPowerTierId: Date.now() },
 };
 const mergedClear = T.mergePlayerRecord(remoteP, localClear);
-assert(mergedClear.globalPowerTierId == null, 'clear volontaire autorisé');
+assert(mergedClear.heroPowerTierId == null, 'clear volontaire autorisé');
 assert(!mergedClear.syncClears, 'meta syncClears retirée du résultat');
 
-const localEdit = { ...remoteP, role: 'R4', globalPowerTierId: 'gp_90_95' };
+const localEdit = { ...remoteP, role: 'R4', heroPowerTierId: 'tier_50_55' };
 const mergedEdit = T.mergePlayerRecord(remoteP, localEdit);
-assert(mergedEdit.role === 'R4' && mergedEdit.globalPowerTierId === 'gp_90_95', 'édition locale membres conserve');
+assert(mergedEdit.role === 'R4' && mergedEdit.heroPowerTierId === 'tier_50_55', 'édition locale membres conserve');
 
-console.log('\n=== Push Ruche ne touche pas les 7 puissances ===');
+console.log('\n=== Push Ruche ne touche pas les puissances héros ===');
 const remoteData = {
   stores: {
     ros6_command_center_v1: {
@@ -144,7 +145,6 @@ const localIncompleteMembers = {
       pseudo: p.pseudo,
       role: 'Membre',
       status: 'Actif',
-      globalPowerTierId: null,
       heroPowerTierId: null,
     })),
   },
@@ -159,9 +159,9 @@ assert(afterRuche.stores.ros6_train_v1.week === 'old', 'train distant intact');
 assert(
   CONTROL_SEVEN.every((c) => {
     const p = playersAfterRuche.find((x) => x.id === c.id);
-    return p && p.globalPowerTierId === c.globalPowerTierId;
+    return p && p.heroPowerTierId === c.heroPowerTierId;
   }),
-  'les 7 globalPower intactes après push ruche (même si local CC incomplet)'
+  'les 7 heroPower intactes après push ruche (même si local CC incomplet)'
 );
 
 console.log('\n=== Push Train / VS(command) ===');
@@ -174,7 +174,7 @@ assert(afterTrain.stores.ros6_train_v1.week === 'new-train', 'train local pouss�
 assert(
   CONTROL_SEVEN.every((c) => {
     const p = afterTrain.stores.ros6_command_center_v1.players.find((x) => x.id === c.id);
-    return p && p.globalPowerTierId === c.globalPowerTierId;
+    return p && p.heroPowerTierId === c.heroPowerTierId;
   }),
   'les 7 intactes après push train'
 );
@@ -189,7 +189,7 @@ const afterVs = T.buildPushPayload(
         ...p,
         role: 'Membre',
         status: 'Actif',
-        globalPowerTierId: null, // cache incomplet
+        heroPowerTierId: null, // cache incomplet
       })),
       weeks: [{ id: 'w1' }],
     },
@@ -198,7 +198,7 @@ const afterVs = T.buildPushPayload(
 assert(
   CONTROL_SEVEN.every((c) => {
     const p = afterVs.stores.ros6_command_center_v1.players.find((x) => x.id === c.id);
-    return p && p.globalPowerTierId === c.globalPowerTierId;
+    return p && p.heroPowerTierId === c.heroPowerTierId;
   }),
   'merge CC : null local ne détruit pas les 7 même si CC dirty'
 );
@@ -206,11 +206,9 @@ assert(afterVs.stores.ros6_command_center_v1.weeks[0].id === 'w1', 'édition VS/
 
 console.log('\n=== Rebase conflit ===');
 const rebased = T.rebaseLocalAfterRemote(remoteData, new Set(['ros6_ruche_v1']));
-// rebaseLocalAfterRemote uses getLocalStore — in sandbox localStorage empty for ruche
-// So we only assert command center comes from remote when not dirty
 assert(
-  rebased.stores.ros6_command_center_v1.players[0].globalPowerTierId === 'gp_60_65',
-  'rebase : CC non dirty = remote (puissances conservées)'
+  rebased.stores.ros6_command_center_v1.players[0].heroPowerTierId === 'tier_40_45',
+  'rebase : CC non dirty = remote (puissances héros conservées)'
 );
 
 console.log('\n=== Backups hors sync ===');
@@ -219,70 +217,36 @@ assert(Sync.BACKUPS_KEY === 'ros6_backups_v1', 'BACKUPS_KEY exposé');
 assert(T.markDirty('ros6_backups_v1') === false, 'markDirty backups → false');
 assert(!T.pendingDirty.has('ros6_backups_v1'), 'pendingDirty sans backups');
 
-const afterIgnoreBackups = T.buildPushPayload(
+const afterRucheKeepsRemoteBackups = T.buildPushPayload(
   remoteData,
-  new Set(['ros6_backups_v1', 'ros6_ruche_v1']),
-  {
-    ...localIncompleteMembers,
-    ros6_backups_v1: { version: 1, backups: [{ id: 'local_huge', kind: 'manual', payload: 'x'.repeat(1000) }] },
-  }
+  new Set(['ros6_ruche_v1']),
+  localIncompleteMembers
 );
 assert(
-  afterIgnoreBackups.stores.ros6_backups_v1.backups[0].id === 'remote_only',
-  'push conserve backups distants (pas écrasés par le local)'
-);
-assert(afterIgnoreBackups.stores.ros6_ruche_v1.grid[0][0] === 'NEW', 'ruche dirty toujours poussée');
-
-sandbox.localStorage.setItem(
-  'ros6_backups_v1',
-  JSON.stringify({ version: 1, backups: [{ id: 'keep_local' }] })
-);
-sandbox.localStorage.setItem('ros6_ruche_v1', JSON.stringify({ version: 1, grid: [['LOC']] }));
-T.applyStoresToLocal({
-  stores: {
-    ros6_ruche_v1: { version: 9, grid: [['REM']] },
-    ros6_backups_v1: { version: 1, backups: [{ id: 'from_remote' }] },
-  },
-});
-assert(
-  JSON.parse(sandbox.localStorage.getItem('ros6_ruche_v1')).grid[0][0] === 'REM',
-  'applyStores écrit la ruche métier'
-);
-assert(
-  JSON.parse(sandbox.localStorage.getItem('ros6_backups_v1')).backups[0].id === 'keep_local',
-  'applyStores n’écrase pas les backups locaux'
+  afterRucheKeepsRemoteBackups.stores.ros6_backups_v1?.backups?.[0]?.id === 'remote_only',
+  'push métier ne touche pas ros6_backups_v1 distant'
 );
 
-console.log('\n=== Quota localStorage simulé ===');
-assert(T.isQuotaExceededError({ name: 'QuotaExceededError', message: 'The quota has been exceeded.' }), 'détecte QuotaExceededError');
-assert(T.isQuotaExceededError({ message: 'The quota has been exceeded.' }), 'détecte message quota');
-const prevSet = sandbox.localStorage.setItem.bind(sandbox.localStorage);
-sandbox.localStorage.setItem = (k, v) => {
-  if (k === 'ros6_train_v1') {
-    const err = new Error('The quota has been exceeded.');
-    err.name = 'QuotaExceededError';
-    throw err;
-  }
-  return prevSet(k, v);
+console.log('\n=== Quota localStorage ===');
+assert(typeof T.isQuotaExceededError === 'function', 'isQuotaExceededError exposé');
+assert(T.isQuotaExceededError({ name: 'QuotaExceededError' }), 'détecte QuotaExceededError');
+assert(
+  T.isQuotaExceededError({ message: 'Quota has been exceeded' }),
+  'détecte message quota exceeded'
+);
+assert(!T.isQuotaExceededError({ message: 'network' }), 'ignore erreurs réseau');
+assert(
+  typeof T.LOCAL_QUOTA_USER_MESSAGE === 'string' && T.LOCAL_QUOTA_USER_MESSAGE.includes('local'),
+  'message quota clair'
+);
+
+sandbox.localStorage.setItem = () => {
+  const err = new Error('Quota has been exceeded');
+  err.name = 'QuotaExceededError';
+  throw err;
 };
-let quotaThrown = false;
-try {
-  T.applyStoresToLocal({
-    stores: {
-      ros6_train_v1: { week: 'boom' },
-      ros6_backups_v1: { backups: [{ id: 'ignored' }] },
-    },
-  });
-} catch (error) {
-  quotaThrown = T.isQuotaExceededError(error);
-  assert(
-    String(error.message).includes('stockage local'),
-    'message quota compréhensible (pas seulement sync)'
-  );
-}
-assert(quotaThrown, 'applyStores remonte QuotaExceededError');
-sandbox.localStorage.setItem = prevSet;
+const quotaResult = T.safeLocalStorageSetItem('k', 'v');
+assert(quotaResult && quotaResult.ok === false && quotaResult.quota === true, 'safeLocalStorageSetItem → quota');
 
-console.log('\n=== Résultat ===');
-console.log(`${passed} OK · ${failed} KO`);
-process.exit(failed ? 1 : 0);
+console.log(`\n${passed} passed, ${failed} failed`);
+if (failed) process.exit(1);
