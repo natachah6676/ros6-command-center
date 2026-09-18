@@ -3227,9 +3227,35 @@ tbody tr:hover {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  align-items: center;
   margin-bottom: 0.35rem;
   font-size: 0.78rem;
   color: var(--muted, #9aa3b2);
+}
+
+.suivi-note-actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 0.15rem;
+}
+
+.suivi-note-btn {
+  padding: 0.1rem 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  opacity: 0.65;
+}
+
+.suivi-note-btn:hover {
+  opacity: 1;
+}
+
+.suivi-note-edited {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.72rem;
+  color: var(--muted, #9aa3b2);
+  font-style: italic;
 }
 
 .suivi-note p {
