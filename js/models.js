@@ -905,6 +905,8 @@
       coachingThreshold: createDefaultCoachingThreshold(),
       followUpSettings: createDefaultFollowUpSettings(),
       playerFollowUps: {},
+      /** Historique permanent des commentaires de suivi (par joueur, append-only). */
+      playerFollowUpNotes: {},
       /** Compteur léger VS sous seuil (fenêtre glissante, sans garder les semaines). */
       playerVsUnderStats: {},
       /** Résumés « sous seuil » des semaines clôturées (consultation Semaines passées). */
@@ -1105,8 +1107,132 @@
     };
   }
 
+  /**
+   * Fusion append-only de deux listes de notes : union par `id`.
+   * Même id → conserve la version la plus riche (texte / auteur), `at` le plus ancien
+   * pour ne pas réécrire l’horodatage d’origine.
+   * Aucun plafond — historique permanent.
+   */
+  function mergeFollowUpNotesArrays(a, b) {
+    const map = new Map();
+    const ingest = (list) => {
+      (Array.isArray(list) ? list : []).forEach((raw) => {
+        const note = normalizeFollowUpNote(raw);
+        if (!note) return;
+        const prev = map.get(note.id);
+        if (!prev) {
+          map.set(note.id, note);
+          return;
+        }
+        const atA = String(prev.at || '');
+        const atB = String(note.at || '');
+        const earlierAt = !atA ? note.at : !atB ? prev.at : atA <= atB ? prev.at : note.at;
+        map.set(note.id, {
+          id: note.id,
+          at: earlierAt,
+          text: (note.text && note.text.length >= prev.text.length ? note.text : prev.text) || prev.text,
+          authorLabel: prev.authorLabel || note.authorLabel || '',
+          authorUserId: prev.authorUserId || note.authorUserId || '',
+        });
+      });
+    };
+    ingest(a);
+    ingest(b);
+    return [...map.values()].sort((x, y) => {
+      const ax = String(x.at || '');
+      const ay = String(y.at || '');
+      if (ax !== ay) return ax < ay ? -1 : 1;
+      return String(x.id).localeCompare(String(y.id));
+    });
+  }
+
+  function normalizePlayerFollowUpNotesLedger(raw) {
+    if (!raw || typeof raw !== 'object') return {};
+    const out = {};
+    Object.keys(raw).forEach((playerId) => {
+      if (!playerId) return;
+      const row = raw[playerId];
+      const notes = Array.isArray(row)
+        ? mergeFollowUpNotesArrays(row, [])
+        : mergeFollowUpNotesArrays(row?.notes, []);
+      if (!notes.length) {
+        out[playerId] = { notes: [] };
+        return;
+      }
+      out[playerId] = { notes };
+    });
+    return out;
+  }
+
+  function getPlayerFollowUpNotes(state, playerId) {
+    if (!playerId) return [];
+    const row = state?.playerFollowUpNotes?.[playerId];
+    if (!row) return [];
+    return mergeFollowUpNotesArrays(row.notes, []);
+  }
+
+  /**
+   * Copie non destructive des notes legacy (fiches) vers le ledger permanent.
+   * Ne supprime jamais playerFollowUps[*].notes.
+   */
+  function migrateFollowUpNotesFromCases(state) {
+    if (!state || typeof state !== 'object') return state;
+    if (!state.playerFollowUpNotes || typeof state.playerFollowUpNotes !== 'object') {
+      state.playerFollowUpNotes = {};
+    }
+    const cases = state.playerFollowUps || {};
+    Object.keys(cases).forEach((playerId) => {
+      const legacyNotes = cases[playerId]?.notes;
+      if (!Array.isArray(legacyNotes) || !legacyNotes.length) return;
+      const existing = state.playerFollowUpNotes[playerId]?.notes || [];
+      const merged = mergeFollowUpNotesArrays(existing, legacyNotes);
+      state.playerFollowUpNotes[playerId] = { notes: merged };
+    });
+    return state;
+  }
+
+  function appendPlayerFollowUpNote(state, playerId, entry = {}) {
+    if (!state || !playerId) return null;
+    if (!state.playerFollowUpNotes || typeof state.playerFollowUpNotes !== 'object') {
+      state.playerFollowUpNotes = {};
+    }
+    const note = normalizeFollowUpNote({
+      id: entry.id || uid('funote'),
+      at: entry.at || new Date().toISOString(),
+      text: entry.text,
+      authorLabel: entry.authorLabel,
+      authorUserId: entry.authorUserId,
+    });
+    if (!note) return null;
+    const prev = state.playerFollowUpNotes[playerId]?.notes || [];
+    state.playerFollowUpNotes[playerId] = {
+      notes: mergeFollowUpNotesArrays(prev, [note]),
+    };
+    return note;
+  }
+
+  /**
+   * Fusion sync du ledger permanent : union des joueurs, union des notes par id.
+   * Aucune note présente d’un seul côté n’est perdue.
+   */
+  function mergePlayerFollowUpNotesLedgers(remoteLedger, localLedger) {
+    const remote = normalizePlayerFollowUpNotesLedger(remoteLedger);
+    const local = normalizePlayerFollowUpNotesLedger(localLedger);
+    const ids = new Set([...Object.keys(remote), ...Object.keys(local)]);
+    const out = {};
+    ids.forEach((playerId) => {
+      const merged = mergeFollowUpNotesArrays(
+        remote[playerId]?.notes,
+        local[playerId]?.notes
+      );
+      out[playerId] = { notes: merged };
+    });
+    return out;
+  }
+
   function normalizeFollowUpCase(raw) {
     if (!raw || typeof raw !== 'object') return createEmptyFollowUpCase();
+    // Compat ancienne structure : plafond 200 conservé uniquement ici.
     const notes = Array.isArray(raw.notes)
       ? raw.notes.map(normalizeFollowUpNote).filter(Boolean).slice(0, 200)
       : [];
@@ -1573,6 +1699,7 @@
     const coachingThreshold = normalizeCoachingThreshold(raw.coachingThreshold);
     const followUpSettings = normalizeFollowUpSettings(raw.followUpSettings);
     const playerFollowUps = normalizePlayerFollowUps(raw.playerFollowUps);
+    const playerFollowUpNotes = normalizePlayerFollowUpNotesLedger(raw.playerFollowUpNotes);
     const playerVsUnderStats = normalizePlayerVsUnderStats(raw.playerVsUnderStats);
     const vsUnderWeekHistory = normalizeVsUnderWeekHistory(raw.vsUnderWeekHistory);
     const alliance = normalizeAllianceSettings(raw.alliance);
@@ -1595,6 +1722,7 @@
       coachingThreshold,
       followUpSettings,
       playerFollowUps,
+      playerFollowUpNotes,
       playerVsUnderStats,
       vsUnderWeekHistory,
       alliance,
@@ -1604,6 +1732,9 @@
     if (global.ROSPlayerIdentity && typeof global.ROSPlayerIdentity.migrateMainState === 'function') {
       global.ROSPlayerIdentity.migrateMainState(normalized);
     }
+
+    // Copie non destructive des notes legacy → ledger permanent (après remap d’identité).
+    migrateFollowUpNotesFromCases(normalized);
 
     // Première migration VS : mode ÉCO par défaut + recalcul de la semaine active uniquement
     const hadVsSettings = Boolean(raw.vsSettings && typeof raw.vsSettings === 'object');
@@ -1733,7 +1864,14 @@
     getFollowUpStatusLabel,
     createEmptyFollowUpCase,
     normalizeFollowUpCase,
+    normalizeFollowUpNote,
     normalizePlayerFollowUps,
+    normalizePlayerFollowUpNotesLedger,
+    getPlayerFollowUpNotes,
+    mergeFollowUpNotesArrays,
+    mergePlayerFollowUpNotesLedgers,
+    migrateFollowUpNotesFromCases,
+    appendPlayerFollowUpNote,
     getFollowUpReferenceWeek,
     countPlayerVsUnderDays,
     detectFollowUpReasons,

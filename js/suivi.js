@@ -492,7 +492,8 @@
     const statusBtn = (id) => (follow.status === id ? 'btn btn-primary' : 'btn btn-ghost');
     const showStatusButtons = hasDossierReasons(displayReasons) && follow.status !== 'done';
 
-    const notesHtml = (follow.notes || [])
+    const notesList = ROSModels.getPlayerFollowUpNotes(state, playerId);
+    const notesHtml = notesList
       .slice()
       .sort((a, b) => (a.at < b.at ? 1 : -1))
       .map(
@@ -784,14 +785,15 @@
     const actor = stampActor();
     ROSStorage.update((s) => {
       const row = ensureCase(s, playerId);
-      row.notes = row.notes || [];
-      row.notes.push({
-        id: ROSModels.uid('funote'),
-        at: new Date().toISOString(),
+      const note = ROSModels.appendPlayerFollowUpNote(s, playerId, {
         text: clean,
         authorLabel: actor.actorLabel || '',
         authorUserId: actor.actorUserId || '',
       });
+      // Compat temporaire : miroir vers la fiche (sans être la source de vérité).
+      if (note) {
+        row.notes = ROSModels.mergeFollowUpNotesArrays(row.notes || [], [note]);
+      }
       row.updatedAt = new Date().toISOString();
       if (row.status === 'to_contact' || row.status === 'contacted') {
         row.status = 'in_progress';
@@ -988,22 +990,34 @@
     AppUI.toast('Compteurs et suivis VS nettoyés pour la semaine en cours.');
   }
 
-  function contactOfficerLabel(follow) {
+  function contactOfficerLabel(follow, playerId) {
     if (follow?.assigneeLabel) return follow.assigneeLabel;
     if (follow?.assigneePlayerId) {
       const state = ROSStorage.getState();
       const officer = (state.players || []).find((p) => p.id === follow.assigneePlayerId);
       if (officer?.pseudo) return officer.pseudo;
     }
-    const notes = Array.isArray(follow?.notes) ? follow.notes : [];
+    const state = ROSStorage.getState();
+    const notes = playerId
+      ? ROSModels.getPlayerFollowUpNotes(state, playerId)
+      : Array.isArray(follow?.notes)
+        ? follow.notes
+        : [];
     for (let i = notes.length - 1; i >= 0; i -= 1) {
       if (notes[i]?.authorLabel) return notes[i].authorLabel;
     }
     return '—';
   }
 
-  function formatNotesPreview(follow, maxLen = 160) {
-    const notes = Array.isArray(follow?.notes) ? follow.notes.slice() : [];
+  function formatNotesPreview(follow, playerId, maxLen = 160) {
+    const state = ROSStorage.getState();
+    const notes = (
+      playerId
+        ? ROSModels.getPlayerFollowUpNotes(state, playerId)
+        : Array.isArray(follow?.notes)
+          ? follow.notes.slice()
+          : []
+    ).slice();
     if (!notes.length) return '—';
     notes.sort((a, b) => (a.at < b.at ? 1 : -1));
     const text = notes
@@ -1143,11 +1157,13 @@
     }
     const ok = await AppUI.confirm({
       title: 'Effacer tout l’historique suivi',
-      message: `Supprimer définitivement ${doneCount} fiche(s) terminée(s) et ${discretCount} contact(s) Discret ? Les suivis encore ouverts dans Gestion des membres ne sont pas touchés.`,
+      message: `Supprimer définitivement ${doneCount} fiche(s) terminée(s) et ${discretCount} contact(s) Discret ? Les commentaires d’échange avec les joueurs sont conservés. Les suivis encore ouverts dans Gestion des membres ne sont pas touchés.`,
       confirmLabel: 'Effacer l’historique',
     });
     if (!ok) return;
     ROSStorage.update((s) => {
+      // Assure la copie ledger avant nettoyage des fiches (sans toucher au ledger).
+      ROSModels.migrateFollowUpNotesFromCases(s);
       const next = {};
       Object.keys(s.playerFollowUps || {}).forEach((playerId) => {
         const row = s.playerFollowUps[playerId];
@@ -1162,7 +1178,7 @@
     });
     renderHistory();
     render();
-    AppUI.toast('Historique des suivis et contacts Discret effacé.');
+    AppUI.toast('Fiches terminées et contacts Discret effacés — commentaires joueurs conservés.');
   }
 
   function renderHistory() {
@@ -1208,8 +1224,8 @@
           ROSModels.formatCoachingDateTime(follow.closedAt) ||
           ROSModels.formatCoachingDateTime(follow.updatedAt) ||
           '—';
-        const r4 = contactOfficerLabel(follow);
-        const notes = formatNotesPreview(follow);
+        const r4 = contactOfficerLabel(follow, player.id);
+        const notes = formatNotesPreview(follow, player.id);
         const motifs = ROSModels.formatFollowUpReasonsLabel(reasons);
         const fin =
           ROSModels.getFollowUpCloseReasonLabel(follow.closeReason) || '—';

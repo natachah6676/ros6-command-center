@@ -325,9 +325,33 @@
       ...cloneJson(remoteStore),
       ...cloneJson(localStore),
       players: mergedPlayers,
+      playerFollowUpNotes: mergePlayerFollowUpNotesField(
+        remoteStore.playerFollowUpNotes,
+        localStore.playerFollowUpNotes
+      ),
     };
     delete merged.globalPowerAudit;
     return merged;
+  }
+
+  function mergePlayerFollowUpNotesField(remoteLedger, localLedger) {
+    if (global.ROSModels && typeof ROSModels.mergePlayerFollowUpNotesLedgers === 'function') {
+      return ROSModels.mergePlayerFollowUpNotesLedgers(remoteLedger, localLedger);
+    }
+    // Filet minimal si models pas chargé (tests isolés) : union superficielle.
+    const out = { ...(remoteLedger && typeof remoteLedger === 'object' ? remoteLedger : {}) };
+    Object.keys(localLedger && typeof localLedger === 'object' ? localLedger : {}).forEach((id) => {
+      const remoteNotes = out[id]?.notes || (Array.isArray(out[id]) ? out[id] : []);
+      const localNotes =
+        localLedger[id]?.notes || (Array.isArray(localLedger[id]) ? localLedger[id] : []);
+      const byId = new Map();
+      [...remoteNotes, ...localNotes].forEach((n) => {
+        if (!n || !n.id) return;
+        if (!byId.has(n.id)) byId.set(n.id, n);
+      });
+      out[id] = { notes: [...byId.values()] };
+    });
+    return out;
   }
 
   /**
@@ -1149,6 +1173,7 @@
       pendingDirty,
       BACKUPS_KEY,
       LOCAL_QUOTA_USER_MESSAGE,
+      mergePlayerFollowUpNotesField,
     },
   };
 })(window);

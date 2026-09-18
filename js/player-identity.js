@@ -143,6 +143,36 @@
       }
     }
 
+    if (state.playerFollowUps && typeof state.playerFollowUps === 'object') {
+      const result = migrateMapKeysToPlayerIds(state.playerFollowUps, players, {
+        ...options,
+        mergeFn: (a, b) => ({ ...(b || {}), ...(a || {}) }),
+      });
+      if (result.changed) {
+        state.playerFollowUps = result.map;
+        changed = true;
+      }
+    }
+
+    if (state.playerFollowUpNotes && typeof state.playerFollowUpNotes === 'object') {
+      const result = migrateMapKeysToPlayerIds(state.playerFollowUpNotes, players, {
+        ...options,
+        mergeFn: (a, b) => {
+          if (global.ROSModels && typeof ROSModels.mergeFollowUpNotesArrays === 'function') {
+            return {
+              notes: ROSModels.mergeFollowUpNotesArrays(a?.notes || a, b?.notes || b),
+            };
+          }
+          const notes = [...(a?.notes || []), ...(b?.notes || [])];
+          return { notes };
+        },
+      });
+      if (result.changed) {
+        state.playerFollowUpNotes = result.map;
+        changed = true;
+      }
+    }
+
     return { state, changed };
   }
 
