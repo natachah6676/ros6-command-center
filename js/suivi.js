@@ -492,23 +492,45 @@
     const statusBtn = (id) => (follow.status === id ? 'btn btn-primary' : 'btn btn-ghost');
     const showStatusButtons = hasDossierReasons(displayReasons) && follow.status !== 'done';
 
+    const canMutateNotes = ROSModels.canMutatePlayerFollowUpNotes(state, playerId, {
+      isR5: viewerIsR5(),
+      isR4OrR5: canEditFollowUp(),
+      viewerPlayerId: viewerPlayerId(),
+    });
     const notesList = ROSModels.getPlayerFollowUpNotes(state, playerId);
     const notesHtml = notesList
       .slice()
       .sort((a, b) => (a.at < b.at ? 1 : -1))
-      .map(
-        (n) => `
-        <article class="suivi-note">
+      .map((n) => {
+        const edited =
+          n.updatedAt &&
+          `<span class="suivi-note-edited">modifié le ${escapeHtml(
+            ROSModels.formatCoachingDateTime(n.updatedAt) || n.updatedAt
+          )}</span>`;
+        const actions = canMutateNotes
+          ? `<span class="suivi-note-actions">
+              <button type="button" class="btn btn-ghost btn-sm suivi-note-btn" data-suivi-note-edit="${escapeHtml(
+                n.id
+              )}" data-player="${escapeHtml(playerId)}" title="Modifier">Modifier</button>
+              <button type="button" class="btn btn-ghost btn-sm suivi-note-btn" data-suivi-note-delete="${escapeHtml(
+                n.id
+              )}" data-player="${escapeHtml(playerId)}" title="Supprimer">supprimer</button>
+            </span>`
+          : '';
+        return `
+        <article class="suivi-note" data-note-id="${escapeHtml(n.id)}">
           <header>
             <time datetime="${escapeHtml(n.at)}">${escapeHtml(
               ROSModels.formatCoachingDateTime(n.at) || n.at
             )}</time>
             ${n.authorLabel ? `<span>${escapeHtml(n.authorLabel)}</span>` : ''}
+            ${actions}
           </header>
           <p>${escapeHtml(n.text)}</p>
+          ${edited || ''}
         </article>
-      `
-      )
+      `;
+      })
       .join('');
 
     const statusButtonsHtml = showStatusButtons
@@ -804,7 +826,77 @@
     render();
   }
 
+  function noteMutatorContext() {
+    return {
+      isR5: viewerIsR5(),
+      isR4OrR5: canEditFollowUp(),
+      viewerPlayerId: viewerPlayerId(),
+    };
+  }
+
+  async function editNote(playerId, noteId) {
+    const state = ROSStorage.getState();
+    if (!ROSModels.canMutatePlayerFollowUpNotes(state, playerId, noteMutatorContext())) {
+      AppUI.toast('Vous ne pouvez pas modifier ce commentaire.');
+      return;
+    }
+    const note = ROSModels.getPlayerFollowUpNotes(state, playerId).find((n) => n.id === noteId);
+    if (!note) return;
+    const next = window.prompt('Modifier le commentaire', note.text);
+    if (next == null) return;
+    const clean = String(next).trim();
+    if (!clean) {
+      AppUI.toast('Le commentaire ne peut pas être vide.');
+      return;
+    }
+    if (clean === note.text) return;
+    const actor = stampActor();
+    let ok = false;
+    ROSStorage.update((s) => {
+      if (!ROSModels.canMutatePlayerFollowUpNotes(s, playerId, noteMutatorContext())) return s;
+      ok = Boolean(
+        ROSModels.updatePlayerFollowUpNote(s, playerId, noteId, { text: clean, actor })
+      );
+      return s;
+    });
+    AppUI.toast(ok ? 'Commentaire modifié.' : 'Modification impossible.');
+    render();
+  }
+
+  async function deleteNote(playerId, noteId) {
+    const state = ROSStorage.getState();
+    if (!ROSModels.canMutatePlayerFollowUpNotes(state, playerId, noteMutatorContext())) {
+      AppUI.toast('Vous ne pouvez pas supprimer ce commentaire.');
+      return;
+    }
+    const okConfirm = await AppUI.confirm({
+      title: 'Supprimer le commentaire',
+      message: 'Supprimer définitivement ce commentaire ?',
+      confirmLabel: 'Supprimer',
+    });
+    if (!okConfirm) return;
+    const actor = stampActor();
+    let ok = false;
+    ROSStorage.update((s) => {
+      if (!ROSModels.canMutatePlayerFollowUpNotes(s, playerId, noteMutatorContext())) return s;
+      ok = Boolean(ROSModels.softDeletePlayerFollowUpNote(s, playerId, noteId, { actor }));
+      return s;
+    });
+    AppUI.toast(ok ? 'Commentaire supprimé.' : 'Suppression impossible.');
+    render();
+  }
+
   function onRootClick(event) {
+    const editBtn = event.target.closest('[data-suivi-note-edit]');
+    if (editBtn) {
+      void editNote(editBtn.dataset.player, editBtn.dataset.suiviNoteEdit);
+      return;
+    }
+    const deleteBtn = event.target.closest('[data-suivi-note-delete]');
+    if (deleteBtn) {
+      void deleteNote(deleteBtn.dataset.player, deleteBtn.dataset.suiviNoteDelete);
+      return;
+    }
     const openBtn = event.target.closest('[data-suivi-open]');
     if (openBtn) {
       selectedPlayerId = openBtn.dataset.suiviOpen;

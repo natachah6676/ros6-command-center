@@ -1096,44 +1096,123 @@
 
   function normalizeFollowUpNote(raw) {
     if (!raw || typeof raw !== 'object') return null;
+    const deletedAt = raw.deletedAt ? String(raw.deletedAt) : '';
     const text = String(raw.text || '').trim();
-    if (!text) return null;
-    return {
+    // Tombstone : conservé même sans texte ; note vivante : texte obligatoire.
+    if (!text && !deletedAt) return null;
+    const note = {
       id: raw.id || uid('funote'),
       at: raw.at || new Date().toISOString(),
-      text,
+      text: text || '',
       authorLabel: raw.authorLabel != null ? String(raw.authorLabel) : '',
       authorUserId: raw.authorUserId != null ? String(raw.authorUserId) : '',
     };
+    if (raw.updatedAt) {
+      note.updatedAt = String(raw.updatedAt);
+      note.updatedByUserId =
+        raw.updatedByUserId != null ? String(raw.updatedByUserId) : '';
+      note.updatedByLabel =
+        raw.updatedByLabel != null ? String(raw.updatedByLabel) : '';
+    }
+    if (deletedAt) {
+      note.deletedAt = deletedAt;
+      note.deletedByUserId =
+        raw.deletedByUserId != null ? String(raw.deletedByUserId) : '';
+      note.deletedByLabel =
+        raw.deletedByLabel != null ? String(raw.deletedByLabel) : '';
+    }
+    return note;
+  }
+
+  function isFollowUpNoteDeleted(note) {
+    return Boolean(note && note.deletedAt);
   }
 
   /**
-   * Fusion append-only de deux listes de notes : union par `id`.
-   * Même id → conserve la version la plus riche (texte / auteur), `at` le plus ancien
-   * pour ne pas réécrire l’horodatage d’origine.
-   * Aucun plafond — historique permanent.
+   * Fusion multi-appareils par `id` :
+   * - tombstone (deletedAt) gagne toujours sur une copie vivante ;
+   * - sinon la version avec updatedAt / at la plus récente pour le texte ;
+   * - at + auteur d’origine conservés.
+   * Aucun plafond.
    */
   function mergeFollowUpNotesArrays(a, b) {
     const map = new Map();
+    const pickMerged = (prev, next) => {
+      if (!prev) return next;
+      if (!next) return prev;
+      const prevDel = isFollowUpNoteDeleted(prev);
+      const nextDel = isFollowUpNoteDeleted(next);
+      if (prevDel || nextDel) {
+        const tomb = nextDel && prevDel
+          ? String(prev.deletedAt) <= String(next.deletedAt)
+            ? prev
+            : next
+          : prevDel
+            ? prev
+            : next;
+        return {
+          id: prev.id || next.id,
+          at:
+            String(prev.at || '') && String(next.at || '')
+              ? String(prev.at) <= String(next.at)
+                ? prev.at
+                : next.at
+              : prev.at || next.at,
+          text: tomb.text || prev.text || next.text || '',
+          authorLabel: prev.authorLabel || next.authorLabel || '',
+          authorUserId: prev.authorUserId || next.authorUserId || '',
+          deletedAt: tomb.deletedAt,
+          deletedByUserId: tomb.deletedByUserId || '',
+          deletedByLabel: tomb.deletedByLabel || '',
+          ...(prev.updatedAt || next.updatedAt
+            ? {
+                updatedAt:
+                  String(prev.updatedAt || '') >= String(next.updatedAt || '')
+                    ? prev.updatedAt || next.updatedAt
+                    : next.updatedAt || prev.updatedAt,
+                updatedByUserId:
+                  String(prev.updatedAt || '') >= String(next.updatedAt || '')
+                    ? prev.updatedByUserId || next.updatedByUserId || ''
+                    : next.updatedByUserId || prev.updatedByUserId || '',
+                updatedByLabel:
+                  String(prev.updatedAt || '') >= String(next.updatedAt || '')
+                    ? prev.updatedByLabel || next.updatedByLabel || ''
+                    : next.updatedByLabel || prev.updatedByLabel || '',
+              }
+            : {}),
+        };
+      }
+      const prevTouch = String(prev.updatedAt || prev.at || '');
+      const nextTouch = String(next.updatedAt || next.at || '');
+      const newer = nextTouch >= prevTouch ? next : prev;
+      const older = newer === next ? prev : next;
+      const out = {
+        id: prev.id || next.id,
+        at:
+          String(prev.at || '') && String(next.at || '')
+            ? String(prev.at) <= String(next.at)
+              ? prev.at
+              : next.at
+            : prev.at || next.at,
+        text: newer.text || older.text || '',
+        authorLabel: older.authorLabel || newer.authorLabel || '',
+        authorUserId: older.authorUserId || newer.authorUserId || '',
+      };
+      if (newer.updatedAt || older.updatedAt) {
+        const uNewer =
+          String(newer.updatedAt || '') >= String(older.updatedAt || '') ? newer : older;
+        out.updatedAt = uNewer.updatedAt;
+        out.updatedByUserId = uNewer.updatedByUserId || '';
+        out.updatedByLabel = uNewer.updatedByLabel || '';
+      }
+      return out;
+    };
+
     const ingest = (list) => {
       (Array.isArray(list) ? list : []).forEach((raw) => {
         const note = normalizeFollowUpNote(raw);
         if (!note) return;
-        const prev = map.get(note.id);
-        if (!prev) {
-          map.set(note.id, note);
-          return;
-        }
-        const atA = String(prev.at || '');
-        const atB = String(note.at || '');
-        const earlierAt = !atA ? note.at : !atB ? prev.at : atA <= atB ? prev.at : note.at;
-        map.set(note.id, {
-          id: note.id,
-          at: earlierAt,
-          text: (note.text && note.text.length >= prev.text.length ? note.text : prev.text) || prev.text,
-          authorLabel: prev.authorLabel || note.authorLabel || '',
-          authorUserId: prev.authorUserId || note.authorUserId || '',
-        });
+        map.set(note.id, pickMerged(map.get(note.id), note));
       });
     };
     ingest(a);
@@ -1155,25 +1234,25 @@
       const notes = Array.isArray(row)
         ? mergeFollowUpNotesArrays(row, [])
         : mergeFollowUpNotesArrays(row?.notes, []);
-      if (!notes.length) {
-        out[playerId] = { notes: [] };
-        return;
-      }
       out[playerId] = { notes };
     });
     return out;
   }
 
-  function getPlayerFollowUpNotes(state, playerId) {
+  /** Notes visibles UI (hors tombstones). */
+  function getPlayerFollowUpNotes(state, playerId, options = {}) {
     if (!playerId) return [];
     const row = state?.playerFollowUpNotes?.[playerId];
     if (!row) return [];
-    return mergeFollowUpNotesArrays(row.notes, []);
+    const all = mergeFollowUpNotesArrays(row.notes, []);
+    if (options.includeDeleted) return all;
+    return all.filter((n) => !isFollowUpNoteDeleted(n));
   }
 
   /**
    * Copie non destructive des notes legacy (fiches) vers le ledger permanent.
    * Ne supprime jamais playerFollowUps[*].notes.
+   * Un tombstone ledger gagne toujours sur une copie legacy vivante (même id).
    */
   function migrateFollowUpNotesFromCases(state) {
     if (!state || typeof state !== 'object') return state;
@@ -1203,7 +1282,7 @@
       authorLabel: entry.authorLabel,
       authorUserId: entry.authorUserId,
     });
-    if (!note) return null;
+    if (!note || isFollowUpNoteDeleted(note)) return null;
     const prev = state.playerFollowUpNotes[playerId]?.notes || [];
     state.playerFollowUpNotes[playerId] = {
       notes: mergeFollowUpNotesArrays(prev, [note]),
@@ -1212,8 +1291,87 @@
   }
 
   /**
+   * R5 : tous les commentaires.
+   * R4 : uniquement si ce R4 est « Qui suit » (assigneePlayerId) sur la fiche du joueur.
+   */
+  function canMutatePlayerFollowUpNotes(state, playerId, viewer = {}) {
+    if (!playerId) return false;
+    if (viewer.isR5) return true;
+    if (!viewer.isR4OrR5 && !viewer.viewerPlayerId) return false;
+    const follow = state?.playerFollowUps?.[playerId];
+    const assignee = follow?.assigneePlayerId ? String(follow.assigneePlayerId) : '';
+    const me = viewer.viewerPlayerId ? String(viewer.viewerPlayerId) : '';
+    return Boolean(me && assignee && me === assignee);
+  }
+
+  function updatePlayerFollowUpNote(state, playerId, noteId, { text, actor } = {}) {
+    if (!state || !playerId || !noteId) return null;
+    const clean = String(text || '').trim();
+    if (!clean) return null;
+    const all = getPlayerFollowUpNotes(state, playerId, { includeDeleted: true });
+    const current = all.find((n) => n.id === noteId);
+    if (!current || isFollowUpNoteDeleted(current)) return null;
+    const updated = normalizeFollowUpNote({
+      ...current,
+      text: clean,
+      updatedAt: new Date().toISOString(),
+      updatedByUserId: actor?.actorUserId || '',
+      updatedByLabel: actor?.actorLabel || '',
+    });
+    if (!updated) return null;
+    state.playerFollowUpNotes = state.playerFollowUpNotes || {};
+    state.playerFollowUpNotes[playerId] = {
+      notes: mergeFollowUpNotesArrays(
+        all.filter((n) => n.id !== noteId),
+        [updated]
+      ),
+    };
+    // Miroir compat fiche
+    const row = state.playerFollowUps?.[playerId];
+    if (row && Array.isArray(row.notes)) {
+      row.notes = mergeFollowUpNotesArrays(row.notes, [updated]);
+    }
+    return updated;
+  }
+
+  function softDeletePlayerFollowUpNote(state, playerId, noteId, { actor } = {}) {
+    if (!state || !playerId || !noteId) return null;
+    const all = getPlayerFollowUpNotes(state, playerId, { includeDeleted: true });
+    const current = all.find((n) => n.id === noteId);
+    if (!current) return null;
+    if (isFollowUpNoteDeleted(current)) return current;
+    const tomb = {
+      id: current.id,
+      at: current.at,
+      text: current.text || '(supprimé)',
+      authorLabel: current.authorLabel || '',
+      authorUserId: current.authorUserId || '',
+      deletedAt: new Date().toISOString(),
+      deletedByUserId: actor?.actorUserId || '',
+      deletedByLabel: actor?.actorLabel || '',
+    };
+    if (current.updatedAt) {
+      tomb.updatedAt = current.updatedAt;
+      tomb.updatedByUserId = current.updatedByUserId || '';
+      tomb.updatedByLabel = current.updatedByLabel || '';
+    }
+    state.playerFollowUpNotes = state.playerFollowUpNotes || {};
+    state.playerFollowUpNotes[playerId] = {
+      notes: mergeFollowUpNotesArrays(
+        all.filter((n) => n.id !== noteId),
+        [tomb]
+      ),
+    };
+    const row = state.playerFollowUps?.[playerId];
+    if (row && Array.isArray(row.notes)) {
+      row.notes = mergeFollowUpNotesArrays(row.notes, [tomb]);
+    }
+    return tomb;
+  }
+
+  /**
    * Fusion sync du ledger permanent : union des joueurs, union des notes par id.
-   * Aucune note présente d’un seul côté n’est perdue.
+   * Tombstone gagne toujours — un cache ancien ne restaure pas une note supprimée.
    */
   function mergePlayerFollowUpNotesLedgers(remoteLedger, localLedger) {
     const remote = normalizePlayerFollowUpNotesLedger(remoteLedger);
@@ -1868,10 +2026,14 @@
     normalizePlayerFollowUps,
     normalizePlayerFollowUpNotesLedger,
     getPlayerFollowUpNotes,
+    isFollowUpNoteDeleted,
     mergeFollowUpNotesArrays,
     mergePlayerFollowUpNotesLedgers,
     migrateFollowUpNotesFromCases,
     appendPlayerFollowUpNote,
+    canMutatePlayerFollowUpNotes,
+    updatePlayerFollowUpNote,
+    softDeletePlayerFollowUpNote,
     getFollowUpReferenceWeek,
     countPlayerVsUnderDays,
     detectFollowUpReasons,
