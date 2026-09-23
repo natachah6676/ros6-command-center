@@ -634,6 +634,7 @@
     week.closedByUserId = actor.actorUserId || '';
     week.closedByPlayerId = actor.actorPlayerId || null;
     week.closedBy = actor.actorLabel || '';
+    return actor;
   }
 
   /**
@@ -674,9 +675,13 @@
     ROSStorage.update((s) => {
       const week = s.weeks.find((w) => w.id === s.currentWeekId);
       if (!week || week.id !== closedId) return s;
-      stampClosedWeek(week);
+      const closer = stampClosedWeek(week);
       ROSModels.recordVsUnderSnapshotsForWeek(s, week);
       ROSModels.pushVsUnderWeekArchive(s, week);
+      ROSModels.pushVsWeekAudit(
+        s,
+        ROSModels.buildVsWeekAuditEntry('close', week, closer, week.closedAt)
+      );
       s.vsWeekLifecycle = {
         closeIntent: {
           weekId: closedId,
@@ -726,9 +731,11 @@
         mode: 'afond',
       });
 
+      const creator = stampActor();
       const week = ROSModels.createWeek(startDateObj, {
         number: ROSModels.getNextWeekNumber(s.weeks),
         archived: false,
+        actor: creator,
       });
 
       s.players
@@ -739,6 +746,10 @@
 
       s.weeks.unshift(week);
       s.currentWeekId = week.id;
+      ROSModels.pushVsWeekAudit(
+        s,
+        ROSModels.buildVsWeekAuditEntry('create', week, creator, week.createdAt)
+      );
       // Nouvelle semaine : réactive la détection VS / félicitations après un reset.
       const prevFollow = ROSModels.getFollowUpSettings(s);
       if (prevFollow.vsFollowUpMutedWeekId) {

@@ -289,6 +289,9 @@
   }
 
   const VS_UNDER_WEEK_HISTORY_LIMIT = 12;
+  /** Journal create/close VS — ~1 an d’activité hebdo, payload négligeable. */
+  const VS_WEEK_AUDIT_LIMIT = 100;
+  const VS_WEEK_AUDIT_ACTIONS = ['create', 'close'];
 
   function normalizeVsUnderWeekHistoryEntry(raw) {
     if (!raw || typeof raw !== 'object') return null;
@@ -312,6 +315,13 @@
       startDate: raw.startDate || '',
       endDate: raw.endDate || '',
       closedAt: raw.closedAt || null,
+      createdAt: raw.createdAt || null,
+      createdBy: raw.createdBy != null ? String(raw.createdBy) : '',
+      createdByUserId: raw.createdByUserId != null ? String(raw.createdByUserId) : '',
+      createdByPlayerId: raw.createdByPlayerId || null,
+      closedBy: raw.closedBy != null ? String(raw.closedBy) : '',
+      closedByUserId: raw.closedByUserId != null ? String(raw.closedByUserId) : '',
+      closedByPlayerId: raw.closedByPlayerId || null,
       underMinDays: Math.max(1, Number(raw.underMinDays) || 2),
       players,
     };
@@ -325,8 +335,107 @@
       .slice(0, VS_UNDER_WEEK_HISTORY_LIMIT);
   }
 
+  function normalizeVsWeekAuditEntry(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const action = String(raw.action || '').trim();
+    if (!VS_WEEK_AUDIT_ACTIONS.includes(action)) return null;
+    const weekId = raw.weekId != null ? String(raw.weekId).trim() : '';
+    if (!weekId) return null;
+    const id = raw.id != null ? String(raw.id).trim() : '';
+    if (!id) return null;
+    return {
+      id,
+      action,
+      weekId,
+      startDate: raw.startDate != null ? String(raw.startDate) : '',
+      label: raw.label != null ? String(raw.label) : '',
+      at: raw.at || null,
+      actorUserId: raw.actorUserId != null ? String(raw.actorUserId) : '',
+      actorPlayerId: raw.actorPlayerId || null,
+      actorLabel: raw.actorLabel != null ? String(raw.actorLabel) : '',
+    };
+  }
+
+  function normalizeVsWeekAudit(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map(normalizeVsWeekAuditEntry)
+      .filter(Boolean)
+      .sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))
+      .slice(0, VS_WEEK_AUDIT_LIMIT);
+  }
+
+  function preferNonEmptyAuditField(preferred, fallback) {
+    if (preferred != null && String(preferred).trim() !== '') return preferred;
+    if (fallback != null && String(fallback).trim() !== '') return fallback;
+    return preferred != null ? preferred : fallback;
+  }
+
+  function mergeVsWeekAuditEntries(remoteEntry, localEntry) {
+    if (!remoteEntry) return localEntry ? { ...localEntry } : null;
+    if (!localEntry) return { ...remoteEntry };
+    return {
+      id: remoteEntry.id || localEntry.id,
+      action: remoteEntry.action || localEntry.action,
+      weekId: remoteEntry.weekId || localEntry.weekId,
+      startDate: preferNonEmptyAuditField(localEntry.startDate, remoteEntry.startDate) || '',
+      label: preferNonEmptyAuditField(localEntry.label, remoteEntry.label) || '',
+      at: preferNonEmptyAuditField(remoteEntry.at, localEntry.at) || null,
+      actorUserId: preferNonEmptyAuditField(remoteEntry.actorUserId, localEntry.actorUserId) || '',
+      actorPlayerId: preferNonEmptyAuditField(remoteEntry.actorPlayerId, localEntry.actorPlayerId),
+      actorLabel: preferNonEmptyAuditField(remoteEntry.actorLabel, localEntry.actorLabel) || '',
+    };
+  }
+
+  /**
+   * Fusion sync du journal VS : union par id, puis plafond chronologique.
+   * N’invente jamais d’acteur manquant.
+   */
+  function mergeVsWeekAudits(remoteAudit, localAudit) {
+    const remote = normalizeVsWeekAudit(remoteAudit);
+    const local = normalizeVsWeekAudit(localAudit);
+    const byId = new Map();
+    remote.forEach((entry) => {
+      byId.set(entry.id, entry);
+    });
+    local.forEach((entry) => {
+      byId.set(entry.id, mergeVsWeekAuditEntries(byId.get(entry.id), entry));
+    });
+    return [...byId.values()]
+      .sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))
+      .slice(0, VS_WEEK_AUDIT_LIMIT);
+  }
+
+  function buildVsWeekAuditEntry(action, week, actor, atOverride) {
+    if (!week?.id || !VS_WEEK_AUDIT_ACTIONS.includes(action)) return null;
+    const actorSafe = actor && typeof actor === 'object' ? actor : {};
+    return {
+      id: uid('vsaudit'),
+      action,
+      weekId: String(week.id),
+      startDate: week.startDate || '',
+      label: week.label || `Semaine ${week.number || ''}`.trim(),
+      at: atOverride || week.createdAt || week.closedAt || new Date().toISOString(),
+      actorUserId: actorSafe.actorUserId != null ? String(actorSafe.actorUserId) : '',
+      actorPlayerId: actorSafe.actorPlayerId || null,
+      actorLabel: actorSafe.actorLabel != null ? String(actorSafe.actorLabel) : '',
+    };
+  }
+
+  function pushVsWeekAudit(state, entry) {
+    if (!state || !entry) return state;
+    const normalized = normalizeVsWeekAuditEntry(entry);
+    if (!normalized) return state;
+    const prev = normalizeVsWeekAudit(state.vsWeekAudit).filter((e) => e.id !== normalized.id);
+    state.vsWeekAudit = [normalized, ...prev]
+      .sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))
+      .slice(0, VS_WEEK_AUDIT_LIMIT);
+    return state;
+  }
+
   /**
    * Archive légère à la clôture : uniquement les joueurs sous seuil (≥ vsMinUnderDays).
+   * Copie createdBy* / closedBy* depuis la semaine si présents — jamais inventés.
    */
   function pushVsUnderWeekArchive(state, week) {
     if (!state || !week) return state;
@@ -361,6 +470,13 @@
       startDate: week.startDate || '',
       endDate: week.endDate || '',
       closedAt: week.closedAt || new Date().toISOString(),
+      createdAt: week.createdAt || null,
+      createdBy: week.createdBy != null ? String(week.createdBy) : '',
+      createdByUserId: week.createdByUserId != null ? String(week.createdByUserId) : '',
+      createdByPlayerId: week.createdByPlayerId || null,
+      closedBy: week.closedBy != null ? String(week.closedBy) : '',
+      closedByUserId: week.closedByUserId != null ? String(week.closedByUserId) : '',
+      closedByPlayerId: week.closedByPlayerId || null,
       underMinDays: underMin,
       players,
     };
@@ -583,6 +699,7 @@
     const startDate = toISODate(monday);
     const endDate = toISODate(friday);
     const number = Number(options.number) > 0 ? Number(options.number) : 1;
+    const actor = options.actor && typeof options.actor === 'object' ? options.actor : null;
 
     return {
       id: uid('week'),
@@ -591,6 +708,9 @@
       startDate,
       endDate,
       createdAt: new Date().toISOString(),
+      createdBy: actor?.actorLabel != null ? String(actor.actorLabel) : '',
+      createdByUserId: actor?.actorUserId != null ? String(actor.actorUserId) : '',
+      createdByPlayerId: actor?.actorPlayerId || null,
       archived: Boolean(options.archived),
       donationsVerified: false,
       scores: {},
@@ -911,6 +1031,8 @@
       playerVsUnderStats: {},
       /** Résumés « sous seuil » des semaines clôturées (consultation Semaines passées). */
       vsUnderWeekHistory: [],
+      /** Journal permanent create/close des semaines VS (plafond VS_WEEK_AUDIT_LIMIT). */
+      vsWeekAudit: [],
       /**
        * Lifecycle sync VS : closeIntent distingue une clôture volontaire
        * d’un cache local vide (anti-écrasement / anti-résurrection).
@@ -1792,6 +1914,10 @@
             startDate: w.startDate || toISODate(startOfWeekMonday()),
             endDate: w.endDate || toISODate(addDays(startOfWeekMonday(), 4)),
             createdAt: w.createdAt || new Date().toISOString(),
+            // Pas d’invention d’auteur pour les semaines historiques.
+            createdBy: w.createdBy != null ? String(w.createdBy) : '',
+            createdByUserId: w.createdByUserId != null ? String(w.createdByUserId) : '',
+            createdByPlayerId: w.createdByPlayerId || null,
             archived: Boolean(w.archived),
             closedAt: w.closedAt || null,
             closedBy: w.closedBy || '',
@@ -1879,6 +2005,7 @@
     const playerFollowUpNotes = normalizePlayerFollowUpNotesLedger(raw.playerFollowUpNotes);
     const playerVsUnderStats = normalizePlayerVsUnderStats(raw.playerVsUnderStats);
     const vsUnderWeekHistory = normalizeVsUnderWeekHistory(raw.vsUnderWeekHistory);
+    const vsWeekAudit = normalizeVsWeekAudit(raw.vsWeekAudit);
     const vsWeekLifecycle = normalizeVsWeekLifecycle(raw.vsWeekLifecycle);
     const alliance = normalizeAllianceSettings(raw.alliance);
 
@@ -1903,6 +2030,7 @@
       playerFollowUpNotes,
       playerVsUnderStats,
       vsUnderWeekHistory,
+      vsWeekAudit,
       vsWeekLifecycle,
       alliance,
     };
@@ -2007,7 +2135,14 @@
     normalizeVsWeekContact,
     normalizeVsWeekContacts,
     VS_UNDER_WEEK_HISTORY_LIMIT,
+    VS_WEEK_AUDIT_LIMIT,
+    VS_WEEK_AUDIT_ACTIONS,
     normalizeVsUnderWeekHistory,
+    normalizeVsWeekAudit,
+    normalizeVsWeekAuditEntry,
+    mergeVsWeekAudits,
+    buildVsWeekAuditEntry,
+    pushVsWeekAudit,
     normalizeVsWeekLifecycle,
     createDefaultPowerTiers,
     normalizePowerTier,

@@ -377,11 +377,31 @@
     const localContacts =
       localWeek.vsContacts && typeof localWeek.vsContacts === 'object' ? localWeek.vsContacts : {};
 
+    const preferNonEmpty = (a, b) => {
+      if (a != null && String(a).trim() !== '') return a;
+      if (b != null && String(b).trim() !== '') return b;
+      return a != null ? a : b;
+    };
+
     return {
       ...cloneJson(remoteWeek),
       ...cloneJson(localWeek),
       id: remoteWeek.id,
       createdAt: remoteWeek.createdAt || localWeek.createdAt,
+      createdBy: preferNonEmpty(remoteWeek.createdBy, localWeek.createdBy) || '',
+      createdByUserId:
+        preferNonEmpty(remoteWeek.createdByUserId, localWeek.createdByUserId) || '',
+      createdByPlayerId: preferNonEmpty(
+        remoteWeek.createdByPlayerId,
+        localWeek.createdByPlayerId
+      ),
+      closedAt: preferNonEmpty(remoteWeek.closedAt, localWeek.closedAt) || null,
+      closedBy: preferNonEmpty(remoteWeek.closedBy, localWeek.closedBy) || '',
+      closedByUserId: preferNonEmpty(remoteWeek.closedByUserId, localWeek.closedByUserId) || '',
+      closedByPlayerId: preferNonEmpty(
+        remoteWeek.closedByPlayerId,
+        localWeek.closedByPlayerId
+      ),
       scores,
       vsContacts: { ...cloneJson(remoteContacts), ...cloneJson(localContacts) },
     };
@@ -507,9 +527,28 @@
       weeks: weekState.weeks,
       currentWeekId: weekState.currentWeekId,
       vsWeekLifecycle: weekState.vsWeekLifecycle,
+      vsWeekAudit: mergeVsWeekAuditField(remoteStore.vsWeekAudit, localStore.vsWeekAudit),
     };
     delete merged.globalPowerAudit;
     return merged;
+  }
+
+  function mergeVsWeekAuditField(remoteAudit, localAudit) {
+    if (global.ROSModels && typeof ROSModels.mergeVsWeekAudits === 'function') {
+      return ROSModels.mergeVsWeekAudits(remoteAudit, localAudit);
+    }
+    const byId = new Map();
+    const push = (list) => {
+      (Array.isArray(list) ? list : []).forEach((entry) => {
+        if (!entry || !entry.id) return;
+        if (!byId.has(entry.id)) byId.set(entry.id, entry);
+      });
+    };
+    push(remoteAudit);
+    push(localAudit);
+    return [...byId.values()]
+      .sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))
+      .slice(0, 100);
   }
 
   function mergePlayerFollowUpNotesField(remoteLedger, localLedger) {
@@ -1354,6 +1393,7 @@
       BACKUPS_KEY,
       LOCAL_QUOTA_USER_MESSAGE,
       mergePlayerFollowUpNotesField,
+      mergeVsWeekAuditField,
     },
   };
 })(window);
