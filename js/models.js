@@ -911,7 +911,26 @@
       playerVsUnderStats: {},
       /** Résumés « sous seuil » des semaines clôturées (consultation Semaines passées). */
       vsUnderWeekHistory: [],
+      /**
+       * Lifecycle sync VS : closeIntent distingue une clôture volontaire
+       * d’un cache local vide (anti-écrasement / anti-résurrection).
+       */
+      vsWeekLifecycle: {},
       alliance: createDefaultAllianceSettings(),
+    };
+  }
+
+  function normalizeVsWeekLifecycle(raw) {
+    if (!raw || typeof raw !== 'object') return {};
+    const intent = raw.closeIntent;
+    if (!intent || typeof intent !== 'object') return {};
+    const weekId = intent.weekId != null ? String(intent.weekId).trim() : '';
+    if (!weekId) return {};
+    return {
+      closeIntent: {
+        weekId,
+        closedAt: intent.closedAt || null,
+      },
     };
   }
 
@@ -1860,6 +1879,7 @@
     const playerFollowUpNotes = normalizePlayerFollowUpNotesLedger(raw.playerFollowUpNotes);
     const playerVsUnderStats = normalizePlayerVsUnderStats(raw.playerVsUnderStats);
     const vsUnderWeekHistory = normalizeVsUnderWeekHistory(raw.vsUnderWeekHistory);
+    const vsWeekLifecycle = normalizeVsWeekLifecycle(raw.vsWeekLifecycle);
     const alliance = normalizeAllianceSettings(raw.alliance);
 
     const normalized = {
@@ -1883,6 +1903,7 @@
       playerFollowUpNotes,
       playerVsUnderStats,
       vsUnderWeekHistory,
+      vsWeekLifecycle,
       alliance,
     };
 
@@ -1987,6 +2008,7 @@
     normalizeVsWeekContacts,
     VS_UNDER_WEEK_HISTORY_LIMIT,
     normalizeVsUnderWeekHistory,
+    normalizeVsWeekLifecycle,
     createDefaultPowerTiers,
     normalizePowerTier,
     normalizePowerTiers,

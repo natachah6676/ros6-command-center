@@ -6,7 +6,8 @@
  * - un push fusionne ces stores sur la base distante (les autres stores distants restent intacts) ;
  * - Gestion des membres (ros6_command_center_v1.players) est protégée contre l’écrasement
  *   accidentel de champs non vides par null/undefined venant d’un cache incomplet ;
- * - un ancien cache local ne peut pas écraser silencieusement une version distante plus récente ;
+ * - semaines VS (weeks / currentWeekId) : un cache local vide ou plus ancien ne peut pas
+ *   effacer ni ressusciter une semaine ; seule une clôture volontaire (closeIntent) le peut ;
  * - ros6_backups_v1 est local uniquement : jamais poussé / jamais réécrit depuis Supabase
  *   (une copie distante éventuelle est conservée telle quelle, ignorée par l’app).
  */
@@ -294,6 +295,178 @@
     return stripPlayerSyncMeta(merged);
   }
 
+  function getCloseIntent(store) {
+    const intent = store?.vsWeekLifecycle?.closeIntent;
+    if (!intent || typeof intent !== 'object') return null;
+    const weekId = intent.weekId != null ? String(intent.weekId) : '';
+    if (!weekId) return null;
+    return {
+      weekId,
+      closedAt: intent.closedAt || null,
+    };
+  }
+
+  function closedAtMs(intent) {
+    if (!intent?.closedAt) return 0;
+    const t = Date.parse(intent.closedAt);
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  function weekCreatedAtMs(week) {
+    if (!week?.createdAt) return 0;
+    const t = Date.parse(week.createdAt);
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  /**
+   * Semaine VS active d’un store CC.
+   * Préfère currentWeekId ; si une seule semaine est présente sans pointeur valide
+   * (cache legacy / payload partiel), elle est traitée comme active.
+   */
+  function getActiveVsWeek(store) {
+    if (!store) return null;
+    const weeks = Array.isArray(store.weeks) ? store.weeks.filter((w) => w && w.id) : [];
+    if (!weeks.length) return null;
+    if (store.currentWeekId) {
+      const found = weeks.find((w) => w.id === store.currentWeekId);
+      if (found) return found;
+    }
+    if (weeks.length === 1) return weeks[0];
+    return null;
+  }
+
+  function mergeCloseIntent(remoteIntent, localIntent) {
+    if (!remoteIntent) return localIntent ? { ...localIntent } : null;
+    if (!localIntent) return { ...remoteIntent };
+    return closedAtMs(localIntent) >= closedAtMs(remoteIntent)
+      ? { ...localIntent }
+      : { ...remoteIntent };
+  }
+
+  function mergeSameWeekContent(remoteWeek, localWeek) {
+    const remoteScores =
+      remoteWeek.scores && typeof remoteWeek.scores === 'object' ? remoteWeek.scores : {};
+    const localScores =
+      localWeek.scores && typeof localWeek.scores === 'object' ? localWeek.scores : {};
+    const scores = { ...cloneJson(remoteScores) };
+    Object.keys(localScores).forEach((playerId) => {
+      const remoteScore = remoteScores[playerId] || {};
+      const localScore = localScores[playerId] || {};
+      scores[playerId] = {
+        ...cloneJson(remoteScore),
+        ...cloneJson(localScore),
+        days: {
+          ...(remoteScore.days && typeof remoteScore.days === 'object' ? remoteScore.days : {}),
+          ...(localScore.days && typeof localScore.days === 'object' ? localScore.days : {}),
+        },
+        dayBrackets: {
+          ...(remoteScore.dayBrackets && typeof remoteScore.dayBrackets === 'object'
+            ? remoteScore.dayBrackets
+            : {}),
+          ...(localScore.dayBrackets && typeof localScore.dayBrackets === 'object'
+            ? localScore.dayBrackets
+            : {}),
+        },
+      };
+    });
+
+    const remoteContacts =
+      remoteWeek.vsContacts && typeof remoteWeek.vsContacts === 'object'
+        ? remoteWeek.vsContacts
+        : {};
+    const localContacts =
+      localWeek.vsContacts && typeof localWeek.vsContacts === 'object' ? localWeek.vsContacts : {};
+
+    return {
+      ...cloneJson(remoteWeek),
+      ...cloneJson(localWeek),
+      id: remoteWeek.id,
+      createdAt: remoteWeek.createdAt || localWeek.createdAt,
+      scores,
+      vsContacts: { ...cloneJson(remoteContacts), ...cloneJson(localContacts) },
+    };
+  }
+
+  function weekPayload(week) {
+    if (!week || !week.id) return { weeks: [], currentWeekId: null };
+    return { weeks: [cloneJson(week)], currentWeekId: week.id };
+  }
+
+  /**
+   * Fusion weeks / currentWeekId / vsWeekLifecycle.closeIntent.
+   * Protection anti-cache : un local vide n’efface pas une semaine distante ;
+   * un closeIntent explicite autorise la clôture ; une semaine déjà clôturée
+   * ne peut pas être ressuscitée par un vieux cache.
+   */
+  function mergeVsWeekState(remoteStore, localStore) {
+    const remoteWeek = getActiveVsWeek(remoteStore);
+    const localWeek = getActiveVsWeek(localStore);
+    const remoteIntent = getCloseIntent(remoteStore);
+    const localIntent = getCloseIntent(localStore);
+    let closeIntent = mergeCloseIntent(remoteIntent, localIntent);
+
+    const withLifecycle = (payload) => ({
+      weeks: payload.weeks,
+      currentWeekId: payload.currentWeekId,
+      vsWeekLifecycle: closeIntent ? { closeIntent: { ...closeIntent } } : {},
+    });
+
+    const isResurrecting = (week) =>
+      Boolean(week && closeIntent && week.id === closeIntent.weekId);
+
+    // Clôture volontaire : local vide + closeIntent ciblant la semaine distante active.
+    if (
+      !localWeek &&
+      remoteWeek &&
+      localIntent &&
+      localIntent.weekId === remoteWeek.id
+    ) {
+      closeIntent = mergeCloseIntent(remoteIntent, localIntent);
+      return withLifecycle({ weeks: [], currentWeekId: null });
+    }
+
+    // Local vide sans intention de clôturer la semaine remote → garder le remote.
+    if (!localWeek && remoteWeek) {
+      return withLifecycle(weekPayload(remoteWeek));
+    }
+
+    // Remote vide, local propose une semaine.
+    if (localWeek && !remoteWeek) {
+      if (isResurrecting(localWeek)) {
+        return withLifecycle({ weeks: [], currentWeekId: null });
+      }
+      // Nouvelle semaine après clôture : closeIntent d’une autre semaine reste (anti-résurrection).
+      return withLifecycle(weekPayload(localWeek));
+    }
+
+    // Les deux vides.
+    if (!localWeek && !remoteWeek) {
+      return withLifecycle({ weeks: [], currentWeekId: null });
+    }
+
+    // Même semaine : fusionner le contenu (scores / contacts).
+    if (localWeek.id === remoteWeek.id) {
+      return withLifecycle(weekPayload(mergeSameWeekContent(remoteWeek, localWeek)));
+    }
+
+    // Deux semaines différentes : createdAt le plus récent ; égalité → remote.
+    // Ne jamais accepter une résurrection de la semaine clôturée.
+    if (isResurrecting(localWeek)) {
+      return withLifecycle(weekPayload(remoteWeek));
+    }
+    if (isResurrecting(remoteWeek)) {
+      // Remote ne devrait pas avoir une semaine active = closeIntent.weekId ; filet.
+      return withLifecycle(weekPayload(localWeek));
+    }
+
+    const localMs = weekCreatedAtMs(localWeek);
+    const remoteMs = weekCreatedAtMs(remoteWeek);
+    if (localMs > remoteMs) {
+      return withLifecycle(weekPayload(localWeek));
+    }
+    return withLifecycle(weekPayload(remoteWeek));
+  }
+
   function mergeCommandCenterStore(remoteStore, localStore) {
     if (!localStore) return cloneJson(remoteStore);
     if (!remoteStore) return cloneJson(localStore);
@@ -321,6 +494,8 @@
       mergedPlayers.push(stripPlayerSyncMeta(cloneJson(remoteP)));
     });
 
+    const weekState = mergeVsWeekState(remoteStore, localStore);
+
     const merged = {
       ...cloneJson(remoteStore),
       ...cloneJson(localStore),
@@ -329,6 +504,9 @@
         remoteStore.playerFollowUpNotes,
         localStore.playerFollowUpNotes
       ),
+      weeks: weekState.weeks,
+      currentWeekId: weekState.currentWeekId,
+      vsWeekLifecycle: weekState.vsWeekLifecycle,
     };
     delete merged.globalPowerAudit;
     return merged;
@@ -1162,6 +1340,8 @@
     __test: {
       mergePlayerRecord,
       mergeCommandCenterStore,
+      mergeVsWeekState,
+      getActiveVsWeek,
       buildPushPayload,
       rebaseLocalAfterRemote,
       applyStoresToLocal,

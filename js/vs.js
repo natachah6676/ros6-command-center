@@ -677,6 +677,12 @@
       stampClosedWeek(week);
       ROSModels.recordVsUnderSnapshotsForWeek(s, week);
       ROSModels.pushVsUnderWeekArchive(s, week);
+      s.vsWeekLifecycle = {
+        closeIntent: {
+          weekId: closedId,
+          closedAt: week.closedAt || new Date().toISOString(),
+        },
+      };
       s.weeks = (s.weeks || []).filter((w) => w.id !== closedId);
       s.currentWeekId = null;
       if (s.playerWeekNotes && typeof s.playerWeekNotes === 'object') {
