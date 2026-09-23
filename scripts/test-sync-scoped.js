@@ -191,7 +191,8 @@ const afterVs = T.buildPushPayload(
         status: 'Actif',
         heroPowerTierId: null, // cache incomplet
       })),
-      weeks: [{ id: 'w1' }],
+      weeks: [{ id: 'w1', createdAt: '2026-09-21T10:00:00.000Z' }],
+      currentWeekId: 'w1',
     },
   }
 );
@@ -203,6 +204,8 @@ assert(
   'merge CC : null local ne détruit pas les 7 même si CC dirty'
 );
 assert(afterVs.stores.ros6_command_center_v1.weeks[0].id === 'w1', 'édition VS/weeks locale conservée');
+assert(syncCode.includes('mergeVsWeekState'), 'merge semaines VS dédié');
+assert(syncCode.includes('closeIntent'), 'closeIntent anti-écrasement');
 
 console.log('\n=== Rebase conflit ===');
 const rebased = T.rebaseLocalAfterRemote(remoteData, new Set(['ros6_ruche_v1']));
