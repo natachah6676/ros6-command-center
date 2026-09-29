@@ -1178,6 +1178,39 @@
     return FOLLOW_UP_HELP_TYPES.filter((t) => n[t.id]).map((t) => t.id);
   }
 
+  /** Libellé court pour affichage historique (VS / Troupes / Autre). */
+  function getFollowUpHelpTypeShortLabel(helpTypeId) {
+    if (helpTypeId === 'vs') return 'VS';
+    if (helpTypeId === 'troops') return 'Troupes';
+    if (helpTypeId === 'other') return 'Autre';
+    return '';
+  }
+
+  /**
+   * Types d’aide ayant eu au moins un help_opened dans le ledger (ouverts ou déjà résolus).
+   * Ne pas utiliser helpNeeds : celui-ci ne reflète que l’état actif actuel.
+   */
+  function getEverOpenedFollowUpHelpTypes(state, playerId) {
+    if (!playerId) return [];
+    const seen = Object.create(null);
+    getPlayerFollowUpNotes(state, playerId).forEach((n) => {
+      if (!n || isFollowUpNoteDeleted(n)) return;
+      if (normalizeFollowUpNoteEventType(n.eventType) !== 'help_opened') return;
+      const ht = normalizeFollowUpHelpType(n.helpType);
+      if (ht) seen[ht] = true;
+    });
+    return FOLLOW_UP_HELP_TYPES.filter((t) => seen[t.id]).map((t) => t.id);
+  }
+
+  function formatFollowUpHelpHistoryLabel(helpTypeIds) {
+    const shorts = (Array.isArray(helpTypeIds) ? helpTypeIds : [])
+      .map((id) => getFollowUpHelpTypeShortLabel(id))
+      .filter(Boolean);
+    if (!shorts.length) return '';
+    if (shorts.length === 1) return `Demande d’aide : ${shorts[0]}`;
+    return `Demandes d’aide : ${shorts.join(' · ')}`;
+  }
+
   /** Aligne le cache fiche helpNeeds sur le ledger (après sync / action). */
   function reconcileFollowUpHelpNeedsFromLedger(state, playerId) {
     if (!state || !playerId || !state.playerFollowUps?.[playerId]) return null;
@@ -2325,6 +2358,9 @@
     getPlayerFollowUpHelpNeeds,
     hasOpenFollowUpHelpNeeds,
     getOpenFollowUpHelpTypes,
+    getFollowUpHelpTypeShortLabel,
+    getEverOpenedFollowUpHelpTypes,
+    formatFollowUpHelpHistoryLabel,
     reconcileFollowUpHelpNeedsFromLedger,
     normalizeFollowUpHelpType,
     getFollowUpHelpTypeLabel,
