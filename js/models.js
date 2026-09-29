@@ -1100,9 +1100,66 @@
     { id: 'vs', label: 'VS sous seuil' },
     { id: 'praise', label: 'À féliciter' },
     { id: 'hero', label: 'Puissance héros' },
-    { id: 'discret', label: 'Discret' },
+    { id: 'discret', label: 'Joueur discret' },
     { id: 'manual', label: 'Aide / manuel' },
   ];
+
+  /** Demandes d’aide actives sur une fiche (états, pas un 3ᵉ historique). */
+  const FOLLOW_UP_HELP_TYPES = [
+    { id: 'vs', label: 'Demande d’aide VS' },
+    { id: 'troops', label: 'Demande d’aide Troupes' },
+    { id: 'other', label: 'Demande d’aide Autre' },
+  ];
+
+  const FOLLOW_UP_NOTE_EVENT_TYPES = ['comment', 'help_opened', 'help_resolved'];
+
+  function emptyFollowUpHelpNeeds(seed = {}) {
+    return {
+      vs: Boolean(seed.vs),
+      troops: Boolean(seed.troops),
+      other: Boolean(seed.other),
+    };
+  }
+
+  function normalizeFollowUpHelpNeeds(raw) {
+    if (!raw || typeof raw !== 'object') return emptyFollowUpHelpNeeds();
+    return emptyFollowUpHelpNeeds(raw);
+  }
+
+  function hasOpenFollowUpHelpNeeds(helpNeedsOrCase) {
+    const needs =
+      helpNeedsOrCase && typeof helpNeedsOrCase === 'object' && 'helpNeeds' in helpNeedsOrCase
+        ? helpNeedsOrCase.helpNeeds
+        : helpNeedsOrCase;
+    const n = normalizeFollowUpHelpNeeds(needs);
+    return Boolean(n.vs || n.troops || n.other);
+  }
+
+  function getOpenFollowUpHelpTypes(helpNeeds) {
+    const n = normalizeFollowUpHelpNeeds(helpNeeds);
+    return FOLLOW_UP_HELP_TYPES.filter((t) => n[t.id]).map((t) => t.id);
+  }
+
+  function normalizeFollowUpHelpType(value) {
+    const id = String(value || '').trim();
+    return FOLLOW_UP_HELP_TYPES.some((t) => t.id === id) ? id : null;
+  }
+
+  function getFollowUpHelpTypeLabel(helpTypeId) {
+    return FOLLOW_UP_HELP_TYPES.find((t) => t.id === helpTypeId)?.label || '';
+  }
+
+  function normalizeFollowUpNoteEventType(value) {
+    const id = String(value || '').trim();
+    return FOLLOW_UP_NOTE_EVENT_TYPES.includes(id) ? id : 'comment';
+  }
+
+  function formatFollowUpHelpEventText(eventType, helpTypeId) {
+    const label = getFollowUpHelpTypeLabel(helpTypeId) || 'Demande d’aide';
+    if (eventType === 'help_resolved') return `${label} — résolue`;
+    if (eventType === 'help_opened') return `${label} — ouverte`;
+    return label;
+  }
 
   function emptyFollowUpSpecialists(seed = {}) {
     return {
@@ -1228,6 +1285,7 @@
       assignedAt: options.assignedAt || null,
       assignedByLabel: options.assignedByLabel != null ? String(options.assignedByLabel) : '',
       notes: Array.isArray(options.notes) ? options.notes : [],
+      helpNeeds: normalizeFollowUpHelpNeeds(options.helpNeeds),
       createdAt: options.createdAt || now,
       updatedAt: options.updatedAt || now,
       closedAt: options.closedAt || null,
@@ -1238,7 +1296,12 @@
   function normalizeFollowUpNote(raw) {
     if (!raw || typeof raw !== 'object') return null;
     const deletedAt = raw.deletedAt ? String(raw.deletedAt) : '';
-    const text = String(raw.text || '').trim();
+    const eventType = normalizeFollowUpNoteEventType(raw.eventType);
+    const helpType = normalizeFollowUpHelpType(raw.helpType);
+    let text = String(raw.text || '').trim();
+    if (!text && (eventType === 'help_opened' || eventType === 'help_resolved') && helpType) {
+      text = formatFollowUpHelpEventText(eventType, helpType);
+    }
     // Tombstone : conservé même sans texte ; note vivante : texte obligatoire.
     if (!text && !deletedAt) return null;
     const note = {
@@ -1247,7 +1310,9 @@
       text: text || '',
       authorLabel: raw.authorLabel != null ? String(raw.authorLabel) : '',
       authorUserId: raw.authorUserId != null ? String(raw.authorUserId) : '',
+      eventType,
     };
+    if (helpType) note.helpType = helpType;
     if (raw.updatedAt) {
       note.updatedAt = String(raw.updatedAt);
       note.updatedByUserId =
@@ -1278,6 +1343,15 @@
    */
   function mergeFollowUpNotesArrays(a, b) {
     const map = new Map();
+    const withEventMeta = (out, source) => {
+      if (!source) return out;
+      out.eventType = normalizeFollowUpNoteEventType(source.eventType);
+      if (source.helpType) {
+        const ht = normalizeFollowUpHelpType(source.helpType);
+        if (ht) out.helpType = ht;
+      }
+      return out;
+    };
     const pickMerged = (prev, next) => {
       if (!prev) return next;
       if (!next) return prev;
@@ -1291,37 +1365,40 @@
           : prevDel
             ? prev
             : next;
-        return {
-          id: prev.id || next.id,
-          at:
-            String(prev.at || '') && String(next.at || '')
-              ? String(prev.at) <= String(next.at)
-                ? prev.at
-                : next.at
-              : prev.at || next.at,
-          text: tomb.text || prev.text || next.text || '',
-          authorLabel: prev.authorLabel || next.authorLabel || '',
-          authorUserId: prev.authorUserId || next.authorUserId || '',
-          deletedAt: tomb.deletedAt,
-          deletedByUserId: tomb.deletedByUserId || '',
-          deletedByLabel: tomb.deletedByLabel || '',
-          ...(prev.updatedAt || next.updatedAt
-            ? {
-                updatedAt:
-                  String(prev.updatedAt || '') >= String(next.updatedAt || '')
-                    ? prev.updatedAt || next.updatedAt
-                    : next.updatedAt || prev.updatedAt,
-                updatedByUserId:
-                  String(prev.updatedAt || '') >= String(next.updatedAt || '')
-                    ? prev.updatedByUserId || next.updatedByUserId || ''
-                    : next.updatedByUserId || prev.updatedByUserId || '',
-                updatedByLabel:
-                  String(prev.updatedAt || '') >= String(next.updatedAt || '')
-                    ? prev.updatedByLabel || next.updatedByLabel || ''
-                    : next.updatedByLabel || prev.updatedByLabel || '',
-              }
-            : {}),
-        };
+        return withEventMeta(
+          {
+            id: prev.id || next.id,
+            at:
+              String(prev.at || '') && String(next.at || '')
+                ? String(prev.at) <= String(next.at)
+                  ? prev.at
+                  : next.at
+                : prev.at || next.at,
+            text: tomb.text || prev.text || next.text || '',
+            authorLabel: prev.authorLabel || next.authorLabel || '',
+            authorUserId: prev.authorUserId || next.authorUserId || '',
+            deletedAt: tomb.deletedAt,
+            deletedByUserId: tomb.deletedByUserId || '',
+            deletedByLabel: tomb.deletedByLabel || '',
+            ...(prev.updatedAt || next.updatedAt
+              ? {
+                  updatedAt:
+                    String(prev.updatedAt || '') >= String(next.updatedAt || '')
+                      ? prev.updatedAt || next.updatedAt
+                      : next.updatedAt || prev.updatedAt,
+                  updatedByUserId:
+                    String(prev.updatedAt || '') >= String(next.updatedAt || '')
+                      ? prev.updatedByUserId || next.updatedByUserId || ''
+                      : next.updatedByUserId || prev.updatedByUserId || '',
+                  updatedByLabel:
+                    String(prev.updatedAt || '') >= String(next.updatedAt || '')
+                      ? prev.updatedByLabel || next.updatedByLabel || ''
+                      : next.updatedByLabel || prev.updatedByLabel || '',
+                }
+              : {}),
+          },
+          tomb.eventType ? tomb : next.eventType ? next : prev
+        );
       }
       const prevTouch = String(prev.updatedAt || prev.at || '');
       const nextTouch = String(next.updatedAt || next.at || '');
@@ -1346,7 +1423,7 @@
         out.updatedByUserId = uNewer.updatedByUserId || '';
         out.updatedByLabel = uNewer.updatedByLabel || '';
       }
-      return out;
+      return withEventMeta(out, newer.eventType ? newer : older);
     };
 
     const ingest = (list) => {
@@ -1422,6 +1499,8 @@
       text: entry.text,
       authorLabel: entry.authorLabel,
       authorUserId: entry.authorUserId,
+      eventType: entry.eventType,
+      helpType: entry.helpType,
     });
     if (!note || isFollowUpNoteDeleted(note)) return null;
     const prev = state.playerFollowUpNotes[playerId]?.notes || [];
@@ -1550,6 +1629,7 @@
       assignedAt: raw.assignedAt || null,
       assignedByLabel: raw.assignedByLabel != null ? String(raw.assignedByLabel) : '',
       notes,
+      helpNeeds: normalizeFollowUpHelpNeeds(raw.helpNeeds),
       createdAt: raw.createdAt || new Date().toISOString(),
       updatedAt: raw.updatedAt || raw.createdAt || new Date().toISOString(),
       closedAt: raw.closedAt || null,
@@ -1596,9 +1676,9 @@
     const existing = state?.playerFollowUps?.[player.id];
     if (existing?.manual || existing?.reasons?.manual) reasons.manual = true;
     // VS / À féliciter : hors Gestion des membres pour l’instant (prévu onglet VS).
-    // Discret : Liste des membres uniquement.
+    if (player.discret) reasons.discret = true;
 
-    // Absent = hors détection héros auto.
+    // Absent = hors détection héros auto (Discret reste si flag joueur).
     if (player.absent) return reasons;
 
     const heroSort = getPlayerPowerSortValue(player, state);
@@ -1629,7 +1709,7 @@
     if (reasons?.vs) parts.push('VS sous seuil');
     if (reasons?.praise) parts.push('À féliciter');
     if (reasons?.hero) parts.push('Puissance héros');
-    if (reasons?.discret) parts.push('Discret');
+    if (reasons?.discret) parts.push('Joueur discret');
     if (reasons?.manual) parts.push('Aide / manuel');
     return parts.length ? parts.join(' · ') : '—';
   }
@@ -2191,6 +2271,15 @@
     canMutatePlayerFollowUpNotes,
     updatePlayerFollowUpNote,
     softDeletePlayerFollowUpNote,
+    FOLLOW_UP_HELP_TYPES,
+    FOLLOW_UP_NOTE_EVENT_TYPES,
+    emptyFollowUpHelpNeeds,
+    normalizeFollowUpHelpNeeds,
+    hasOpenFollowUpHelpNeeds,
+    getOpenFollowUpHelpTypes,
+    normalizeFollowUpHelpType,
+    getFollowUpHelpTypeLabel,
+    formatFollowUpHelpEventText,
     getFollowUpReferenceWeek,
     countPlayerVsUnderDays,
     detectFollowUpReasons,

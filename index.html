@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20260916-vs-signals1" />
+  <link rel="stylesheet" href="css/styles.css?v=20260929-discret-aide1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -152,8 +152,7 @@
           </select>
           <select id="filterDiscretAdmin" class="input" aria-label="Filtrer Discret">
             <option value="">Tous (Discret inclus)</option>
-            <option value="discret">Discrets uniquement</option>
-            <option value="discret_due">Pas contacté depuis 30 jours</option>
+            <option value="discret">Joueurs discrets</option>
           </select>
         </div>
 
@@ -624,7 +623,7 @@
           <div>
             <h2>Gestion des membres</h2>
             <p class="panel-subtitle">
-              Suivi puissance héros et aide manuelle — VS / À féliciter prévus dans l’onglet VS · Discret dans Liste des membres
+              Suivi puissance héros, joueurs discrets et aide manuelle — VS / À féliciter prévus dans l’onglet VS
             </p>
             <p id="suiviScopeHint" class="panel-subtitle hidden"></p>
           </div>
@@ -649,7 +648,11 @@
           <select id="suiviFilterReason" class="input" aria-label="Filtrer par motif">
             <option value="">Tous les motifs</option>
             <option value="hero">Puissance héros</option>
+            <option value="discret">Joueur discret</option>
             <option value="manual">Aide / manuel</option>
+            <option value="help_vs">Demande d’aide VS</option>
+            <option value="help_troops">Demande d’aide Troupes</option>
+            <option value="help_other">Demande d’aide Autre</option>
           </select>
           <label class="checkbox-field suivi-show-done">
             <span class="checkbox-line">
@@ -969,7 +972,7 @@
                 <select id="followUpSpecialistHero" class="input"></select>
               </label>
               <label class="field">
-                <span>Discret</span>
+                <span>Joueur discret</span>
                 <select id="followUpSpecialistDiscret" class="input"></select>
               </label>
               <label class="field">
@@ -1083,10 +1086,10 @@
         <label class="field checkbox-field" id="playerDiscretField">
           <span class="checkbox-line">
             <input type="checkbox" id="playerDiscret" />
-            <span>Discret</span>
+            <span>Joueur discret</span>
           </span>
           <small class="field-hint"
-            >Discret mais fort — prise de nouvelles dans Liste des membres (bouton Contact pris)</small
+            >Crée un suivi dans Gestion des membres (référent Discret si configuré)</small
           >
         </label>
       </div>
@@ -1421,15 +1424,15 @@
   <script src="js/supabase-client.js?v=20260804-4"></script>
   <script src="js/profiles.js?v=20260911-refaccess1"></script>
   <script src="js/supabase-sync.js?v=20260912-backups-local1"></script>
-  <script src="js/models.js?v=20260916-vs-signals1"></script>
+  <script src="js/models.js?v=20260929-discret-aide1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
   <script src="js/player-identity.js?v=20260911-vscounter1"></script>
   <script src="js/storage.js?v=20260910-vsclose1"></script>
   <script src="js/ui-helpers.js?v=20260802-4"></script>
   <script src="js/insights.js?v=20260910-vsclose1"></script>
   <script src="js/player-stats.js?v=20260802-4"></script>
-  <script src="js/players.js?v=20260916-no-gp1"></script>
-  <script src="js/suivi.js?v=20260916-close-hero1"></script>
+  <script src="js/players.js?v=20260929-discret-aide1"></script>
+  <script src="js/suivi.js?v=20260929-discret-aide1"></script>
   <script src="js/command.js?v=20260806-cmd1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260916-vs-signals1"></script>
