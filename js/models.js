@@ -1126,18 +1126,64 @@
     return emptyFollowUpHelpNeeds(raw);
   }
 
-  function hasOpenFollowUpHelpNeeds(helpNeedsOrCase) {
-    const needs =
-      helpNeedsOrCase && typeof helpNeedsOrCase === 'object' && 'helpNeeds' in helpNeedsOrCase
-        ? helpNeedsOrCase.helpNeeds
-        : helpNeedsOrCase;
-    const n = normalizeFollowUpHelpNeeds(needs);
+  /**
+   * Source de vérité des aides actives : ledger permanent (events help_opened / help_resolved).
+   * Machine d’état chronologique par helpType :
+   * - help_opened → actif ;
+   * - help_resolved → inactif ;
+   * open → resolved → open : la dernière transition gagne (pas de helpRequestId requis).
+   * Un vieux helpNeeds:false / champ absent sur la fiche ne ferme jamais une aide.
+   */
+  function deriveFollowUpHelpNeedsFromNotes(notes) {
+    const active = emptyFollowUpHelpNeeds();
+    const list = (Array.isArray(notes) ? notes : [])
+      .filter((n) => n && !isFollowUpNoteDeleted(n))
+      .filter((n) => {
+        const ev = normalizeFollowUpNoteEventType(n.eventType);
+        return ev === 'help_opened' || ev === 'help_resolved';
+      })
+      .filter((n) => Boolean(normalizeFollowUpHelpType(n.helpType)))
+      .slice()
+      .sort((a, b) => {
+        const cmp = String(a.at || '').localeCompare(String(b.at || ''));
+        if (cmp !== 0) return cmp;
+        return String(a.id || '').localeCompare(String(b.id || ''));
+      });
+    list.forEach((n) => {
+      const ht = normalizeFollowUpHelpType(n.helpType);
+      if (!ht) return;
+      const ev = normalizeFollowUpNoteEventType(n.eventType);
+      if (ev === 'help_opened') active[ht] = true;
+      else if (ev === 'help_resolved') active[ht] = false;
+    });
+    return active;
+  }
+
+  function getPlayerFollowUpHelpNeeds(state, playerId) {
+    if (!playerId) return emptyFollowUpHelpNeeds();
+    const notes = getPlayerFollowUpNotes(state, playerId);
+    return deriveFollowUpHelpNeedsFromNotes(notes);
+  }
+
+  function hasOpenFollowUpHelpNeeds(state, playerId) {
+    const n = getPlayerFollowUpHelpNeeds(state, playerId);
     return Boolean(n.vs || n.troops || n.other);
   }
 
-  function getOpenFollowUpHelpTypes(helpNeeds) {
-    const n = normalizeFollowUpHelpNeeds(helpNeeds);
+  function getOpenFollowUpHelpTypes(helpNeedsOrState, playerId) {
+    const n =
+      playerId != null
+        ? getPlayerFollowUpHelpNeeds(helpNeedsOrState, playerId)
+        : normalizeFollowUpHelpNeeds(helpNeedsOrState);
     return FOLLOW_UP_HELP_TYPES.filter((t) => n[t.id]).map((t) => t.id);
+  }
+
+  /** Aligne le cache fiche helpNeeds sur le ledger (après sync / action). */
+  function reconcileFollowUpHelpNeedsFromLedger(state, playerId) {
+    if (!state || !playerId || !state.playerFollowUps?.[playerId]) return null;
+    const derived = getPlayerFollowUpHelpNeeds(state, playerId);
+    state.playerFollowUps[playerId].helpNeeds = derived;
+    return derived;
   }
 
   function normalizeFollowUpHelpType(value) {
@@ -2275,8 +2321,11 @@
     FOLLOW_UP_NOTE_EVENT_TYPES,
     emptyFollowUpHelpNeeds,
     normalizeFollowUpHelpNeeds,
+    deriveFollowUpHelpNeedsFromNotes,
+    getPlayerFollowUpHelpNeeds,
     hasOpenFollowUpHelpNeeds,
     getOpenFollowUpHelpTypes,
+    reconcileFollowUpHelpNeedsFromLedger,
     normalizeFollowUpHelpType,
     getFollowUpHelpTypeLabel,
     formatFollowUpHelpEventText,

@@ -88,14 +88,12 @@
     return follow.assigneeLabel || 'R4';
   }
 
-  /** Dossier à clôturer : héros / manuel / Discret / demande d’aide ouverte. */
-  function hasDossierReasons(reasons, follow) {
-    return Boolean(
-      reasons?.hero ||
-        reasons?.manual ||
-        reasons?.discret ||
-        (follow && ROSModels.hasOpenFollowUpHelpNeeds(follow))
-    );
+  /** Dossier à clôturer : héros / manuel / Discret / demande d’aide ouverte (ledger). */
+  function hasDossierReasons(reasons, follow, state, playerId) {
+    const id = playerId || follow?.playerId;
+    const openHelp =
+      state && id ? ROSModels.hasOpenFollowUpHelpNeeds(state, id) : false;
+    return Boolean(reasons?.hero || reasons?.manual || reasons?.discret || openHelp);
   }
 
   /** @deprecated conservé pour tests — plus de motif « léger » dans Gestion des membres. */
@@ -193,7 +191,7 @@
     };
   }
 
-  function dossierStillRelevant(row, detected) {
+  function dossierStillRelevant(row, detected, state, playerId) {
     return Boolean(
       detected?.hero ||
         row?.reasons?.hero ||
@@ -201,7 +199,7 @@
         row?.reasons?.discret ||
         row?.manual ||
         row?.reasons?.manual ||
-        ROSModels.hasOpenFollowUpHelpNeeds(row)
+        (state && playerId && ROSModels.hasOpenFollowUpHelpNeeds(state, playerId))
     );
   }
 
@@ -214,7 +212,12 @@
       const existing = state.playerFollowUps?.[player.id];
       const hasOpen = existing && existing.status !== 'done';
       const autoHit = Boolean(detected.hero || detected.discret);
-      const openHelp = existing && ROSModels.hasOpenFollowUpHelpNeeds(existing);
+      const openHelp = ROSModels.hasOpenFollowUpHelpNeeds(state, player.id);
+      if (existing && existing.status !== 'done') {
+        const before = JSON.stringify(existing.helpNeeds || {});
+        ROSModels.reconcileFollowUpHelpNeedsFromLedger(state, player.id);
+        if (JSON.stringify(existing.helpNeeds || {}) !== before) changed = true;
+      }
 
       if (player.absent) {
         if (
@@ -320,7 +323,7 @@
         row.reasons.manual = true;
         rowChanged = true;
       }
-      const stillRelevant = dossierStillRelevant(row, detected);
+      const stillRelevant = dossierStillRelevant(row, detected, state, player.id);
       if (!stillRelevant && row.status !== 'done') {
         row.status = 'done';
         row.closedAt = new Date().toISOString();
@@ -351,7 +354,8 @@
         if (!follow) return null;
         const displayReasons = buildDisplayReasons(player, follow, state);
         const isDone = follow.status === 'done';
-        const openHelp = ROSModels.hasOpenFollowUpHelpNeeds(follow);
+        const helpNeeds = ROSModels.getPlayerFollowUpHelpNeeds(state, player.id);
+        const openHelp = Boolean(helpNeeds.vs || helpNeeds.troops || helpNeeds.other);
         if (isDone && !showDone && statusFilter !== 'done') return null;
         if (
           !isDone &&
@@ -366,9 +370,9 @@
         if (reasonFilter === 'hero' && !displayReasons.hero) return null;
         if (reasonFilter === 'manual' && !displayReasons.manual) return null;
         if (reasonFilter === 'discret' && !displayReasons.discret) return null;
-        if (reasonFilter === 'help_vs' && !follow.helpNeeds?.vs) return null;
-        if (reasonFilter === 'help_troops' && !follow.helpNeeds?.troops) return null;
-        if (reasonFilter === 'help_other' && !follow.helpNeeds?.other) return null;
+        if (reasonFilter === 'help_vs' && !helpNeeds.vs) return null;
+        if (reasonFilter === 'help_troops' && !helpNeeds.troops) return null;
+        if (reasonFilter === 'help_other' && !helpNeeds.other) return null;
         if (assigneeFilter === 'unassigned' && follow.assigneePlayerId) return null;
         if (
           assigneeFilter &&
@@ -478,7 +482,7 @@
         .map(({ player, follow, reasons }) => {
           const selected = player.id === selectedPlayerId ? ' is-selected' : '';
           const assignee = assigneeLabelFor(follow);
-          const helpBits = ROSModels.getOpenFollowUpHelpTypes(follow.helpNeeds)
+          const helpBits = ROSModels.getOpenFollowUpHelpTypes(state, player.id)
             .map((id) => ROSModels.getFollowUpHelpTypeLabel(id))
             .filter(Boolean);
           const helpHtml = helpBits.length
@@ -553,8 +557,8 @@
 
     const statusBtn = (id) => (follow.status === id ? 'btn btn-primary' : 'btn btn-ghost');
     const showStatusButtons =
-      hasDossierReasons(displayReasons, follow) && follow.status !== 'done';
-    const helpNeeds = ROSModels.normalizeFollowUpHelpNeeds(follow.helpNeeds);
+      hasDossierReasons(displayReasons, follow, state, playerId) && follow.status !== 'done';
+    const helpNeeds = ROSModels.getPlayerFollowUpHelpNeeds(state, playerId);
 
     const canMutateNotes = ROSModels.canMutatePlayerFollowUpNotes(state, playerId, {
       isR5: viewerIsR5(),
@@ -645,18 +649,18 @@
           }).join('')}
         </div>
         ${
-          ROSModels.hasOpenFollowUpHelpNeeds(helpNeeds)
+          ROSModels.hasOpenFollowUpHelpNeeds(state, player.id)
             ? `<p class="suivi-help-active panel-subtitle">Demande(s) active(s) : ${escapeHtml(
-                ROSModels.getOpenFollowUpHelpTypes(helpNeeds)
+                ROSModels.getOpenFollowUpHelpTypes(state, player.id)
                   .map((id) => ROSModels.getFollowUpHelpTypeLabel(id))
                   .join(' · ')
               )}. Expliquez la situation dans les commentaires ci-dessous.</p>`
             : '<p class="panel-subtitle">Signalez une demande puis précisez-la dans les commentaires.</p>'
         }
       </div>`
-        : ROSModels.hasOpenFollowUpHelpNeeds(helpNeeds)
+        : ROSModels.hasOpenFollowUpHelpNeeds(state, player.id)
           ? `<p class="suivi-help-active panel-subtitle">Demande(s) active(s) : ${escapeHtml(
-              ROSModels.getOpenFollowUpHelpTypes(helpNeeds)
+              ROSModels.getOpenFollowUpHelpTypes(state, player.id)
                 .map((id) => ROSModels.getFollowUpHelpTypeLabel(id))
                 .join(' · ')
             )}</p>`
@@ -800,8 +804,7 @@
     }
     if (status === 'done') {
       const probe = ROSStorage.getState();
-      const row = probe.playerFollowUps?.[playerId];
-      if (row && ROSModels.hasOpenFollowUpHelpNeeds(row)) {
+      if (ROSModels.hasOpenFollowUpHelpNeeds(probe, playerId)) {
         AppUI.toast(
           'Une demande d’aide est encore active. Marquez-la comme résolue avant de terminer le suivi.'
         );
@@ -811,10 +814,10 @@
     const closeReason = ROSModels.normalizeFollowUpCloseReason(options.closeReason);
     ROSStorage.update((s) => {
       const row = ensureCase(s, playerId);
-      if (status === 'done' && ROSModels.hasOpenFollowUpHelpNeeds(row)) return s;
+      if (status === 'done' && ROSModels.hasOpenFollowUpHelpNeeds(s, playerId)) return s;
       const player = (s.players || []).find((p) => p.id === playerId);
       const displayReasons = buildDisplayReasons(player, row, s);
-      if (!hasDossierReasons(displayReasons, row) && status !== 'done') return s;
+      if (!hasDossierReasons(displayReasons, row, s, playerId) && status !== 'done') return s;
       row.status = ROSModels.normalizeFollowUpStatus(status);
       row.updatedAt = new Date().toISOString();
       if (row.status === 'done') {
@@ -893,8 +896,7 @@
       return;
     }
     const probe = ROSStorage.getState();
-    const row = probe.playerFollowUps?.[playerId];
-    if (row && ROSModels.hasOpenFollowUpHelpNeeds(row)) {
+    if (ROSModels.hasOpenFollowUpHelpNeeds(probe, playerId)) {
       AppUI.toast(
         'Une demande d’aide est encore active. Marquez-la comme résolue avant de terminer le suivi.'
       );
@@ -938,16 +940,8 @@
     const actor = stampActor();
     ROSStorage.update((s) => {
       const row = ensureCase(s, playerId);
-      row.helpNeeds = ROSModels.normalizeFollowUpHelpNeeds(row.helpNeeds);
-      if (row.helpNeeds[helpType]) return s;
-      row.helpNeeds[helpType] = true;
-      if (row.status === 'done') {
-        row.status = 'in_progress';
-        row.closedAt = null;
-        row.closeReason = null;
-      } else if (row.status === 'to_contact' || row.status === 'contacted') {
-        row.status = 'in_progress';
-      }
+      const effective = ROSModels.getPlayerFollowUpHelpNeeds(s, playerId);
+      if (effective[helpType]) return s;
       const note = ROSModels.appendPlayerFollowUpNote(s, playerId, {
         eventType: 'help_opened',
         helpType,
@@ -957,6 +951,14 @@
       });
       if (note) {
         row.notes = ROSModels.mergeFollowUpNotesArrays(row.notes || [], [note]);
+      }
+      row.helpNeeds = ROSModels.getPlayerFollowUpHelpNeeds(s, playerId);
+      if (row.status === 'done') {
+        row.status = 'in_progress';
+        row.closedAt = null;
+        row.closeReason = null;
+      } else if (row.status === 'to_contact' || row.status === 'contacted') {
+        row.status = 'in_progress';
       }
       row.updatedAt = new Date().toISOString();
       return s;
@@ -975,9 +977,8 @@
     const actor = stampActor();
     ROSStorage.update((s) => {
       const row = ensureCase(s, playerId);
-      row.helpNeeds = ROSModels.normalizeFollowUpHelpNeeds(row.helpNeeds);
-      if (!row.helpNeeds[helpType]) return s;
-      row.helpNeeds[helpType] = false;
+      const effective = ROSModels.getPlayerFollowUpHelpNeeds(s, playerId);
+      if (!effective[helpType]) return s;
       const note = ROSModels.appendPlayerFollowUpNote(s, playerId, {
         eventType: 'help_resolved',
         helpType,
@@ -988,6 +989,7 @@
       if (note) {
         row.notes = ROSModels.mergeFollowUpNotesArrays(row.notes || [], [note]);
       }
+      row.helpNeeds = ROSModels.getPlayerFollowUpHelpNeeds(s, playerId);
       row.updatedAt = new Date().toISOString();
       return s;
     });
@@ -1290,7 +1292,7 @@
           row.reasons.hero ||
           row.reasons.discret ||
           row.manual ||
-          ROSModels.hasOpenFollowUpHelpNeeds(row);
+          ROSModels.hasOpenFollowUpHelpNeeds(s, playerId);
         if (!stillRelevant) {
           row.status = 'done';
           row.closedAt = new Date().toISOString();
@@ -1433,7 +1435,7 @@
         row.reasons?.discret ||
         row.manual ||
         row.reasons?.manual ||
-        ROSModels.hasOpenFollowUpHelpNeeds(row);
+        ROSModels.hasOpenFollowUpHelpNeeds(s, playerId);
       if (!still) {
         row.manual = true;
         row.reasons = ROSModels.emptyFollowUpReasons({

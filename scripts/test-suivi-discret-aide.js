@@ -130,45 +130,45 @@ assert(pipo.discretContacts.length === 1, 'anciens discretContacts conservés');
 console.log('\nDemandes d’aide');
 
 const caseRow = state.playerFollowUps.p_pipo;
-assert(M.hasOpenFollowUpHelpNeeds(caseRow) === false, 'pas d’aide au départ');
+assert(M.hasOpenFollowUpHelpNeeds(state, 'p_pipo') === false, 'pas d’aide au départ');
 
-function openHelp(helpType, authorLabel) {
-  caseRow.helpNeeds = M.normalizeFollowUpHelpNeeds(caseRow.helpNeeds);
-  caseRow.helpNeeds[helpType] = true;
+function openHelp(helpType, authorLabel, at) {
   const note = M.appendPlayerFollowUpNote(state, 'p_pipo', {
     eventType: 'help_opened',
     helpType,
     authorLabel,
     authorUserId: 'u1',
+    at: at || new Date().toISOString(),
   });
   caseRow.notes = M.mergeFollowUpNotesArrays(caseRow.notes || [], [note]);
+  caseRow.helpNeeds = M.getPlayerFollowUpHelpNeeds(state, 'p_pipo');
   return note;
 }
 
-function resolveHelp(helpType, authorLabel) {
-  caseRow.helpNeeds = M.normalizeFollowUpHelpNeeds(caseRow.helpNeeds);
-  caseRow.helpNeeds[helpType] = false;
+function resolveHelp(helpType, authorLabel, at) {
   const note = M.appendPlayerFollowUpNote(state, 'p_pipo', {
     eventType: 'help_resolved',
     helpType,
     authorLabel,
     authorUserId: 'u2',
+    at: at || new Date().toISOString(),
   });
   caseRow.notes = M.mergeFollowUpNotesArrays(caseRow.notes || [], [note]);
+  caseRow.helpNeeds = M.getPlayerFollowUpHelpNeeds(state, 'p_pipo');
   return note;
 }
 
-const openVs = openHelp('vs', 'Mamat');
-assert(caseRow.helpNeeds.vs === true, 'ouverture aide VS');
+const openVs = openHelp('vs', 'Mamat', '2026-09-29T10:00:00.000Z');
+assert(M.getPlayerFollowUpHelpNeeds(state, 'p_pipo').vs === true, 'ouverture aide VS');
 assert(openVs.eventType === 'help_opened' && openVs.helpType === 'vs', 'ledger help_opened VS');
 assert(openVs.text.includes('VS') && openVs.text.includes('ouverte'), 'texte ouverture VS');
 
-const openTroops = openHelp('troops', 'Mamat');
-assert(caseRow.helpNeeds.troops === true, 'ouverture aide Troupes');
-const openOther = openHelp('other', 'Mamat');
-assert(caseRow.helpNeeds.other === true, 'ouverture aide Autre');
+openHelp('troops', 'Mamat', '2026-09-29T10:01:00.000Z');
+assert(M.getPlayerFollowUpHelpNeeds(state, 'p_pipo').troops === true, 'ouverture aide Troupes');
+openHelp('other', 'Mamat', '2026-09-29T10:02:00.000Z');
+assert(M.getPlayerFollowUpHelpNeeds(state, 'p_pipo').other === true, 'ouverture aide Autre');
 assert(
-  M.getOpenFollowUpHelpTypes(caseRow.helpNeeds).sort().join(',') === 'other,troops,vs',
+  M.getOpenFollowUpHelpTypes(state, 'p_pipo').sort().join(',') === 'other,troops,vs',
   'cumul de plusieurs demandes'
 );
 
@@ -176,6 +176,7 @@ const comment = M.appendPlayerFollowUpNote(state, 'p_pipo', {
   text: 'Le joueur ne comprend pas comment optimiser ses points du lundi.',
   authorLabel: 'Mamat',
   authorUserId: 'u1',
+  at: '2026-09-29T10:03:00.000Z',
 });
 assert(comment.eventType === 'comment', 'commentaire libre = comment');
 assert(
@@ -184,9 +185,13 @@ assert(
 );
 
 const openId = openVs.id;
-const resolved = resolveHelp('vs', 'Pipo1516');
-assert(caseRow.helpNeeds.vs === false, 'VS résolue sur la fiche');
-assert(caseRow.helpNeeds.troops && caseRow.helpNeeds.other, 'autres demandes restent actives');
+const resolved = resolveHelp('vs', 'Pipo1516', '2026-09-29T11:00:00.000Z');
+assert(M.getPlayerFollowUpHelpNeeds(state, 'p_pipo').vs === false, 'VS résolue (ledger)');
+assert(
+  M.getPlayerFollowUpHelpNeeds(state, 'p_pipo').troops &&
+    M.getPlayerFollowUpHelpNeeds(state, 'p_pipo').other,
+  'autres demandes restent actives'
+);
 assert(
   M.getPlayerFollowUpNotes(state, 'p_pipo').some((n) => n.id === openId && !n.deletedAt),
   'événement d’ouverture conservé'
@@ -194,20 +199,20 @@ assert(
 assert(resolved.eventType === 'help_resolved' && resolved.helpType === 'vs', 'ledger résolution VS');
 
 assert(
-  Suivi.hasDossierReasons({ discret: true }, caseRow),
+  Suivi.hasDossierReasons({ discret: true }, caseRow, state, 'p_pipo'),
   'dossier maintenu avec aides restantes'
 );
 
 console.log('\nClôture bloquée / autorisée');
 
-function canClose(row) {
-  return !M.hasOpenFollowUpHelpNeeds(row);
+function canClose(st, playerId) {
+  return !M.hasOpenFollowUpHelpNeeds(st, playerId);
 }
 
-assert(!canClose(caseRow), 'clôture impossible avec aide active');
-resolveHelp('troops', 'Pipo1516');
-resolveHelp('other', 'Pipo1516');
-assert(canClose(caseRow), 'clôture possible après résolution totale');
+assert(!canClose(state, 'p_pipo'), 'clôture impossible avec aide active');
+resolveHelp('troops', 'Pipo1516', '2026-09-29T11:01:00.000Z');
+resolveHelp('other', 'Pipo1516', '2026-09-29T11:02:00.000Z');
+assert(canClose(state, 'p_pipo'), 'clôture possible après résolution totale');
 assert(suiviCode.includes('Une demande d’aide est encore active'), 'message clôture bloquée');
 
 caseRow.status = 'done';
@@ -224,6 +229,138 @@ assert(
     manual: false,
   }).includes('Joueur discret'),
   'motif Discret visible en historique'
+);
+
+console.log('\nRobustesse vieux cache / LWW helpNeeds');
+
+const wipeState = M.createBlankState();
+wipeState.players = [pipo];
+wipeState.playerFollowUps = {
+  p_pipo: M.createEmptyFollowUpCase({
+    status: 'in_progress',
+    reasons: { discret: true },
+    helpNeeds: { vs: false, troops: false, other: false },
+  }),
+};
+wipeState.playerFollowUpNotes = {
+  p_pipo: {
+    notes: [
+      {
+        id: 'funote_open_vs',
+        at: '2026-09-29T12:00:00.000Z',
+        text: 'Demande d’aide VS — ouverte',
+        eventType: 'help_opened',
+        helpType: 'vs',
+        authorLabel: 'AppareilA',
+      },
+    ],
+  },
+};
+assert(
+  wipeState.playerFollowUps.p_pipo.helpNeeds.vs === false,
+  'simul : cache fiche sans aide'
+);
+assert(
+  M.hasOpenFollowUpHelpNeeds(wipeState, 'p_pipo') === true,
+  'remote/ledger aide ouverte + local helpNeeds false → toujours active'
+);
+assert(
+  M.getPlayerFollowUpHelpNeeds(wipeState, 'p_pipo').vs === true,
+  'dérivation ignore helpNeeds:false sans résolution'
+);
+
+const noFieldState = {
+  playerFollowUps: {
+    p_pipo: M.createEmptyFollowUpCase({ status: 'in_progress', reasons: { discret: true } }),
+  },
+  playerFollowUpNotes: wipeState.playerFollowUpNotes,
+};
+delete noFieldState.playerFollowUps.p_pipo.helpNeeds;
+assert(
+  M.hasOpenFollowUpHelpNeeds(noFieldState, 'p_pipo') === true,
+  'vieux cache sans champ helpNeeds → ne ferme pas l’aide'
+);
+M.reconcileFollowUpHelpNeedsFromLedger(noFieldState, 'p_pipo');
+assert(
+  noFieldState.playerFollowUps.p_pipo.helpNeeds.vs === true,
+  'reconcile aligne le cache fiche sur le ledger'
+);
+
+assert(
+  !canClose(wipeState, 'p_pipo'),
+  'clôture impossible après écrasement simulé si ledger encore ouvert'
+);
+
+openHelp('vs', 'AppareilA', '2026-09-30T09:00:00.000Z');
+assert(M.getPlayerFollowUpHelpNeeds(state, 'p_pipo').vs === true, 'réouverture VS après résolution');
+resolveHelp('vs', 'AppareilB', '2026-09-30T10:00:00.000Z');
+assert(M.getPlayerFollowUpHelpNeeds(state, 'p_pipo').vs === false, '2ᵉ résolution VS');
+openHelp('vs', 'AppareilA', '2026-09-30T11:00:00.000Z');
+assert(
+  M.getPlayerFollowUpHelpNeeds(state, 'p_pipo').vs === true,
+  'open → resolved → open fonctionne'
+);
+
+const dual = M.createBlankState();
+dual.playerFollowUpNotes = {
+  p1: {
+    notes: [
+      {
+        id: 'o_vs',
+        at: '2026-09-29T08:00:00.000Z',
+        eventType: 'help_opened',
+        helpType: 'vs',
+        text: 'x',
+        authorLabel: 'A',
+      },
+      {
+        id: 'o_tr',
+        at: '2026-09-29T08:01:00.000Z',
+        eventType: 'help_opened',
+        helpType: 'troops',
+        text: 'x',
+        authorLabel: 'A',
+      },
+      {
+        id: 'r_vs',
+        at: '2026-09-29T09:00:00.000Z',
+        eventType: 'help_resolved',
+        helpType: 'vs',
+        text: 'x',
+        authorLabel: 'B',
+      },
+    ],
+  },
+};
+const dualNeeds = M.getPlayerFollowUpHelpNeeds(dual, 'p1');
+assert(dualNeeds.vs === false && dualNeeds.troops === true, 'VS+Troupes : résolution d’une seule');
+
+const mergedOpenLedger = M.mergePlayerFollowUpNotesLedgers(
+  {
+    p_cache: {
+      notes: [
+        {
+          id: 'open_only',
+          at: '2026-09-29T07:00:00.000Z',
+          eventType: 'help_opened',
+          helpType: 'other',
+          text: 'Demande d’aide Autre — ouverte',
+          authorLabel: 'A',
+        },
+      ],
+    },
+  },
+  { p_cache: { notes: [] } }
+);
+const afterMergeState = {
+  playerFollowUpNotes: mergedOpenLedger,
+  playerFollowUps: {
+    p_cache: M.createEmptyFollowUpCase({ helpNeeds: { vs: false, troops: false, other: false } }),
+  },
+};
+assert(
+  M.hasOpenFollowUpHelpNeeds(afterMergeState, 'p_cache') === true,
+  'ouverture appareil A + vieux cache B (notes vides) → merge ledger conserve l’ouverture'
 );
 
 console.log('\nRéactivation Discret + régression héros/manuel');

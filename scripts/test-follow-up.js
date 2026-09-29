@@ -431,10 +431,28 @@ assert(Suivi.hasDossierReasons({ hero: true }), 'héros = dossier');
 assert(Suivi.hasDossierReasons({ manual: true }), 'manuel = dossier');
 assert(Suivi.hasDossierReasons({ discret: true }), 'discret = dossier');
 assert(!Suivi.hasDossierReasons({ vs: true }), 'VS seul ≠ dossier gestion');
-assert(
-  Suivi.hasDossierReasons({}, { helpNeeds: { vs: true, troops: false, other: false } }),
-  'aide ouverte = dossier'
-);
+{
+  const helpState = {
+    playerFollowUpNotes: {
+      p_help: {
+        notes: [
+          {
+            id: 'h1',
+            at: '2026-09-29T10:00:00.000Z',
+            text: 'Demande d’aide VS — ouverte',
+            eventType: 'help_opened',
+            helpType: 'vs',
+            authorLabel: 'R4',
+          },
+        ],
+      },
+    },
+  };
+  assert(
+    Suivi.hasDossierReasons({}, null, helpState, 'p_help'),
+    'aide ouverte (ledger) = dossier'
+  );
+}
 
 console.log('\nContacts Discret legacy (données conservées)');
 const overduePlayer = M.createPlayer({ pseudo: 'Due', discret: true });
