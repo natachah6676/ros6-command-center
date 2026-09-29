@@ -15,6 +15,67 @@
   const TOTAL_CASES = GRID_SLOTS + 1; // 101
   const PLAYER_SLOTS = TOTAL_CASES - 1; // 100 (hors Maréchal)
   const FREE = 'FREE';
+
+  function t(key, vars) {
+    if (global.RucheI18n && typeof RucheI18n.t === 'function') return RucheI18n.t(key, vars);
+    return key;
+  }
+
+  function uiLocale() {
+    return global.RucheI18n && typeof RucheI18n.getDateLocale === 'function'
+      ? RucheI18n.getDateLocale()
+      : 'fr-FR';
+  }
+
+  function uiCompareLocale() {
+    return global.RucheI18n && typeof RucheI18n.getCompareLocale === 'function'
+      ? RucheI18n.getCompareLocale()
+      : 'fr';
+  }
+
+  function formatArchiveDate(iso) {
+    if (global.RucheI18n && typeof RucheI18n.formatDateTime === 'function') {
+      return RucheI18n.formatDateTime(iso);
+    }
+    try {
+      return new Date(iso).toLocaleString(uiLocale());
+    } catch (error) {
+      return '—';
+    }
+  }
+
+  function applyRucheLanguage(lang) {
+    if (global.RucheI18n && typeof RucheI18n.setLang === 'function') {
+      RucheI18n.setLang(lang, {
+        root: document.getElementById('panel-ruche') || document,
+        onChange: () => {
+          const sub = document.getElementById('rucheSubtitle');
+          if (sub) {
+            const tag =
+              global.ROSModels && typeof ROSModels.getAllianceTag === 'function'
+                ? ROSModels.getAllianceTag(ROSStorage.getState())
+                : '';
+            sub.textContent = t('subtitle', { tag });
+          }
+          if (lastCheck) lastCheck = analyzeGrid();
+          render();
+          if (global.RucheI18n) {
+            RucheI18n.applyStaticDom(document.getElementById('panel-settings') || document);
+            const tabs = document.querySelector('.tabs') || document.querySelector('[role="tablist"]');
+            if (tabs) RucheI18n.applyStaticDom(tabs);
+          }
+        },
+      });
+      return;
+    }
+    render();
+  }
+
+  function confirmRuche(opts) {
+    const payload = { ...(opts || {}) };
+    if (payload.cancelLabel == null) payload.cancelLabel = t('confirm.cancel');
+    return AppUI.confirm(payload);
+  }
   /** Case Maréchal unique au centre de la grille (0-index) — événement fixe, pas un joueur. */
   const MARSHAL_ROW = 4;
   const MARSHAL_COL = 4;
@@ -252,7 +313,7 @@
     // Source de vérité : Gestion des membres (ROSStorage / Supabase), jamais un snapshot Ruche
     return getAlliancePlayers()
       .filter(isEligibleHivePlayer)
-      .sort((a, b) => a.pseudo.localeCompare(b.pseudo, 'fr', { sensitivity: 'base' }));
+      .sort((a, b) => a.pseudo.localeCompare(b.pseudo, uiCompareLocale(), { sensitivity: 'base' }));
   }
 
   function collectHivePlayerIds(grid, bottomId) {
@@ -600,7 +661,7 @@
     if (pa == null && pb == null) {
       const a = getPlayerById(aId);
       const b = getPlayerById(bId);
-      return String(a?.pseudo || '').localeCompare(String(b?.pseudo || ''), 'fr', {
+      return String(a?.pseudo || '').localeCompare(String(b?.pseudo || ''), uiCompareLocale(), {
         sensitivity: 'base',
       });
     }
@@ -609,7 +670,7 @@
     if (pb !== pa) return pb - pa;
     const a = getPlayerById(aId);
     const b = getPlayerById(bId);
-    return String(a?.pseudo || '').localeCompare(String(b?.pseudo || ''), 'fr', {
+    return String(a?.pseudo || '').localeCompare(String(b?.pseudo || ''), uiCompareLocale(), {
       sensitivity: 'base',
     });
   }
@@ -621,7 +682,7 @@
     if (ra !== rb) return ra - rb;
     const a = getPlayerById(aId);
     const b = getPlayerById(bId);
-    return String(a?.pseudo || '').localeCompare(String(b?.pseudo || ''), 'fr', {
+    return String(a?.pseudo || '').localeCompare(String(b?.pseudo || ''), uiCompareLocale(), {
       sensitivity: 'base',
     });
   }
@@ -1157,13 +1218,17 @@
     ensureProposal(true, { mode, allowOfficerMoves });
     render();
     const diff = getState().proposal?.rosterDiff || before;
-    const rosterMsg = `Retirés : ${diff.removedCount || 0} · Nouveaux : ${diff.addedCount || 0} · Conservés : ${diff.keptCount || 0}`;
+    const rosterMsg = t('toast.roster', {
+      removed: diff.removedCount || 0,
+      added: diff.addedCount || 0,
+      kept: diff.keptCount || 0,
+    });
     AppUI.toast(
       mode === 'full'
         ? allowOfficerMoves
-          ? `Nouveau plan complet généré (R4/R5 déplaçables). ${rosterMsg}`
-          : `Nouveau plan complet généré (R4/R5 conservés). ${rosterMsg}`
-        : `Optimisation douce recalculée. ${rosterMsg}`
+          ? t('toast.proposal.full.movable', { roster: rosterMsg })
+          : t('toast.proposal.full.kept', { roster: rosterMsg })
+        : t('toast.proposal.soft', { roster: rosterMsg })
     );
   }
 
@@ -1271,14 +1336,17 @@
     const s = getState();
     const proposal = s.proposal;
     if (!proposal) {
-      AppUI.toast('Aucune proposition à valider.');
+      AppUI.toast(t('toast.proposal.none'));
       return;
     }
     const stats = computeProposalStats(s.grid, s.bottomId, proposal.grid, proposal.bottomId);
-    const ok = await AppUI.confirm({
-      title: 'Valider cette proposition comme nouvelle ruche',
-      message: `Remplacer directement la ruche actuelle par la proposition ?\n\nGain estimé : ${stats.estimatedGainPct} %\nDéplacements : ${stats.moved} joueurs\n\nAucune archive ne sera créée.`,
-      confirmLabel: 'Valider comme nouvelle ruche',
+    const ok = await confirmRuche({
+      title: t('confirm.proposal.title'),
+      message: t('confirm.proposal.message', {
+        gain: stats.estimatedGainPct,
+        moved: stats.moved,
+      }),
+      confirmLabel: t('confirm.proposal.ok'),
     });
     if (!ok) return;
 
@@ -1292,7 +1360,7 @@
     persist();
     lastCheck = null;
     render();
-    AppUI.toast('Proposition validée — nouvelle ruche actuelle.');
+    AppUI.toast(t('toast.proposal.validated'));
   }
 
   /**
@@ -1321,10 +1389,10 @@
 
   function labelForValue(value) {
     if (!value) return '';
-    if (isMarshalLandmark(value)) return 'Maréchal';
+    if (isMarshalLandmark(value)) return t('cell.marshal');
     if (value === FREE) return 'FREE';
     const player = getPlayerById(value);
-    return player ? player.pseudo : '—';
+    return player ? player.pseudo : t('cell.empty');
   }
 
   function textColorForBg(hex) {
@@ -1371,10 +1439,10 @@
         if (isMarshalCell(r, c)) {
           marshalOk = isMarshalLandmark(rawCell);
           if (!marshalOk) {
-            issues.push('La case centrale doit être l’événement Maréchal');
+            issues.push(t('verify.issue.marshalCenter'));
           }
           if (rawCell === FREE || rawCell === 'FREE') {
-            issues.push('La case Maréchal ne peut pas être FREE');
+            issues.push(t('verify.issue.marshalFree'));
           }
           // Événement fixe : ne compte pas comme joueur placé.
           return;
@@ -1391,7 +1459,7 @@
           return;
         }
         if (isMarshalLandmark(cell)) {
-          issues.push(`Sentinelle Maréchal hors centre (${r + 1},${c + 1})`);
+          issues.push(t('verify.issue.marshalOffCenter', { row: r + 1, col: c + 1 }));
           emptyPlayerSlots += 1;
           return;
         }
@@ -1413,9 +1481,7 @@
     }
 
     if (emptyPlayerSlots > 0) {
-      issues.push(
-        `Cases joueurs vides : ${emptyPlayerSlots} (marquez-les FREE si aucun joueur)`
-      );
+      issues.push(t('verify.issue.emptySlots', { count: emptyPlayerSlots }));
     }
 
     // FREE valides : joueurs dans slots + FREE = 100 (pas d'exigence artificielle de 100 actifs)
@@ -1424,7 +1490,11 @@
       playersInPlayerSlots + freeCount !== PLAYER_SLOTS
     ) {
       issues.push(
-        `Cases joueurs incohérentes : ${playersInPlayerSlots} joueurs + ${freeCount} FREE ≠ ${PLAYER_SLOTS}`
+        t('verify.issue.inconsistent', {
+          players: playersInPlayerSlots,
+          free: freeCount,
+          slots: PLAYER_SLOTS,
+        })
       );
     }
 
@@ -1468,7 +1538,7 @@
       emptyPlayerSlots,
       marshalId: MARSHAL,
       marshalMissing: !marshalOk,
-      marshalPseudo: 'Maréchal',
+      marshalPseudo: t('cell.marshal'),
       bottomId,
       duplicates,
       missing,
@@ -1510,7 +1580,7 @@
     els.allowOfficerMoves = document.getElementById('rucheAllowOfficerMoves');
   }
 
-  function buildOptions(currentValue, except, { allowFree = true, emptyLabel = '—' } = {}) {
+  function buildOptions(currentValue, except, { allowFree = true, emptyLabel = t('cell.empty') } = {}) {
     const used = getUsedPlayerIdsExcept(except);
     const players = getActivePlayers().filter((p) => !used.has(p.id) || p.id === currentValue);
     const opts = [`<option value="">${escapeHtml(emptyLabel)}</option>`];
@@ -1550,7 +1620,7 @@
   function buildProposalOptions(
     currentValue,
     except,
-    { allowFree = true, emptyLabel = '—', locked = false } = {}
+    { allowFree = true, emptyLabel = t('cell.empty'), locked = false } = {}
   ) {
     if (locked) {
       const label = labelForValue(currentValue) || emptyLabel;
@@ -1580,12 +1650,18 @@
     const s = getState();
     const proposal = s.proposal;
     if (!proposal) {
-      els.proposalStats.textContent = 'Gain estimé : 0 % · Déplacements : 0 joueurs';
+      els.proposalStats.textContent = t('proposal.stats.empty');
       return;
     }
     const stats = computeProposalStats(s.grid, s.bottomId, proposal.grid, proposal.bottomId);
     const diff = proposal.rosterDiff || computeRosterDiff(s.grid, s.bottomId);
-    els.proposalStats.innerHTML = `Gain estimé : <strong>${stats.estimatedGainPct} %</strong> · Déplacements : <strong>${stats.moved}</strong> joueurs<br><span class="panel-subtitle">Effectif — Retirés : <strong>${diff.removedCount || 0}</strong> · Nouveaux : <strong>${diff.addedCount || 0}</strong> · Conservés : <strong>${diff.keptCount || 0}</strong></span>`;
+    els.proposalStats.innerHTML = t('proposal.stats.line', {
+      gain: stats.estimatedGainPct,
+      moved: stats.moved,
+      removed: diff.removedCount || 0,
+      added: diff.addedCount || 0,
+      kept: diff.keptCount || 0,
+    });
   }
 
   function renderProposalBottom(hive) {
@@ -1605,16 +1681,16 @@
           data-value="${escapeHtml(bottomId || '')}"
           style="${filled ? `background:${bg};color:${fg};border-color:${bg}` : ''}"
         >
-          <span class="ruche-cell-coord">Bas</span>
+          <span class="ruche-cell-coord">${t('cell.bottom')}</span>
           <select
             class="input ruche-cell-select"
             data-proposal-bottom-select
             ${locked ? 'disabled' : ''}
-            aria-label="Proposition — case du bas"
+            aria-label="${t('aria.proposalBottom')}"
           >
             ${buildProposalOptions(bottomId, { type: 'bottom' }, {
               allowFree: true,
-              emptyLabel: '—',
+              emptyLabel: t('cell.empty'),
               locked,
             })}
           </select>
@@ -1653,10 +1729,10 @@
             draggable="false"
             data-value="${MARSHAL}"
             style="background:${bg};color:${fg};border-color:${bg}"
-            aria-label="Proposition — événement Maréchal (fixe)"
+            aria-label="${t('aria.proposalMarshal')}"
           >
-            <span class="ruche-marshal-badge">Maréchal</span>
-            <span class="ruche-cell-label">Maréchal</span>
+            <span class="ruche-marshal-badge">${t('cell.marshal')}</span>
+            <span class="ruche-cell-label">${t('cell.marshal')}</span>
           </div>
         `);
           continue;
@@ -1685,11 +1761,11 @@
               data-row="${r}"
               data-col="${c}"
               ${locked ? 'disabled' : ''}
-              aria-label="Proposition — case ${r + 1}, ${c + 1}"
+              aria-label="${t('aria.proposalCell', { row: r + 1, col: c + 1 })}"
             >
               ${buildProposalOptions(value, { type: 'grid', row: r, col: c }, {
                 allowFree: true,
-                emptyLabel: '—',
+                emptyLabel: t('cell.empty'),
                 locked,
               })}
             </select>
@@ -1719,13 +1795,13 @@
           data-value="${escapeHtml(bottomId || '')}"
           style="${filled ? `background:${bg};color:${fg};border-color:${bg}` : ''}"
         >
-          <span class="ruche-cell-coord">Bas</span>
+          <span class="ruche-cell-coord">${t('cell.bottom')}</span>
           <select
             class="input ruche-cell-select"
             data-ruche-bottom-select
-            aria-label="Case du bas — joueur"
+            aria-label="${t('aria.bottom')}"
           >
-            ${buildOptions(bottomId, { type: 'bottom' }, { allowFree: true, emptyLabel: '—' })}
+            ${buildOptions(bottomId, { type: 'bottom' }, { allowFree: true, emptyLabel: t('cell.empty') })}
           </select>
           <span class="ruche-cell-label" aria-hidden="true">${escapeHtml(labelForValue(bottomId))}</span>
         </div>
@@ -1755,10 +1831,10 @@
             data-marshal="1"
             data-value="${MARSHAL}"
             style="background:${colors.marshal};color:${fg};border-color:${colors.marshal}"
-            aria-label="Événement Maréchal (case fixe)"
+            aria-label="${t('aria.marshalFixed')}"
           >
-            <span class="ruche-marshal-badge">Maréchal</span>
-            <span class="ruche-cell-label">Maréchal</span>
+            <span class="ruche-marshal-badge">${t('cell.marshal')}</span>
+            <span class="ruche-cell-label">${t('cell.marshal')}</span>
           </div>
         `);
           continue;
@@ -1783,11 +1859,11 @@
               data-ruche-select
               data-row="${r}"
               data-col="${c}"
-              aria-label="Case ${r + 1}, ${c + 1}"
+              aria-label="${t('aria.cell', { row: r + 1, col: c + 1 })}"
             >
               ${buildOptions(value, { type: 'grid', row: r, col: c }, {
                 allowFree: true,
-                emptyLabel: '—',
+                emptyLabel: t('cell.empty'),
               })}
             </select>
             <span class="ruche-cell-label" aria-hidden="true">${escapeHtml(labelForValue(value))}</span>
@@ -1819,49 +1895,56 @@
     const issues = [...(check.issues || [])];
     if (check.duplicates.length) {
       issues.push(
-        `Doublons détectés : ${check.duplicates
-          .map((d) => `${escapeHtml(d.pseudo)} (×${d.count})`)
-          .join(', ')}`
+        t('verify.issue.dupList', {
+          list: check.duplicates
+            .map((d) => `${escapeHtml(d.pseudo)} (×${d.count})`)
+            .join(', '),
+        })
       );
     }
     if (check.partiIds.length) {
       issues.push(
-        `Valeurs inconnues / joueurs non actifs : ${check.partiIds
-          .map((p) => escapeHtml(p.pseudo))
-          .join(', ')}`
+        t('verify.issue.unknown', {
+          list: check.partiIds.map((p) => escapeHtml(p.pseudo)).join(', '),
+        })
       );
     }
     if (check.extras.length) {
       issues.push(
-        `Hors effectif actif : ${check.extras.map((p) => escapeHtml(p.pseudo)).join(', ')}`
+        t('verify.issue.extras', {
+          list: check.extras.map((p) => escapeHtml(p.pseudo)).join(', '),
+        })
       );
     }
 
-    const marshalLabel = 'Maréchal (centre)';
+    const marshalLabel = t('cell.marshalCenter');
 
     const cls = check.canValidate ? 'train-ok' : 'train-errors';
     els.verifyResult.innerHTML = `
       <div class="${cls}">
-        <strong>Résultat de la vérification</strong>
+        <strong>${t('verify.title')}</strong>
         <ul class="ruche-stats">
-          <li>Cases totales : ${check.caseCount} / ${TOTAL_CASES}</li>
-          <li>Cases joueurs : ${check.playerSlotCount} / ${PLAYER_SLOTS}</li>
-          <li>Joueurs actifs attendus : ${check.totalActive}</li>
-          <li>Joueurs placés : ${check.placedCount}</li>
-          <li>Cases FREE : ${check.freeCount}</li>
-          <li>Maréchal : ${marshalLabel}</li>
-          <li>Doublons : ${check.duplicates.length}</li>
-          <li>Joueurs manquants : ${check.missing.length}</li>
+          <li>${t('verify.totalCases', { count: check.caseCount, total: TOTAL_CASES })}</li>
+          <li>${t('verify.playerSlots', { count: check.playerSlotCount, total: PLAYER_SLOTS })}</li>
+          <li>${t('verify.activeExpected', { count: check.totalActive })}</li>
+          <li>${t('verify.placed', { count: check.placedCount })}</li>
+          <li>${t('verify.free', { count: check.freeCount })}</li>
+          <li>${t('verify.marshal', { label: marshalLabel })}</li>
+          <li>${t('verify.duplicates', { count: check.duplicates.length })}</li>
+          <li>${t('verify.missingCount', { count: check.missing.length })}</li>
         </ul>
         ${
           check.missing.length
-            ? `<p><strong>Joueurs manquants</strong></p>${missingList}`
+            ? `<p><strong>${t('verify.missingTitle')}</strong></p>${missingList}`
             : ''
         }
         ${issues.length ? `<p>${issues.join('<br>')}</p>` : ''}
         ${
           check.canValidate
-            ? `<p>Ruche valide — ${check.totalActive} joueurs actifs, ${check.freeCount} FREE, événement Maréchal au centre.</p>`
+            ? `<p>${t('verify.valid', {
+                active: check.totalActive,
+                free: check.freeCount,
+              })}</p>`
             : ''
         }
       </div>
@@ -1883,17 +1966,21 @@
     if (els.archivesEmpty) els.archivesEmpty.classList.add('hidden');
     els.archivesList.innerHTML = archives
       .map((arch) => {
-        const date = arch.createdAt
-          ? new Date(arch.createdAt).toLocaleString('fr-FR')
-          : '—';
+        const date = arch.createdAt ? formatArchiveDate(arch.createdAt) : t('cell.empty');
         return `
           <article class="stack-item">
             <div class="stack-item-main">
-              <h4 class="stack-item-title">${escapeHtml(arch.label || 'Plan ruche')}</h4>
-              <p class="panel-subtitle">${escapeHtml(date)} · ${arch.placedCount || 0} joueurs · ${arch.freeCount || 0} FREE</p>
+              <h4 class="stack-item-title">${escapeHtml(arch.label || t('archives.fallbackLabel'))}</h4>
+              <p class="panel-subtitle">${escapeHtml(
+                t('archives.meta', {
+                  date,
+                  players: arch.placedCount || 0,
+                  free: arch.freeCount || 0,
+                })
+              )}</p>
             </div>
             <button type="button" class="btn btn-ghost btn-sm" data-ruche-action="view-archive" data-id="${arch.id}">
-              Consulter
+              ${t('archives.view')}
             </button>
           </article>
         `;
@@ -1942,11 +2029,11 @@
         const value = grid[r][c];
         const marshal = isMarshalCell(r, c);
         const bg = colorForGridCell(r, c, value, lookup);
-        const label = marshal ? 'Maréchal' : resolveArchivedLabel(arch, value);
+        const label = marshal ? t('cell.marshal') : resolveArchivedLabel(arch, value);
         const fg = textColorForBg(bg === 'transparent' ? '#1e232b' : bg);
         cells.push(`
           <div class="ruche-cell ruche-cell-readonly is-filled ${marshal ? 'ruche-cell-marshal' : ''}" style="background:${bg};color:${fg};border-color:${bg}">
-            ${marshal ? '<span class="ruche-marshal-badge">Maréchal</span>' : ''}
+            ${marshal ? `<span class="ruche-marshal-badge">${t('cell.marshal')}</span>` : ''}
             <span class="ruche-cell-label">${escapeHtml(label)}</span>
           </div>
         `);
@@ -1957,8 +2044,8 @@
     els.archivePreview.classList.remove('hidden');
     els.archivePreview.innerHTML = `
       <header class="block-header">
-        <h3>${escapeHtml(arch.label || 'Plan archivé')}</h3>
-        <p>Maréchal : événement centre · Bas : ${escapeHtml(resolveArchivedLabel(arch, bottomId) || '—')}</p>
+        <h3>${escapeHtml(arch.label || t('archives.fallbackPreview'))}</h3>
+        <p>${t('archives.preview.meta', { bottom: resolveArchivedLabel(arch, bottomId) || t('cell.empty') })}</p>
       </header>
       <div class="ruche-board ruche-board-preview">
         <div class="ruche-grid ruche-grid-preview">${cells.join('')}</div>
@@ -1998,11 +2085,7 @@
     lastCheck = analyzeGrid();
     renderVerifyResult(lastCheck);
     refreshValidateButton();
-    AppUI.toast(
-      lastCheck.canValidate
-        ? 'Ruche conforme — validation possible.'
-        : 'Vérification terminée — des écarts restent.'
-    );
+    AppUI.toast(lastCheck.canValidate ? t('toast.verify.ok') : t('toast.verify.issues'));
   }
 
   async function validateHive() {
@@ -2012,13 +2095,13 @@
     renderVerifyResult(check);
     refreshValidateButton();
     if (!check.canValidate) {
-      AppUI.toast('Validation impossible — corrigez les écarts.');
+      AppUI.toast(t('toast.validate.blocked'));
       return;
     }
-    const ok = await AppUI.confirm({
-      title: 'Valider la ruche',
-      message: 'Archiver ce plan de ruche ? Le plan courant reste modifiable ensuite.',
-      confirmLabel: 'Valider et archiver',
+    const ok = await confirmRuche({
+      title: t('confirm.validate.title'),
+      message: t('confirm.validate.message'),
+      confirmLabel: t('confirm.validate.ok'),
     });
     if (!ok) return;
 
@@ -2028,14 +2111,14 @@
     });
     lastCheck = analyzeGrid();
     renderVerifyResult(lastCheck);
-    AppUI.toast('Plan de ruche archivé.');
+    AppUI.toast(t('toast.archived'));
   }
 
   async function clearGrid() {
-    const ok = await AppUI.confirm({
-      title: 'Vider la grille',
-      message: 'Retirer tous les joueurs et FREE ? La case Maréchal (centre) reste en place.',
-      confirmLabel: 'Vider',
+    const ok = await confirmRuche({
+      title: t('confirm.clear.title'),
+      message: t('confirm.clear.message'),
+      confirmLabel: t('confirm.clear.ok'),
     });
     if (!ok) return;
     update((s) => {
@@ -2045,7 +2128,7 @@
     });
     lastCheck = null;
     renderVerifyResult(null);
-    AppUI.toast('Grille vidée.');
+    AppUI.toast(t('toast.cleared'));
   }
 
   function onColorChange() {
@@ -2161,6 +2244,11 @@
   }
 
   function onRootClick(event) {
+    const langBtn = event.target.closest('[data-ruche-lang]');
+    if (langBtn) {
+      applyRucheLanguage(langBtn.getAttribute('data-ruche-lang'));
+      return;
+    }
     const btn = event.target.closest('[data-ruche-action]');
     if (!btn) return;
     if (btn.dataset.rucheAction === 'view-archive') {
@@ -2218,7 +2306,7 @@
       global.ROSModels && typeof ROSModels.getAllianceTag === 'function'
         ? ROSModels.getAllianceTag(ROSStorage.getState())
         : 'Alliance';
-    ctx.fillText(`${allianceTag} — Plan de ruche`, canvas.width / 2, 38);
+    ctx.fillText(t('export.pngTitle', { tag: allianceTag }), canvas.width / 2, 38);
 
     for (let r = 0; r < GRID_SIZE; r += 1) {
       for (let c = 0; c < GRID_SIZE; c += 1) {
@@ -2230,8 +2318,8 @@
         let label = '';
         let badge = '';
         if (marshal) {
-          badge = 'ÉVÉNEMENT';
-          label = 'Maréchal';
+          badge = t('cell.eventBadge');
+          label = t('cell.marshal');
         } else if (value === FREE) {
           label = 'FREE';
         } else if (value) {
@@ -2267,7 +2355,7 @@
     const canvas = drawHiveCanvas(getState().grid, getBottomId(), getPlayerById);
     canvas.toBlob((blob) => {
       if (!blob) {
-        AppUI.toast('Export PNG impossible.');
+        AppUI.toast(t('toast.png.fail'));
         return;
       }
       const url = URL.createObjectURL(blob);
@@ -2283,7 +2371,7 @@
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      AppUI.toast('PNG téléchargé.');
+      AppUI.toast(t('toast.png.ok'));
     }, 'image/png');
   }
 
@@ -2311,13 +2399,13 @@
       .join('');
 
     const bottomLabel = labelForValue(bottomId) || '';
-    const bottomRow = `<Row><Cell><Data ss:Type="String">Bas</Data></Cell><Cell><Data ss:Type="String">${xmlEscape(bottomLabel)}</Data></Cell></Row>`;
+    const bottomRow = `<Row><Cell><Data ss:Type="String">${xmlEscape(t('cell.bottom'))}</Data></Cell><Cell><Data ss:Type="String">${xmlEscape(bottomLabel)}</Data></Cell></Row>`;
 
     const xml = `<?xml version="1.0"?>
 <?mso-application progid="Excel.Sheet"?>
 <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
- <Worksheet ss:Name="Ruche">
+ <Worksheet ss:Name="${xmlEscape(t('export.sheetName'))}">
   <Table>${rows}${bottomRow}</Table>
  </Worksheet>
 </Workbook>`;
@@ -2336,7 +2424,7 @@
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    AppUI.toast('Fichier Excel téléchargé.');
+    AppUI.toast(t('toast.excel.ok'));
   }
 
   function init() {
@@ -2373,6 +2461,12 @@
     }
     bindProposalDnD();
 
+    if (global.RucheI18n) {
+      RucheI18n.applyStaticDom(els.root || document);
+      RucheI18n.applyStaticDom(document.getElementById('panel-settings') || document);
+      const tabs = document.querySelector('.tabs') || document.querySelector('[role="tablist"]');
+      if (tabs) RucheI18n.applyStaticDom(tabs);
+    }
     ensureProposal(false);
     render();
   }
@@ -2406,5 +2500,7 @@
     computeProposalStats,
     computeRosterDiff,
     ensureProposal,
+    t,
+    applyRucheLanguage,
   };
 })(window);
