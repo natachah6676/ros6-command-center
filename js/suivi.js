@@ -482,7 +482,7 @@
         .map(({ player, follow, reasons }) => {
           const selected = player.id === selectedPlayerId ? ' is-selected' : '';
           const assignee = assigneeLabelFor(follow);
-          const helpBits = ROSModels.getOpenFollowUpHelpTypes(state, player.id)
+          const helpBits = ROSModels.getOpenFollowUpHelpTypes(fresh, player.id)
             .map((id) => ROSModels.getFollowUpHelpTypeLabel(id))
             .filter(Boolean);
           const helpHtml = helpBits.length
