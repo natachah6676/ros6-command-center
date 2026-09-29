@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20260929-hist-filtres1" />
+  <link rel="stylesheet" href="css/styles.css?v=20260929-hist-detail1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -181,53 +181,65 @@
           </div>
         </div>
 
-        <div class="toolbar toolbar-members">
-          <input
-            type="search"
-            id="historiqueSuiviSearch"
-            class="input"
-            placeholder="Rechercher par pseudo…"
-            autocomplete="off"
-          />
-          <select
-            id="historiqueSuiviFilterReason"
-            class="input"
-            aria-label="Filtrer l’historique par motif"
-          >
-            <option value="">Tous les motifs</option>
-            <option value="hero">Puissance héros</option>
-            <option value="discret">Joueur discret</option>
-            <option value="manual">Aide / manuel</option>
-          </select>
-          <select
-            id="historiqueSuiviFilterHelp"
-            class="input"
-            aria-label="Filtrer l’historique par demande d’aide"
-          >
-            <option value="">Toutes les demandes d’aide</option>
-            <option value="vs">Aide VS</option>
-            <option value="troops">Aide Troupes</option>
-            <option value="other">Aide Autre</option>
-          </select>
+        <div id="historiqueSuiviListView">
+          <div class="toolbar toolbar-members">
+            <input
+              type="search"
+              id="historiqueSuiviSearch"
+              class="input"
+              placeholder="Rechercher par pseudo…"
+              autocomplete="off"
+            />
+            <select
+              id="historiqueSuiviFilterReason"
+              class="input"
+              aria-label="Filtrer l’historique par motif"
+            >
+              <option value="">Tous les motifs</option>
+              <option value="hero">Puissance héros</option>
+              <option value="discret">Joueur discret</option>
+              <option value="manual">Aide / manuel</option>
+            </select>
+            <select
+              id="historiqueSuiviFilterHelp"
+              class="input"
+              aria-label="Filtrer l’historique par demande d’aide"
+            >
+              <option value="">Toutes les demandes d’aide</option>
+              <option value="vs">Aide VS</option>
+              <option value="troops">Aide Troupes</option>
+              <option value="other">Aide Autre</option>
+            </select>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table" id="historiqueSuiviTable">
+              <thead>
+                <tr>
+                  <th>Joueur</th>
+                  <th>Motifs</th>
+                  <th>Fin</th>
+                  <th>R4</th>
+                  <th>Terminé le</th>
+                  <th>Commentaires</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="historiqueSuiviBody"></tbody>
+            </table>
+          </div>
+          <p id="historiqueSuiviEmpty" class="empty-state">Aucun suivi terminé pour le moment.</p>
         </div>
 
-        <div class="table-wrap">
-          <table class="data-table" id="historiqueSuiviTable">
-            <thead>
-              <tr>
-                <th>Joueur</th>
-                <th>Motifs</th>
-                <th>Fin</th>
-                <th>R4</th>
-                <th>Terminé le</th>
-                <th>Commentaires</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="historiqueSuiviBody"></tbody>
-          </table>
+        <div id="historiqueSuiviDetailView" class="historique-suivi-detail hidden" hidden>
+          <div class="historique-suivi-detail-toolbar">
+            <button type="button" id="btnHistoriqueSuiviDetailClose" class="btn btn-ghost">
+              Retour à l’historique
+            </button>
+            <p class="panel-subtitle">Consultation seule — aucune modification</p>
+          </div>
+          <div id="historiqueSuiviDetailBody" class="historique-suivi-detail-body"></div>
         </div>
-        <p id="historiqueSuiviEmpty" class="empty-state">Aucun suivi terminé pour le moment.</p>
       </section>
 
       <!-- VS -->
@@ -1444,7 +1456,7 @@
   <script src="js/supabase-client.js?v=20260804-4"></script>
   <script src="js/profiles.js?v=20260911-refaccess1"></script>
   <script src="js/supabase-sync.js?v=20260912-backups-local1"></script>
-  <script src="js/models.js?v=20260929-hist-filtres1"></script>
+  <script src="js/models.js?v=20260929-hist-detail1"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
   <script src="js/player-identity.js?v=20260911-vscounter1"></script>
   <script src="js/storage.js?v=20260910-vsclose1"></script>
@@ -1452,7 +1464,7 @@
   <script src="js/insights.js?v=20260910-vsclose1"></script>
   <script src="js/player-stats.js?v=20260802-4"></script>
   <script src="js/players.js?v=20260929-discret-aide1"></script>
-  <script src="js/suivi.js?v=20260929-hist-filtres1"></script>
+  <script src="js/suivi.js?v=20260929-hist-detail1"></script>
   <script src="js/command.js?v=20260806-cmd1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260916-vs-signals1"></script>
