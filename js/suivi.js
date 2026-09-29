@@ -1449,6 +1449,215 @@
     return rows;
   }
 
+  let selectedHistoryKey = null;
+
+  function historyRowKey(row) {
+    if (!row || !row.player?.id) return '';
+    if (row.kind === 'discret_contact') {
+      const contact = row.contact || {};
+      return `discret:${row.player.id}:${contact.id || ''}:${contact.at || ''}`;
+    }
+    const follow = row.follow || {};
+    // Une seule fiche playerFollowUps par joueur : ancrage sur le snapshot créé/clôturé.
+    return `follow:${row.player.id}:${follow.createdAt || ''}:${follow.closedAt || follow.updatedAt || ''}`;
+  }
+
+  function findHistoriqueRowByKey(state, key) {
+    if (!key) return null;
+    return (
+      getHistoriqueRows(state, { q: '', reasonFilter: '', helpFilter: '' }).find(
+        (row) => historyRowKey(row) === key
+      ) || null
+    );
+  }
+
+  function setHistoriqueDetailVisible(open) {
+    const list = document.getElementById('historiqueSuiviListView');
+    const detail = document.getElementById('historiqueSuiviDetailView');
+    if (list) list.hidden = Boolean(open);
+    if (detail) {
+      detail.hidden = !open;
+      detail.classList.toggle('hidden', !open);
+    }
+  }
+
+  function closeHistoriqueDetail() {
+    selectedHistoryKey = null;
+    setHistoriqueDetailVisible(false);
+  }
+
+  function openHistoriqueDetail(key) {
+    if (!key) return;
+    selectedHistoryKey = String(key);
+    renderHistory();
+  }
+
+  function buildHelpTimelineSummary(state, playerId) {
+    const notes = ROSModels.getPlayerFollowUpNotes(state, playerId)
+      .filter((n) => n && (n.eventType === 'help_opened' || n.eventType === 'help_resolved'))
+      .slice()
+      .sort((a, b) => {
+        const cmp = String(a.at || '').localeCompare(String(b.at || ''));
+        if (cmp !== 0) return cmp;
+        return String(a.id || '').localeCompare(String(b.id || ''));
+      });
+    return ROSModels.FOLLOW_UP_HELP_TYPES.map(({ id, label }) => {
+      const events = notes.filter((n) => n.helpType === id);
+      if (!events.length) return null;
+      return { id, label, events };
+    }).filter(Boolean);
+  }
+
+  function formatLedgerEventHtml(note) {
+    const when = ROSModels.formatCoachingDateTime(note.at) || note.at || '—';
+    const who = note.authorLabel || '—';
+    const kind =
+      note.eventType === 'help_opened'
+        ? 'help-open'
+        : note.eventType === 'help_resolved'
+          ? 'help-resolved'
+          : 'comment';
+    const kindLabel =
+      note.eventType === 'help_opened'
+        ? 'Ouverture aide'
+        : note.eventType === 'help_resolved'
+          ? 'Résolution aide'
+          : 'Commentaire';
+    return `
+      <li class="historique-suivi-detail-event historique-suivi-detail-event--${kind}">
+        <header>
+          <time datetime="${escapeHtml(note.at || '')}">${escapeHtml(when)}</time>
+          <span>${escapeHtml(who)}</span>
+          <span>${escapeHtml(kindLabel)}</span>
+        </header>
+        <p>${escapeHtml(note.text || '')}</p>
+      </li>
+    `;
+  }
+
+  /** HTML consultatif uniquement — aucun write. */
+  function renderHistoriqueDetailHtml(row, state) {
+    if (!row) return '';
+    if (row.kind === 'discret_contact') {
+      const { player, contact } = row;
+      const when = ROSModels.formatCoachingDateTime(contact.at) || contact.at || '—';
+      const who = contact.authorLabel || '—';
+      const text = contact.text || 'Contact pris';
+      return `
+        <article class="historique-suivi-detail-card">
+          <h3>${escapeHtml(player.pseudo)}</h3>
+          <p class="panel-subtitle">Contact Discret legacy — détail minimal (données réelles uniquement)</p>
+          <dl class="historique-suivi-detail-meta">
+            <div><dt>Motif</dt><dd>Discret · Contact</dd></div>
+            <div><dt>Date</dt><dd>${escapeHtml(when)}</dd></div>
+            <div><dt>Auteur</dt><dd>${escapeHtml(who)}</dd></div>
+          </dl>
+          <h4>Note</h4>
+          <p class="historique-suivi-detail-event"><span style="white-space:pre-wrap">${escapeHtml(
+            text
+          )}</span></p>
+        </article>
+      `;
+    }
+
+    const { player, follow, reasons } = row;
+    const motifs = ROSModels.formatFollowUpReasonsLabel(reasons);
+    const r4 = contactOfficerLabel(follow, player.id);
+    const statusLabel = ROSModels.getFollowUpStatusLabel(follow.status);
+    const fin = ROSModels.getFollowUpCloseReasonLabel(follow.closeReason) || '—';
+    const started =
+      ROSModels.formatCoachingDateTime(follow.createdAt) || follow.createdAt || '—';
+    const contacted =
+      ROSModels.formatCoachingDateTime(follow.contactedAt) || follow.contactedAt || '';
+    const closed =
+      ROSModels.formatCoachingDateTime(follow.closedAt) ||
+      ROSModels.formatCoachingDateTime(follow.updatedAt) ||
+      '—';
+    const helpGroups = buildHelpTimelineSummary(state, player.id);
+    const helpSummaryHtml = helpGroups.length
+      ? `<section>
+          <h4>Demandes d’aide</h4>
+          <ul class="historique-suivi-detail-timeline">
+            ${helpGroups
+              .map((group) => {
+                const lines = group.events
+                  .map((ev) => {
+                    const when =
+                      ROSModels.formatCoachingDateTime(ev.at) || ev.at || '—';
+                    const who = ev.authorLabel || '—';
+                    const verb =
+                      ev.eventType === 'help_resolved' ? 'Résolue' : 'Ouverte';
+                    return `<li>${escapeHtml(verb)} — ${escapeHtml(when)} · ${escapeHtml(
+                      who
+                    )}</li>`;
+                  })
+                  .join('');
+                return `<li><strong>${escapeHtml(
+                  ROSModels.getFollowUpHelpTypeShortLabel(group.id) || group.label
+                )}</strong><ul>${lines}</ul></li>`;
+              })
+              .join('')}
+          </ul>
+        </section>`
+      : `<section><h4>Demandes d’aide</h4><p class="panel-subtitle">Aucune demande d’aide dans le ledger.</p></section>`;
+
+    const ledgerNotes = ROSModels.getPlayerFollowUpNotes(state, player.id)
+      .slice()
+      .sort((a, b) => {
+        const cmp = String(a.at || '').localeCompare(String(b.at || ''));
+        if (cmp !== 0) return cmp;
+        return String(a.id || '').localeCompare(String(b.id || ''));
+      });
+    const timelineHtml = ledgerNotes.length
+      ? `<ul class="historique-suivi-detail-timeline">${ledgerNotes
+          .map((n) => formatLedgerEventHtml(n))
+          .join('')}</ul>`
+      : `<p class="panel-subtitle">Aucun commentaire ni événement dans le ledger.</p>`;
+
+    return `
+      <article class="historique-suivi-detail-card" data-historique-detail-key="${escapeHtml(
+        historyRowKey(row)
+      )}">
+        <h3>${escapeHtml(player.pseudo)}</h3>
+        <p class="panel-subtitle">Fiche historique — consultation seule</p>
+        <dl class="historique-suivi-detail-meta">
+          <div><dt>Motif(s)</dt><dd>${escapeHtml(motifs)}</dd></div>
+          <div><dt>Qui suit</dt><dd>${escapeHtml(r4)}</dd></div>
+          <div><dt>Statut final</dt><dd>${escapeHtml(statusLabel)}</dd></div>
+          <div><dt>Raison de fin</dt><dd>${escapeHtml(fin)}</dd></div>
+          <div><dt>Début</dt><dd>${escapeHtml(started)}</dd></div>
+          ${
+            contacted
+              ? `<div><dt>Contact</dt><dd>${escapeHtml(contacted)}</dd></div>`
+              : ''
+          }
+          <div><dt>Fin</dt><dd>${escapeHtml(closed)}</dd></div>
+        </dl>
+        ${helpSummaryHtml}
+        <section>
+          <h4>Journal (commentaires et aides)</h4>
+          ${timelineHtml}
+        </section>
+      </article>
+    `;
+  }
+
+  function renderHistoriqueDetailView(state) {
+    const body = document.getElementById('historiqueSuiviDetailBody');
+    if (!body || !selectedHistoryKey) {
+      setHistoriqueDetailVisible(false);
+      return false;
+    }
+    const row = findHistoriqueRowByKey(state, selectedHistoryKey);
+    if (!row) {
+      closeHistoriqueDetail();
+      return false;
+    }
+    body.innerHTML = renderHistoriqueDetailHtml(row, state);
+    setHistoriqueDetailVisible(true);
+    return true;
+  }
+
   function getHistoriqueRows(state, filters) {
     const f = filters || getHistoriqueFilterValues();
     return [...getDoneFollowUpRows(state, f), ...getDiscretContactHistoryRows(state, f)].sort(
@@ -1559,6 +1768,10 @@
     const clearBtn = document.getElementById('btnClearSuiviHistory');
     if (!body) return;
     const state = ROSStorage.getState();
+    if (selectedHistoryKey && renderHistoriqueDetailView(state)) {
+      return;
+    }
+    setHistoriqueDetailVisible(false);
     const rows = getHistoriqueRows(state);
     if (counter) counter.textContent = `${rows.length} entrée(s)`;
     if (empty) empty.classList.toggle('hidden', rows.length > 0);
@@ -1572,6 +1785,7 @@
     const editable = canEditFollowUp();
     body.innerHTML = rows
       .map((row) => {
+        const rowKey = historyRowKey(row);
         if (row.kind === 'discret_contact') {
           const { player, contact } = row;
           const when =
@@ -1579,8 +1793,14 @@
           const who = contact.authorLabel || '—';
           const note = contact.text || 'Contact pris';
           return `
-          <tr>
-            <td><strong>${escapeHtml(player.pseudo)}</strong></td>
+          <tr data-historique-row-key="${escapeHtml(rowKey)}">
+            <td>
+              <button
+                type="button"
+                class="historique-suivi-pseudo-btn"
+                data-historique-open="${escapeHtml(rowKey)}"
+              >${escapeHtml(player.pseudo)}</button>
+            </td>
             <td>Discret · Contact</td>
             <td>—</td>
             <td>${escapeHtml(who)}</td>
@@ -1604,8 +1824,14 @@
         const fin =
           ROSModels.getFollowUpCloseReasonLabel(follow.closeReason) || '—';
         return `
-          <tr>
-            <td><strong>${escapeHtml(player.pseudo)}</strong></td>
+          <tr data-historique-row-key="${escapeHtml(rowKey)}">
+            <td>
+              <button
+                type="button"
+                class="historique-suivi-pseudo-btn"
+                data-historique-open="${escapeHtml(rowKey)}"
+              >${escapeHtml(player.pseudo)}</button>
+            </td>
             <td>
               ${escapeHtml(motifs)}
               ${
@@ -1634,6 +1860,11 @@
   }
 
   function onHistoryClick(event) {
+    const openBtn = event.target.closest('[data-historique-open]');
+    if (openBtn) {
+      openHistoriqueDetail(openBtn.getAttribute('data-historique-open'));
+      return;
+    }
     const btn = event.target.closest('[data-historique-reactivate]');
     if (!btn) return;
     reactivateFollowUp(btn.dataset.historiqueReactivate);
@@ -1662,6 +1893,10 @@
       .getElementById('historiqueSuiviFilterHelp')
       ?.addEventListener('change', () => renderHistory());
     document.getElementById('historiqueSuiviBody')?.addEventListener('click', onHistoryClick);
+    document.getElementById('btnHistoriqueSuiviDetailClose')?.addEventListener('click', () => {
+      closeHistoriqueDetail();
+      renderHistory();
+    });
     document.getElementById('btnClearSuiviHistory')?.addEventListener('click', () => {
       void clearDoneFollowUpHistory();
     });
@@ -1683,5 +1918,12 @@
     matchHistoriqueFilters,
     matchHistoriqueReasonFilter,
     matchHistoriqueHelpFilter,
+    /** Exposé pour les tests fiche détail historique. */
+    historyRowKey,
+    findHistoriqueRowByKey,
+    renderHistoriqueDetailHtml,
+    openHistoriqueDetail,
+    closeHistoriqueDetail,
+    getSelectedHistoryKey: () => selectedHistoryKey,
   };
 })(window);
