@@ -2556,6 +2556,29 @@ tbody tr:hover {
 
 /* ---------- Module Ruche ---------- */
 
+.ruche-panel-header {
+  gap: 0.75rem 1.25rem;
+}
+
+.ruche-lang-switch {
+  display: inline-flex;
+  gap: 0.35rem;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.ruche-lang-sep {
+  color: var(--text-muted, #9aa3ad);
+  font-size: 0.85rem;
+  user-select: none;
+}
+
+.ruche-lang-btn.is-active {
+  border-color: var(--accent, #5b9bd5);
+  background: rgba(91, 155, 213, 0.18);
+  font-weight: 700;
+}
+
 .ruche-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

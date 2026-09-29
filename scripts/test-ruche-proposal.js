@@ -8,6 +8,7 @@ const vm = require('vm');
 
 const root = path.join(__dirname, '..');
 const modelsCode = fs.readFileSync(path.join(root, 'js/models.js'), 'utf8');
+const i18nCodeForRuche = fs.readFileSync(path.join(root, 'js/ruche-i18n.js'), 'utf8');
 const rucheCode = fs.readFileSync(path.join(root, 'js/ruche.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 
@@ -24,22 +25,26 @@ function assert(cond, msg) {
 }
 
 console.log('\n=== UI double ruche ===');
-assert(html.includes('Ruche actuelle'), 'Titre ruche actuelle');
-assert(html.includes('Proposition optimisée'), 'Titre proposition');
+assert(html.includes('Ruche actuelle') || html.includes('data-i18n="current.title"'), 'Titre ruche actuelle');
+assert(html.includes('Proposition optimisée') || html.includes('data-i18n="proposal.title"'), 'Titre proposition');
 assert(html.includes('id="rucheProposalGrid"'), 'Grille proposition');
 assert(html.includes('id="rucheProposalStats"'), 'Stats proposition');
-assert(html.includes('Gain estimé'), 'Libellé Gain estimé');
-assert(html.includes('Déplacements'), 'Libellé Déplacements');
-assert(html.includes('Effectif — Retirés'), 'Résumé effectif proposition');
+assert(html.includes('Gain estimé') || html.includes('data-i18n="proposal.stats.empty"'), 'Libellé Gain estimé');
+assert(html.includes('Déplacements') || html.includes('proposal.stats'), 'Libellé Déplacements');
+assert(html.includes('Effectif — Retirés') || html.includes('proposal.stats.rosterEmpty'), 'Résumé effectif proposition');
 assert(!html.includes('Joueurs déplacés :'), 'Ancien libellé déplacés retiré');
 assert(html.includes('id="rucheProposalOptimize"'), 'Bouton générer');
 assert(html.includes('id="rucheProposalValidate"'), 'Bouton valider proposition');
 assert(html.includes('id="rucheProposalMode"'), 'Sélecteur de mode');
-assert(html.includes('Optimisation douce'), 'Mode douce');
-assert(html.includes('Nouveau plan complet'), 'Mode complet');
+assert(html.includes('Optimisation douce') || html.includes('proposal.mode.soft'), 'Mode douce');
+assert(html.includes('Nouveau plan complet') || html.includes('proposal.mode.full'), 'Mode complet');
 assert(html.includes('id="rucheAllowOfficerMoves"'), 'Case déplacement R4/R5');
-assert(html.includes('Autoriser aussi l’optimiseur'), 'Libellé option R4/R5');
-assert(html.includes('Valider cette proposition comme nouvelle ruche'), 'Libellé validation');
+assert(html.includes('Autoriser aussi l’optimiseur') || html.includes('proposal.officers.label'), 'Libellé option R4/R5');
+assert(
+  html.includes('Valider cette proposition comme nouvelle ruche') ||
+    html.includes('proposal.btn.validate'),
+  'Libellé validation'
+);
 assert(rucheCode.includes('seatOfficersNearMarshal'), 'Assise officiers près Maréchal');
 assert(rucheCode.includes("const MARSHAL = 'MARSHAL'"), 'Sentinelle case fixe Maréchal');
 assert(rucheCode.includes('isMarshalLandmark'), 'Détection événement Maréchal');
@@ -63,7 +68,11 @@ assert(rucheCode.includes('MOVE_PENALTY'), 'Pénalité de déplacement');
 assert(rucheCode.includes('TARGET_RATIO'), 'Seuil ~95 %');
 assert(rucheCode.includes('estimatedGainPct'), 'Stat gain estimé');
 assert(rucheCode.includes('validateProposal'), 'validateProposal');
-assert(rucheCode.includes('Aucune archive ne sera créée'), 'Validation sans archivage');
+assert(
+  rucheCode.includes('Aucune archive ne sera créée') ||
+    i18nCodeForRuche.includes('No archive will be created'),
+  'Validation sans archivage'
+);
 assert(rucheCode.includes('swapProposalSlots'), 'swap / DnD proposition');
 assert(rucheCode.includes('proposal: null'), 'Champ proposal en état');
 assert(rucheCode.includes("mode === 'full'"), 'Mode full');
@@ -116,9 +125,11 @@ const sandbox = {
   AppUI: { toast() {}, confirm: async () => true },
 };
 sandbox.window = sandbox;
+sandbox.global = sandbox;
 vm.createContext(sandbox);
 vm.runInContext(modelsCode, sandbox);
 sandbox.ROSModels = sandbox.window.ROSModels;
+vm.runInContext(i18nCodeForRuche, sandbox);
 vm.runInContext(rucheCode, sandbox);
 const Ruche = sandbox.window.RucheModule;
 

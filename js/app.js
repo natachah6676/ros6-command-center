@@ -64,18 +64,31 @@
     }, 2800);
   }
 
-  function confirm({ title, message, confirmLabel = 'Confirmer' }) {
+  function confirm({ title, message, confirmLabel = 'Confirmer', cancelLabel } = {}) {
     return new Promise((resolve) => {
       ui.confirmResolver = resolve;
       ui.confirmTitle.textContent = title || 'Confirmation';
       ui.confirmMessage.textContent = message || '';
       ui.confirmOk.textContent = confirmLabel;
+      if (ui.confirmCancel) {
+        if (cancelLabel) {
+          if (ui.confirmCancel.dataset.defaultLabel == null) {
+            ui.confirmCancel.dataset.defaultLabel = ui.confirmCancel.textContent || 'Annuler';
+          }
+          ui.confirmCancel.textContent = cancelLabel;
+        } else if (ui.confirmCancel.dataset.defaultLabel != null) {
+          ui.confirmCancel.textContent = ui.confirmCancel.dataset.defaultLabel;
+        }
+      }
       ui.confirmModal.showModal();
     });
   }
 
   function resolveConfirm(value) {
     if (ui.confirmModal.open) ui.confirmModal.close();
+    if (ui.confirmCancel && ui.confirmCancel.dataset.defaultLabel != null) {
+      ui.confirmCancel.textContent = ui.confirmCancel.dataset.defaultLabel;
+    }
     if (ui.confirmResolver) {
       const resolver = ui.confirmResolver;
       ui.confirmResolver = null;
@@ -188,7 +201,9 @@
     setText('brandServerLine', serverLine);
     setText(
       'rucheSubtitle',
-      `Plan de ruche ${alliance.tag} — 101 cases (10 × 10 + bas) · Maréchal au centre`
+      globalThis.RucheI18n && typeof RucheI18n.t === 'function'
+        ? RucheI18n.t('subtitle', { tag: alliance.tag })
+        : `Plan de ruche ${alliance.tag} — 101 cases (10 × 10 + bas) · Maréchal au centre`
     );
     setText(
       'trainCategoriesHint',

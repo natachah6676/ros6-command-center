@@ -76,7 +76,7 @@
       <button type="button" class="tab" data-tab="vs" role="tab" aria-selected="false">VS</button>
       <button type="button" class="tab" data-tab="tempete" role="tab" aria-selected="false">Tempête du Désert</button>
       <button type="button" class="tab" data-tab="train" role="tab" aria-selected="false">Train</button>
-      <button type="button" class="tab" data-tab="ruche" role="tab" aria-selected="false">Ruche</button>
+      <button type="button" class="tab" data-tab="ruche" role="tab" aria-selected="false" data-i18n="tab.ruche">Ruche</button>
       <button type="button" class="tab" data-tab="players" role="tab" aria-selected="false">Liste des membres</button>
       <button type="button" class="tab" data-tab="historique-suivi" role="tab" aria-selected="false">Historique suivi</button>
       <button type="button" class="tab hidden" data-tab="settings" role="tab" aria-selected="false" hidden aria-hidden="true">Paramètres</button>
@@ -443,11 +443,16 @@
       </section>
 
       <!-- RUCHE -->
-      <section id="panel-ruche" class="panel" role="tabpanel" hidden>
-        <div class="panel-header">
+            <section id="panel-ruche" class="panel" role="tabpanel" hidden>
+        <div class="panel-header ruche-panel-header">
           <div>
-            <h2>Ruche</h2>
-            <p class="panel-subtitle" id="rucheSubtitle">Plan de ruche — 101 cases (10 × 10 + bas) · événement Maréchal fixe au centre</p>
+            <h2 data-i18n="title">Ruche</h2>
+            <p class="panel-subtitle" id="rucheSubtitle" data-i18n="subtitle.fallback">Plan de ruche — 101 cases (10 × 10 + bas) · événement Maréchal fixe au centre</p>
+          </div>
+          <div class="ruche-lang-switch" role="group" data-i18n-aria="lang.aria" aria-label="Langue de l’interface Ruche">
+            <button type="button" class="btn btn-ghost btn-sm ruche-lang-btn" data-ruche-lang="fr" aria-pressed="true">FR</button>
+            <span class="ruche-lang-sep" aria-hidden="true">|</span>
+            <button type="button" class="btn btn-ghost btn-sm ruche-lang-btn" data-ruche-lang="en" aria-pressed="false">EN</button>
           </div>
         </div>
 
@@ -455,97 +460,69 @@
           <div class="ruche-dual">
             <section class="block">
               <header class="block-header">
-                <h3>Ruche actuelle</h3>
-                <p>Ruche enregistrée — ne change jamais automatiquement</p>
+                <h3 data-i18n="current.title">Ruche actuelle</h3>
+                <p data-i18n="current.help">Ruche enregistrée — ne change jamais automatiquement</p>
               </header>
               <div class="ruche-toolbar settings-actions">
-                <button type="button" id="rucheVerify" class="btn btn-ghost">Vérifier la ruche</button>
-                <button type="button" id="rucheValidate" class="btn btn-primary" disabled>Valider la ruche</button>
-                <button type="button" id="rucheExportPng" class="btn btn-ghost">Exporter en PNG</button>
-                <button type="button" id="rucheExportExcel" class="btn btn-ghost">Exporter en Excel</button>
-                <button type="button" id="rucheClear" class="btn btn-ghost">Vider la grille</button>
+                <button type="button" id="rucheVerify" class="btn btn-ghost" data-i18n="btn.verify">Vérifier la ruche</button>
+                <button type="button" id="rucheValidate" class="btn btn-primary" disabled data-i18n="btn.validate">Valider la ruche</button>
+                <button type="button" id="rucheExportPng" class="btn btn-ghost" data-i18n="btn.exportPng">Exporter en PNG</button>
+                <button type="button" id="rucheExportExcel" class="btn btn-ghost" data-i18n="btn.exportExcel">Exporter en Excel</button>
+                <button type="button" id="rucheClear" class="btn btn-ghost" data-i18n="btn.clear">Vider la grille</button>
               </div>
               <div id="rucheVerifyResult" class="ruche-verify-result" style="margin-top:0.85rem"></div>
               <div class="ruche-board" id="rucheBoard">
-                <div
-                  id="rucheGrid"
-                  class="ruche-grid"
-                  role="grid"
-                  aria-label="Grille de ruche actuelle 10 par 10"
-                ></div>
+                <div id="rucheGrid" class="ruche-grid" role="grid" data-i18n-aria="grid.aria" aria-label="Grille de ruche actuelle 10 par 10"></div>
               </div>
             </section>
 
             <section class="block ruche-proposal-block">
               <header class="block-header">
-                <h3>Proposition optimisée</h3>
-                <p>
-                  R4/R5 au plus près du Maréchal (sans regarder leur puissance héros), puis membres par
-                  puissance héros (plus fort → plus près) · n’écrase la ruche actuelle qu’après
-                  validation
-                </p>
+                <h3 data-i18n="proposal.title">Proposition optimisée</h3>
+                <p data-i18n="proposal.help">R4/R5 au plus près du Maréchal (sans regarder leur puissance héros), puis membres par puissance héros (plus fort → plus près) · n’écrase la ruche actuelle qu’après validation</p>
               </header>
               <div id="rucheProposalStats" class="ruche-proposal-stats" aria-live="polite">
-                Gain estimé : 0 % · Déplacements : 0 joueurs
+                <span data-i18n="proposal.stats.empty">Gain estimé : 0 % · Déplacements : 0 joueurs</span>
                 <br />
-                <span class="panel-subtitle">Effectif — Retirés : 0 · Nouveaux : 0 · Conservés : 0</span>
+                <span class="panel-subtitle" data-i18n="proposal.stats.rosterEmpty">Effectif — Retirés : 0 · Nouveaux : 0 · Conservés : 0</span>
               </div>
               <div class="ruche-toolbar settings-actions ruche-proposal-actions">
                 <label class="field ruche-proposal-mode-field">
-                  <span>Mode de génération</span>
-                  <select id="rucheProposalMode" class="input" aria-label="Mode de génération de proposition">
-                    <option value="soft">Optimisation douce</option>
-                    <option value="full">Nouveau plan complet</option>
+                  <span data-i18n="proposal.mode.label">Mode de génération</span>
+                  <select id="rucheProposalMode" class="input" data-i18n-aria="proposal.mode.aria" aria-label="Mode de génération de proposition">
+                    <option value="soft" data-i18n="proposal.mode.soft">Optimisation douce</option>
+                    <option value="full" data-i18n="proposal.mode.full">Nouveau plan complet</option>
                   </select>
                 </label>
-                <label
-                  id="rucheAllowOfficerMovesWrap"
-                  class="field ruche-officer-moves-field"
-                  hidden
-                >
+                <label id="rucheAllowOfficerMovesWrap" class="field ruche-officer-moves-field" hidden>
                   <span class="ruche-officer-moves-label">
-                    <input
-                      type="checkbox"
-                      id="rucheAllowOfficerMoves"
-                      aria-label="Autoriser le déplacement des R4/R5"
-                    />
-                    Autoriser aussi l’optimiseur à déplacer les R4/R5
-                    <small class="field-hint"
-                      >(sinon ils sont placés près du Maréchal puis verrouillés)</small
-                    >
+                    <input type="checkbox" id="rucheAllowOfficerMoves" data-i18n-aria="proposal.officers.aria" aria-label="Autoriser le déplacement des R4/R5" />
+                    <span data-i18n="proposal.officers.label">Autoriser aussi l’optimiseur à déplacer les R4/R5</span>
+                    <small class="field-hint" data-i18n="proposal.officers.hint">(sinon ils sont placés près du Maréchal puis verrouillés)</small>
                   </span>
                 </label>
-                <button type="button" id="rucheProposalOptimize" class="btn btn-ghost">
-                  Générer la proposition
-                </button>
-                <button type="button" id="rucheProposalValidate" class="btn btn-primary">
-                  Valider cette proposition comme nouvelle ruche
-                </button>
+                <button type="button" id="rucheProposalOptimize" class="btn btn-ghost" data-i18n="proposal.btn.generate">Générer la proposition</button>
+                <button type="button" id="rucheProposalValidate" class="btn btn-primary" data-i18n="proposal.btn.validate">Valider cette proposition comme nouvelle ruche</button>
               </div>
               <div class="ruche-board" id="rucheProposalBoard">
-                <div
-                  id="rucheProposalGrid"
-                  class="ruche-grid"
-                  role="grid"
-                  aria-label="Proposition de ruche optimisée"
-                ></div>
+                <div id="rucheProposalGrid" class="ruche-grid" role="grid" data-i18n-aria="proposal.grid.aria" aria-label="Proposition de ruche optimisée"></div>
               </div>
             </section>
           </div>
 
           <section class="block ruche-archives-block">
             <header class="block-header">
-              <h3>Archives ruche</h3>
-              <p>Plans validés — consultation seule</p>
+              <h3 data-i18n="archives.title">Archives ruche</h3>
+              <p data-i18n="archives.help">Plans validés — consultation seule</p>
             </header>
             <div id="rucheArchivesList" class="stack-list"></div>
-            <p id="rucheArchivesEmpty" class="empty-state hidden">Aucun plan validé pour le moment.</p>
+            <p id="rucheArchivesEmpty" class="empty-state hidden" data-i18n="archives.empty">Aucun plan validé pour le moment.</p>
             <div id="rucheArchivePreview" class="ruche-archive-preview hidden" style="margin-top:0.85rem"></div>
           </section>
         </div>
       </section>
 
-      <!-- TEMPÊTE DU DÉSERT -->
+<!-- TEMPÊTE DU DÉSERT -->
       <section id="panel-tempete" class="panel" role="tabpanel" hidden>
         <div class="panel-header">
           <div>
@@ -924,20 +901,20 @@
 
           <section class="block">
             <header class="block-header">
-              <h3>Couleurs Ruche</h3>
-              <p>Couleurs du plan de ruche — module Ruche uniquement</p>
+              <h3 data-i18n="colors.title">Couleurs Ruche</h3>
+              <p data-i18n="colors.help">Couleurs du plan de ruche — module Ruche uniquement</p>
             </header>
             <div class="ruche-color-settings">
               <label class="field ruche-color-field">
-                <span>Maréchal</span>
+                <span data-i18n="colors.marshal">Maréchal</span>
                 <input type="color" id="rucheColorMarshal" class="input ruche-color-input" value="#7b3fa0" />
               </label>
               <label class="field ruche-color-field">
-                <span>R5 / R4</span>
+                <span data-i18n="colors.r4">R5 / R4</span>
                 <input type="color" id="rucheColorR4" class="input ruche-color-input" value="#5B9BD5" />
               </label>
               <label class="field ruche-color-field">
-                <span>FREE</span>
+                <span data-i18n="colors.free">FREE</span>
                 <input type="color" id="rucheColorFree" class="input ruche-color-input" value="#000000" />
               </label>
             </div>
@@ -1457,7 +1434,8 @@
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260916-vs-signals1"></script>
   <script src="js/train.js?v=20260911-export1"></script>
-  <script src="js/ruche.js?v=20260912-marshal-fixed"></script>
+  <script src="js/ruche-i18n.js?v=20260929-ruche-i18n1"></script>
+  <script src="js/ruche.js?v=20260929-ruche-i18n1"></script>
   <script src="js/tempete.js?v=20260809-scoped1"></script>
   <script src="js/backups.js?v=20260912-backups-local1"></script>
   <script src="js/app.js?v=20260912-hist1"></script>
