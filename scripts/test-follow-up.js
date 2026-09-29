@@ -131,10 +131,10 @@ discretP.id = 'p_discret';
 state.players.push(discretP);
 state.weeks[0].scores.p_discret = makeScore(0);
 const rDiscret = M.detectFollowUpReasons(discretP, state);
-assert(rDiscret.discret === false && !rDiscret.vs, 'flag discret → hors Gestion des membres');
+assert(rDiscret.discret === true && !rDiscret.vs, 'flag discret → motif Gestion des membres');
 assert(
-  M.formatFollowUpReasonsLabel({ discret: true }).includes('Discret'),
-  'libellé Discret (historique)'
+  M.formatFollowUpReasonsLabel({ discret: true }).includes('Joueur discret'),
+  'libellé Joueur discret'
 );
 assert(
   M.FOLLOW_UP_SPECIALIST_KEYS.some((k) => k.id === 'discret'),
@@ -319,8 +319,9 @@ assert(html.includes('id="panel-suivi"'), 'panneau suivi');
 assert(html.includes('id="followUpVsMinDays"'), 'seuil VS paramètres (futur onglet VS)');
 assert(html.includes('id="suiviFilterAssignee"'), 'filtre R4 assigné');
 assert(html.includes('id="filterDiscretAdmin"'), 'filtre Discret liste membres');
-assert(html.includes('Pas contacté depuis 30 jours'), 'filtre 30 jours Discret');
-assert(playersCode.includes('markDiscretContact'), 'bouton Contact pris');
+assert(!html.includes('Pas contacté depuis 30 jours'), 'filtre 30 jours Discret retiré');
+assert(!playersCode.includes('markDiscretContact'), 'bouton Contact pris retiré');
+assert(!playersCode.includes('data-action="discret-contact"'), 'action discret-contact absente');
 assert(!html.includes('option value="vs">VS'), 'pas de filtre VS suivi');
 assert(
   !html.includes('id="suiviFilterReason"') ||
@@ -336,7 +337,8 @@ assert(!html.includes('option value="absent"'), 'pas de filtre motif Absent');
 assert(html.includes('id="followUpSpecialistVs"'), 'référent VS paramètres');
 assert(html.includes('id="followUpSpecialistDiscret"'), 'référent Discret paramètres');
 assert(html.includes('id="filterDiscretAdmin"'), 'filtre Discret liste');
-assert(!html.includes('<option value="discret">Discret</option>'), 'pas de filtre motif Discret dans suivi');
+assert(html.includes('option value="discret">Joueur discret</option>'), 'filtre motif Joueur discret');
+assert(html.includes('option value="help_vs">'), 'filtre demande aide VS');
 assert(html.includes('id="playerDiscret"'), 'case Discret fiche joueur');
 assert(suiviCode.includes('isFollowUpVisibleToViewer'), 'filtre visibilité R4');
 assert(suiviCode.includes('pickFollowUpSpecialist'), 'auto référent motif');
@@ -427,11 +429,34 @@ console.log('\nBoutons / motifs Gestion des membres');
 assert(!Suivi.isLightOnlyReasons({ praise: true }), 'plus de motif léger');
 assert(Suivi.hasDossierReasons({ hero: true }), 'héros = dossier');
 assert(Suivi.hasDossierReasons({ manual: true }), 'manuel = dossier');
+assert(Suivi.hasDossierReasons({ discret: true }), 'discret = dossier');
 assert(!Suivi.hasDossierReasons({ vs: true }), 'VS seul ≠ dossier gestion');
+{
+  const helpState = {
+    playerFollowUpNotes: {
+      p_help: {
+        notes: [
+          {
+            id: 'h1',
+            at: '2026-09-29T10:00:00.000Z',
+            text: 'Demande d’aide VS — ouverte',
+            eventType: 'help_opened',
+            helpType: 'vs',
+            authorLabel: 'R4',
+          },
+        ],
+      },
+    },
+  };
+  assert(
+    Suivi.hasDossierReasons({}, null, helpState, 'p_help'),
+    'aide ouverte (ledger) = dossier'
+  );
+}
 
-console.log('\nContacts Discret (liste membres)');
+console.log('\nContacts Discret legacy (données conservées)');
 const overduePlayer = M.createPlayer({ pseudo: 'Due', discret: true });
-assert(M.isDiscretContactOverdue(overduePlayer), 'sans contact → à faire');
+assert(M.isDiscretContactOverdue(overduePlayer), 'sans contact → overdue legacy');
 const contact = M.pushDiscretContact(overduePlayer, {
   at: new Date().toISOString(),
   text: 'Contact pris',
@@ -442,6 +467,10 @@ assert(!M.isDiscretContactOverdue(overduePlayer), 'contact récent → pas dû')
 const oldIso = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
 overduePlayer.discretContacts = M.normalizeDiscretContacts([{ at: oldIso, text: 'Ancien' }]);
 assert(M.isDiscretContactOverdue(overduePlayer), 'contact > 30 j → à faire');
+assert(
+  M.normalizeDiscretContacts([{ at: oldIso, text: 'Ancien', authorLabel: 'X' }]).length === 1,
+  'anciens discretContacts toujours normalisables'
+);
 
 console.log(`\n${passed} OK, ${failed} KO`);
 process.exit(failed ? 1 : 0);

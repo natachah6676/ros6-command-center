@@ -3286,6 +3286,42 @@ tbody tr:hover {
   white-space: pre-wrap;
 }
 
+.suivi-row-help {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #b45309;
+}
+
+.suivi-row.has-open-help {
+  border-color: #f59e0b;
+}
+
+.suivi-help-block {
+  margin-top: 0.85rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.suivi-help-block h4 {
+  margin: 0 0 0.45rem;
+  font-size: 0.95rem;
+}
+
+.suivi-help-active {
+  margin-top: 0.45rem;
+  color: #b45309;
+}
+
+.suivi-note--help-open {
+  border-left: 3px solid #f59e0b;
+}
+
+.suivi-note--help-resolved {
+  border-left: 3px solid #16a34a;
+}
+
 .suivi-note-form {
   display: grid;
   gap: 0.65rem;
