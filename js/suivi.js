@@ -1344,10 +1344,58 @@
     return `${text.slice(0, maxLen - 1)}…`;
   }
 
-  function getDoneFollowUpRows(state) {
-    const q = (document.getElementById('historiqueSuiviSearch')?.value || '')
-      .trim()
-      .toLowerCase();
+  function getHistoriqueFilterValues() {
+    return {
+      q: (document.getElementById('historiqueSuiviSearch')?.value || '')
+        .trim()
+        .toLowerCase(),
+      reasonFilter: document.getElementById('historiqueSuiviFilterReason')?.value || '',
+      helpFilter: document.getElementById('historiqueSuiviFilterHelp')?.value || '',
+    };
+  }
+
+  /** Filtre motif historique (fiches terminées + contacts Discret legacy). */
+  function matchHistoriqueReasonFilter(row, reasonFilter) {
+    if (!reasonFilter) return true;
+    if (row.kind === 'discret_contact') return reasonFilter === 'discret';
+    const reasons = row.reasons || {};
+    if (reasonFilter === 'hero') return Boolean(reasons.hero);
+    if (reasonFilter === 'discret') return Boolean(reasons.discret);
+    if (reasonFilter === 'manual') return Boolean(reasons.manual);
+    return true;
+  }
+
+  /**
+   * Filtre demande d’aide : au moins un help_opened du type (ouvert ou résolu).
+   * Les contacts Discret legacy n’ont pas d’événements aide sur « ce suivi ».
+   */
+  function matchHistoriqueHelpFilter(row, state, helpFilter) {
+    if (!helpFilter) return true;
+    if (row.kind === 'discret_contact') return false;
+    const playerId = row.player?.id;
+    if (!playerId) return false;
+    const types = ROSModels.getEverOpenedFollowUpHelpTypes(state, playerId);
+    return types.includes(helpFilter);
+  }
+
+  function matchHistoriquePseudo(row, q) {
+    if (!q) return true;
+    return String(row.player?.pseudo || '')
+      .toLowerCase()
+      .includes(q);
+  }
+
+  function matchHistoriqueFilters(row, state, filters) {
+    const { q = '', reasonFilter = '', helpFilter = '' } = filters || {};
+    return (
+      matchHistoriquePseudo(row, q) &&
+      matchHistoriqueReasonFilter(row, reasonFilter) &&
+      matchHistoriqueHelpFilter(row, state, helpFilter)
+    );
+  }
+
+  function getDoneFollowUpRows(state, filters) {
+    const f = filters || getHistoriqueFilterValues();
     return (state.players || [])
       .filter((p) => p && p.status === 'Actif')
       .map((player) => {
@@ -1364,43 +1412,46 @@
         if (follow.reasons?.vs || follow.contactReasons?.vs) reasons.vs = true;
         if (follow.reasons?.praise || follow.contactReasons?.praise) reasons.praise = true;
         if (follow.reasons?.discret || follow.contactReasons?.discret) reasons.discret = true;
-        return { kind: 'follow', player, follow, reasons, sortAt: follow.closedAt || follow.updatedAt || '' };
+        const helpTypes = ROSModels.getEverOpenedFollowUpHelpTypes(state, player.id);
+        return {
+          kind: 'follow',
+          player,
+          follow,
+          reasons,
+          helpTypes,
+          sortAt: follow.closedAt || follow.updatedAt || '',
+        };
       })
       .filter(Boolean)
       .filter((row) =>
         ROSModels.isFollowUpVisibleToViewer(row, state, viewerPlayerId(), viewerIsR5())
       )
-      .filter((row) => {
-        if (!q) return true;
-        return String(row.player.pseudo || '')
-          .toLowerCase()
-          .includes(q);
-      });
+      .filter((row) => matchHistoriqueFilters(row, state, f));
   }
 
-  function getDiscretContactHistoryRows(state) {
-    const q = (document.getElementById('historiqueSuiviSearch')?.value || '')
-      .trim()
-      .toLowerCase();
+  function getDiscretContactHistoryRows(state, filters) {
+    const f = filters || getHistoriqueFilterValues();
     const rows = [];
     (state.players || []).forEach((player) => {
       if (!player) return;
       const contacts = ROSModels.normalizeDiscretContacts(player.discretContacts);
       contacts.forEach((contact) => {
-        if (q && !String(player.pseudo || '').toLowerCase().includes(q)) return;
-        rows.push({
+        const row = {
           kind: 'discret_contact',
           player,
           contact,
           sortAt: contact.at || '',
-        });
+        };
+        if (!matchHistoriqueFilters(row, state, f)) return;
+        rows.push(row);
       });
     });
     return rows;
   }
 
-  function getHistoriqueRows(state) {
-    return [...getDoneFollowUpRows(state), ...getDiscretContactHistoryRows(state)].sort(
+  function getHistoriqueRows(state, filters) {
+    const f = filters || getHistoriqueFilterValues();
+    return [...getDoneFollowUpRows(state, f), ...getDiscretContactHistoryRows(state, f)].sort(
       (a, b) => {
         const ca = a.sortAt || '';
         const cb = b.sortAt || '';
@@ -1539,7 +1590,7 @@
           </tr>
         `;
         }
-        const { player, follow, reasons } = row;
+        const { player, follow, reasons, helpTypes } = row;
         const closed =
           ROSModels.formatCoachingDateTime(follow.closedAt) ||
           ROSModels.formatCoachingDateTime(follow.updatedAt) ||
@@ -1547,12 +1598,22 @@
         const r4 = contactOfficerLabel(follow, player.id);
         const notes = formatNotesPreview(follow, player.id);
         const motifs = ROSModels.formatFollowUpReasonsLabel(reasons);
+        const helpLabel = ROSModels.formatFollowUpHelpHistoryLabel(
+          helpTypes || ROSModels.getEverOpenedFollowUpHelpTypes(state, player.id)
+        );
         const fin =
           ROSModels.getFollowUpCloseReasonLabel(follow.closeReason) || '—';
         return `
           <tr>
             <td><strong>${escapeHtml(player.pseudo)}</strong></td>
-            <td>${escapeHtml(motifs)}</td>
+            <td>
+              ${escapeHtml(motifs)}
+              ${
+                helpLabel
+                  ? `<span class="historique-suivi-help">${escapeHtml(helpLabel)}</span>`
+                  : ''
+              }
+            </td>
             <td>${escapeHtml(fin)}</td>
             <td>${escapeHtml(r4)}</td>
             <td>${escapeHtml(closed)}</td>
@@ -1594,6 +1655,12 @@
       void resetVsUnderCounters();
     });
     document.getElementById('historiqueSuiviSearch')?.addEventListener('input', () => renderHistory());
+    document
+      .getElementById('historiqueSuiviFilterReason')
+      ?.addEventListener('change', () => renderHistory());
+    document
+      .getElementById('historiqueSuiviFilterHelp')
+      ?.addEventListener('change', () => renderHistory());
     document.getElementById('historiqueSuiviBody')?.addEventListener('click', onHistoryClick);
     document.getElementById('btnClearSuiviHistory')?.addEventListener('click', () => {
       void clearDoneFollowUpHistory();
@@ -1611,5 +1678,10 @@
     /** Exposé pour les tests (boutons masqués félicitations seules). */
     isLightOnlyReasons,
     hasDossierReasons,
+    /** Exposé pour les tests filtres Historique suivi. */
+    getHistoriqueRows,
+    matchHistoriqueFilters,
+    matchHistoriqueReasonFilter,
+    matchHistoriqueHelpFilter,
   };
 })(window);
