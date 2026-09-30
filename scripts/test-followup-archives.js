@@ -557,14 +557,294 @@ console.log('\n=== Multi-appareils ===');
   const once = T.mergeCommandCenterStore(remote, deviceB);
   const ids = Object.keys(once.playerFollowUpArchives);
   assert(ids.length === 1 && ids[0] === 'arch_ep_123', 'deux appareils, un seul arch_<episodeId>');
-  const mergedNotes = once.playerFollowUpArchives.arch_ep_123.notes;
-  assert(mergedNotes.length === 2, 'notes fusionnées sans doublon');
-  assert(mergedNotes.some((n) => n.id === 'n_a' && n.text === 'depuis A'), 'texte d’origine conservé');
-  assert(mergedNotes.some((n) => n.id === 'n_b'), 'note seulement présente sur l’autre appareil ajoutée');
+  assert(
+    JSON.stringify(once.playerFollowUpArchives.arch_ep_123) ===
+      JSON.stringify(remote.playerFollowUpArchives.arch_ep_123),
+    'archive distante inchangée : la note locale supplémentaire est refusée'
+  );
   const again = T.mergeCommandCenterStore(once, deviceB);
   assert(
-    again.playerFollowUpArchives.arch_ep_123.notes.length === 2,
-    'second rapprochement idempotent'
+    JSON.stringify(again.playerFollowUpArchives.arch_ep_123) ===
+      JSON.stringify(remote.playerFollowUpArchives.arch_ep_123),
+    'second rapprochement strictement identique'
+  );
+}
+
+console.log('\n=== Immutabilité stricte des archives distantes ===');
+{
+  function same(actual, expected, msg) {
+    assert(JSON.stringify(actual) === JSON.stringify(expected), msg);
+  }
+  const remoteArchive = {
+    id: 'arch_ep_A',
+    episodeId: 'ep_A',
+    playerId: 'p1',
+    pseudo: 'Madien City',
+    reasons: { vs: false, hero: false, praise: false, discret: true, manual: false },
+    manual: false,
+    assigneePlayerId: 'r4_mamat',
+    assigneeLabel: 'Mamat',
+    status: 'done',
+    createdAt: '2026-09-01T08:00:00.000Z',
+    contactedAt: '2026-09-02T08:00:00.000Z',
+    closedAt: '2026-09-10T08:00:00.000Z',
+    closeReason: 'coaching_done',
+    helpNeeds: { vs: false, troops: true, other: false },
+    notes: [
+      {
+        id: 'n1',
+        at: '2026-09-03T08:00:00.000Z',
+        text: 'texte distant',
+        authorLabel: 'Willow',
+        authorUserId: 'u1',
+        eventType: 'comment',
+        episodeId: 'ep_A',
+      },
+      {
+        id: 'n2',
+        at: '2026-09-04T08:00:00.000Z',
+        text: 'aide troupes distante',
+        authorLabel: 'Willow',
+        eventType: 'help_opened',
+        helpType: 'troops',
+        episodeId: 'ep_A',
+      },
+    ],
+    archivedAt: '2026-09-10T12:00:00.000Z',
+    archivedByUserId: 'u1',
+    archivedByLabel: 'Willow',
+  };
+  const players = [{ id: 'p1', pseudo: 'Madien City', role: 'Membre', status: 'Actif' }];
+  const remote = {
+    players,
+    playerFollowUps: {},
+    playerFollowUpNotes: {},
+    playerFollowUpArchives: { arch_ep_A: remoteArchive },
+  };
+
+  const unknown = T.mergeCommandCenterStore(remote, {
+    players,
+    playerFollowUps: {},
+    playerFollowUpNotes: {},
+  });
+  same(
+    unknown.playerFollowUpArchives.arch_ep_A,
+    remoteArchive,
+    '1. distant possède A, local ne la connaît pas → A conservée'
+  );
+
+  const incomplete = {
+    ...remoteArchive,
+    notes: [remoteArchive.notes[0]],
+    helpNeeds: { vs: false, troops: false, other: false },
+  };
+  const mergedIncomplete = T.mergeCommandCenterStore(remote, {
+    players,
+    playerFollowUps: {},
+    playerFollowUpNotes: {},
+    playerFollowUpArchives: { arch_ep_A: incomplete },
+  });
+  same(
+    mergedIncomplete.playerFollowUpArchives.arch_ep_A,
+    remoteArchive,
+    '2. local A incomplète → distant strictement inchangée'
+  );
+
+  const extraNote = {
+    ...remoteArchive,
+    notes: [
+      ...remoteArchive.notes,
+      {
+        id: 'n_extra',
+        at: '2026-09-05T08:00:00.000Z',
+        text: 'note locale en trop',
+        authorLabel: 'Cache',
+        eventType: 'comment',
+        episodeId: 'ep_A',
+      },
+    ],
+  };
+  const mergedExtra = T.mergeCommandCenterStore(remote, {
+    players,
+    playerFollowUps: {},
+    playerFollowUpNotes: {},
+    playerFollowUpArchives: { arch_ep_A: extraNote },
+  });
+  same(
+    mergedExtra.playerFollowUpArchives.arch_ep_A,
+    remoteArchive,
+    '3. note supplémentaire locale refusée'
+  );
+  assert(
+    Object.keys(mergedExtra.playerFollowUpArchives).length === 1 &&
+      Object.keys(mergedExtra.playerFollowUpArchives)[0] === 'arch_ep_A',
+    '8. même episodeId → un seul arch_<episodeId>'
+  );
+  same(mergedExtra.playerFollowUpArchives.arch_ep_A, remoteArchive, '8b. cette archive unique reste la version distante');
+
+  const older = { ...remoteArchive, archivedAt: '2026-01-01T00:00:00.000Z', archivedByLabel: 'Ancien' };
+  const mergedOlder = T.mergeCommandCenterStore(remote, {
+    players,
+    playerFollowUps: {},
+    playerFollowUpNotes: {},
+    playerFollowUpArchives: { arch_ep_A: older },
+  });
+  same(
+    mergedOlder.playerFollowUpArchives.arch_ep_A,
+    remoteArchive,
+    '4. archivedAt local plus ancien → distant inchangée'
+  );
+
+  const differentFields = {
+    ...remoteArchive,
+    pseudo: 'Autre',
+    reasons: { vs: true, hero: true, praise: false, discret: false, manual: true },
+    assigneePlayerId: 'r4_autre',
+    assigneeLabel: 'AutreR4',
+    createdAt: '2020-01-01T00:00:00.000Z',
+    contactedAt: '2020-01-02T00:00:00.000Z',
+    closedAt: '2020-01-03T00:00:00.000Z',
+    closeReason: 'no_reply',
+    helpNeeds: { vs: true, troops: false, other: true },
+    archivedByUserId: 'u9',
+    archivedByLabel: 'Intrus',
+  };
+  const mergedFields = T.mergeCommandCenterStore(remote, {
+    players,
+    playerFollowUps: {},
+    playerFollowUpNotes: {},
+    playerFollowUpArchives: { arch_ep_A: differentFields },
+  });
+  same(
+    mergedFields.playerFollowUpArchives.arch_ep_A,
+    remoteArchive,
+    '5. pseudo, motifs, R4, dates, raison, helpNeeds, auteur → distant inchangée'
+  );
+
+  const otherText = {
+    ...remoteArchive,
+    notes: remoteArchive.notes.map((n) =>
+      n.id === 'n1' ? { ...n, text: 'texte local différent' } : n
+    ),
+  };
+  const mergedText = T.mergeCommandCenterStore(remote, {
+    players,
+    playerFollowUps: {},
+    playerFollowUpNotes: {},
+    playerFollowUpArchives: { arch_ep_A: otherText },
+  });
+  same(
+    mergedText.playerFollowUpArchives.arch_ep_A,
+    remoteArchive,
+    '6. texte local d’une note commune refusé'
+  );
+
+  const archiveB = {
+    id: 'arch_ep_B',
+    episodeId: 'ep_B',
+    playerId: 'p1',
+    pseudo: 'Madien City',
+    reasons: { manual: true, hero: false, discret: false, vs: false, praise: false },
+    assigneePlayerId: 'r4_mamat',
+    assigneeLabel: 'Mamat',
+    status: 'done',
+    createdAt: '2026-10-01T00:00:00.000Z',
+    contactedAt: null,
+    closedAt: '2026-10-02T00:00:00.000Z',
+    closeReason: 'coaching_done',
+    helpNeeds: { vs: false, troops: false, other: false },
+    notes: [
+      {
+        id: 'nb',
+        at: '2026-10-01T12:00:00.000Z',
+        text: 'archive nouvelle',
+        authorLabel: 'Willow',
+        eventType: 'comment',
+        episodeId: 'ep_B',
+      },
+    ],
+    archivedAt: '2026-10-02T12:00:00.000Z',
+    archivedByUserId: 'u1',
+    archivedByLabel: 'Willow',
+  };
+  const mergedNew = T.mergeCommandCenterStore(remote, {
+    players,
+    playerFollowUps: {},
+    playerFollowUpNotes: {},
+    playerFollowUpArchives: { arch_ep_B: archiveB },
+  });
+  same(mergedNew.playerFollowUpArchives.arch_ep_A, remoteArchive, '7. A distante reste identique');
+  same(mergedNew.playerFollowUpArchives.arch_ep_B, archiveB, '7. archive B absente du distant est ajoutée');
+  assert(
+    Object.keys(mergedNew.playerFollowUpArchives).sort().join(',') === 'arch_ep_A,arch_ep_B',
+    '7c. A et B coexistent, chacune sous son archiveId'
+  );
+
+  const stale = {
+    players,
+    playerFollowUps: {},
+    playerFollowUpNotes: {},
+    playerFollowUpArchives: { arch_ep_A: extraNote, arch_ep_B: archiveB },
+  };
+  const first = T.mergeCommandCenterStore(remote, stale);
+  const second = T.mergeCommandCenterStore(first, stale);
+  same(
+    second.playerFollowUpArchives.arch_ep_A,
+    remoteArchive,
+    '9. second merge avec le vieux cache : A strictement identique'
+  );
+  same(
+    second.playerFollowUpArchives.arch_ep_B,
+    archiveB,
+    '9. second merge : B déjà adoptée reste identique'
+  );
+
+  const remoteWithB = {
+    players,
+    playerFollowUps: {
+      p1: {
+        episodeId: 'ep_live',
+        status: 'in_progress',
+        reasons: { manual: true },
+        manual: true,
+        createdAt: '2026-11-01T00:00:00.000Z',
+        updatedAt: '2026-11-01T00:00:00.000Z',
+        helpNeeds: { vs: false, troops: false, other: false },
+        notes: [],
+        assigneePlayerId: 'r4_mamat',
+        assigneeLabel: 'Mamat',
+      },
+    },
+    playerFollowUpNotes: {},
+    playerFollowUpArchives: { arch_ep_A: remoteArchive },
+  };
+  const oldCacheWithA = {
+    players,
+    playerFollowUps: {
+      p1: {
+        episodeId: 'ep_A',
+        status: 'done',
+        reasons: { discret: true },
+        createdAt: '2026-09-01T08:00:00.000Z',
+        updatedAt: '2026-09-10T08:00:00.000Z',
+        closedAt: '2026-09-10T08:00:00.000Z',
+        closeReason: 'coaching_done',
+        helpNeeds: {},
+        notes: [],
+      },
+    },
+    playerFollowUpNotes: {},
+    playerFollowUpArchives: { arch_ep_A: incomplete },
+  };
+  const zombieAndLive = T.mergeCommandCenterStore(remoteWithB, oldCacheWithA);
+  same(
+    zombieAndLive.playerFollowUpArchives.arch_ep_A,
+    remoteArchive,
+    '10. archive A inchangée face au vieux cache'
+  );
+  assert(
+    zombieAndLive.playerFollowUps.p1 && zombieAndLive.playerFollowUps.p1.episodeId === 'ep_live',
+    '10. archive A + suivi vivant + vieux cache fiche A → le suivi vivant reste actif'
   );
 }
 

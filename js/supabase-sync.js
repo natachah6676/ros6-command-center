@@ -594,14 +594,35 @@
     if (global.ROSModels && typeof ROSModels.mergePlayerFollowUpArchives === 'function') {
       return ROSModels.mergePlayerFollowUpArchives(remoteArchives, localArchives);
     }
-    const out = {
-      ...(remoteArchives && typeof remoteArchives === 'object' ? remoteArchives : {}),
-    };
-    Object.keys(localArchives && typeof localArchives === 'object' ? localArchives : {}).forEach(
-      (id) => {
-        if (!out[id]) out[id] = localArchives[id];
-      }
-    );
+    // Filet sans models : la copie distante d’un archiveId existant n’est jamais réécrite.
+    const remote =
+      remoteArchives && typeof remoteArchives === 'object' && !Array.isArray(remoteArchives)
+        ? remoteArchives
+        : {};
+    const local =
+      localArchives && typeof localArchives === 'object' && !Array.isArray(localArchives)
+        ? localArchives
+        : {};
+    const out = {};
+    const episodes = new Set();
+    Object.keys(remote).forEach((id) => {
+      const archive = remote[id];
+      if (!archive || typeof archive !== 'object') return;
+      out[id] = JSON.parse(JSON.stringify(archive));
+      if (archive.episodeId) episodes.add(String(archive.episodeId));
+    });
+    Object.keys(local).forEach((id) => {
+      const archive = local[id];
+      if (!archive || typeof archive !== 'object') return;
+      if (out[id]) return;
+      if (archive.episodeId && episodes.has(String(archive.episodeId))) return;
+      const canonical =
+        archive.episodeId && String(archive.episodeId).trim()
+          ? `arch_${String(archive.episodeId).trim()}`
+          : id;
+      if (out[canonical]) return;
+      out[canonical] = JSON.parse(JSON.stringify(archive));
+    });
     return out;
   }
 

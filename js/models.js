@@ -1876,35 +1876,63 @@
     return out;
   }
 
-  function mergeFollowUpArchivePair(a, b) {
-    const left = a && a.episodeId ? a : normalizeFollowUpArchive(a);
-    const right = b && b.episodeId && b.notes ? b : normalizeFollowUpArchive(b);
-    if (!left) return right || null;
-    if (!right) return left;
-    const leftAt = String(left.archivedAt || '');
-    const rightAt = String(right.archivedAt || '');
-    const base = leftAt && rightAt ? (leftAt <= rightAt ? left : right) : leftAt ? left : right;
-    const other = base === left ? right : left;
-    const notes = mergeFollowUpArchiveNoteLists(base.notes, other.notes);
-    return normalizeFollowUpArchive({
-      ...base,
-      notes,
-      helpNeeds: deriveFollowUpHelpNeedsFromNotes(notes),
-    });
+  function cloneJsonValue(value) {
+    if (value == null) return value;
+    return JSON.parse(JSON.stringify(value));
   }
 
   /**
-   * Union par archiveId. Une map vide ou absente ne retire aucune archive de l’autre côté.
-   * Même episodeId → une seule archive ; notes unies sans doublon ; champs figés = plus ancien archivedAt.
+   * Identifiant canonique. Deux copies du même episodeId visent toujours arch_<episodeId>.
+   */
+  function establishedFollowUpArchiveId(archive, fallbackKey) {
+    if (archive && archive.episodeId) {
+      const episode = String(archive.episodeId).trim();
+      if (episode) return `arch_${episode}`;
+    }
+    if (archive && archive.id) return String(archive.id);
+    return fallbackKey ? String(fallbackKey) : '';
+  }
+
+  /**
+   * Si l’archive établie (1er argument) existe, elle est recopiée telle quelle.
+   * La copie suivante est ignorée : pas d’union de notes, pas de comparaison d’archivedAt.
+   */
+  function mergeFollowUpArchivePair(established, incoming) {
+    if (established && typeof established === 'object') return cloneJsonValue(established);
+    if (incoming && typeof incoming === 'object') return cloneJsonValue(incoming);
+    return null;
+  }
+
+  /**
+   * Merge sync : 1er argument = archives déjà dans l’état distant, 2e = cache qui pousse.
+   * - seulement distante : conservée telle quelle ;
+   * - seulement locale : ajoutée (archive nouvelle) ;
+   * - même archiveId / episodeId : la version distante gagne intégralement.
    */
   function mergePlayerFollowUpArchives(remoteRaw, localRaw) {
-    const remote = normalizePlayerFollowUpArchives(remoteRaw);
-    const local = normalizePlayerFollowUpArchives(localRaw);
-    const ids = new Set([...Object.keys(remote), ...Object.keys(local)]);
+    const remote =
+      remoteRaw && typeof remoteRaw === 'object' && !Array.isArray(remoteRaw) ? remoteRaw : {};
+    const local =
+      localRaw && typeof localRaw === 'object' && !Array.isArray(localRaw) ? localRaw : {};
     const out = {};
-    ids.forEach((id) => {
-      const merged = mergeFollowUpArchivePair(remote[id], local[id]);
-      if (merged) out[merged.id] = merged;
+    const episodes = new Set();
+    Object.keys(remote).forEach((key) => {
+      const archive = remote[key];
+      if (!archive || typeof archive !== 'object') return;
+      const id = establishedFollowUpArchiveId(archive, key);
+      if (!id || out[id]) return;
+      out[id] = cloneJsonValue(archive);
+      if (archive.episodeId) episodes.add(String(archive.episodeId));
+    });
+    Object.keys(local).forEach((key) => {
+      const archive = local[key];
+      if (!archive || typeof archive !== 'object') return;
+      const episodeId = archive.episodeId ? String(archive.episodeId) : '';
+      if (episodeId && episodes.has(episodeId)) return;
+      const id = establishedFollowUpArchiveId(archive, key);
+      if (!id || out[id]) return;
+      out[id] = cloneJsonValue(archive);
+      if (episodeId) episodes.add(episodeId);
     });
     return out;
   }
