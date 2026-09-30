@@ -173,6 +173,44 @@
       }
     }
 
+    if (state.playerFollowUpAutoSuppress && typeof state.playerFollowUpAutoSuppress === 'object') {
+      const result = migrateMapKeysToPlayerIds(state.playerFollowUpAutoSuppress, players, options);
+      if (result.changed) {
+        state.playerFollowUpAutoSuppress = result.map;
+        changed = true;
+      }
+    }
+
+    if (state.playerFollowUpArchives && typeof state.playerFollowUpArchives === 'object') {
+      const explicit = options.explicitPseudo;
+      const explicitId = options.explicitPlayerId;
+      Object.keys(state.playerFollowUpArchives).forEach((archiveId) => {
+        const archive = state.playerFollowUpArchives[archiveId];
+        if (!archive || typeof archive !== 'object') return;
+        const rewriteId = (value) => {
+          if (!value || isKnownPlayerId(players, value)) return value;
+          if (
+            explicit &&
+            explicitId &&
+            String(value).trim().toLowerCase() === String(explicit).trim().toLowerCase()
+          ) {
+            return explicitId;
+          }
+          return findIdByPseudo(players, value) || value;
+        };
+        const nextPlayerId = rewriteId(archive.playerId);
+        const nextAssigneeId = rewriteId(archive.assigneePlayerId);
+        if (nextPlayerId !== archive.playerId) {
+          archive.playerId = nextPlayerId;
+          changed = true;
+        }
+        if (nextAssigneeId !== archive.assigneePlayerId) {
+          archive.assigneePlayerId = nextAssigneeId;
+          changed = true;
+        }
+      });
+    }
+
     return { state, changed };
   }
 

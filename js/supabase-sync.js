@@ -524,12 +524,31 @@
         remoteStore.playerFollowUpNotes,
         localStore.playerFollowUpNotes
       ),
+      playerFollowUpArchives: mergePlayerFollowUpArchivesField(
+        remoteStore.playerFollowUpArchives,
+        localStore.playerFollowUpArchives
+      ),
+      playerFollowUpAutoSuppress: mergePlayerFollowUpAutoSuppressField(
+        remoteStore.playerFollowUpAutoSuppress,
+        localStore.playerFollowUpAutoSuppress
+      ),
       weeks: weekState.weeks,
       currentWeekId: weekState.currentWeekId,
       vsWeekLifecycle: weekState.vsWeekLifecycle,
       vsWeekAudit: mergeVsWeekAuditField(remoteStore.vsWeekAudit, localStore.vsWeekAudit),
     };
     delete merged.globalPowerAudit;
+    const remoteFollowUps = remoteStore.playerFollowUps;
+    const localFollowUps = Object.prototype.hasOwnProperty.call(localStore, 'playerFollowUps')
+      ? localStore.playerFollowUps
+      : remoteFollowUps;
+    if (global.ROSModels && typeof ROSModels.reconcilePlayerFollowUps === 'function') {
+      merged.playerFollowUps = ROSModels.reconcilePlayerFollowUps(
+        localFollowUps,
+        remoteFollowUps,
+        merged.playerFollowUpArchives
+      );
+    }
     return merged;
   }
 
@@ -569,6 +588,31 @@
       out[id] = { notes: [...byId.values()] };
     });
     return out;
+  }
+
+  function mergePlayerFollowUpArchivesField(remoteArchives, localArchives) {
+    if (global.ROSModels && typeof ROSModels.mergePlayerFollowUpArchives === 'function') {
+      return ROSModels.mergePlayerFollowUpArchives(remoteArchives, localArchives);
+    }
+    const out = {
+      ...(remoteArchives && typeof remoteArchives === 'object' ? remoteArchives : {}),
+    };
+    Object.keys(localArchives && typeof localArchives === 'object' ? localArchives : {}).forEach(
+      (id) => {
+        if (!out[id]) out[id] = localArchives[id];
+      }
+    );
+    return out;
+  }
+
+  function mergePlayerFollowUpAutoSuppressField(remoteGate, localGate) {
+    if (global.ROSModels && typeof ROSModels.mergePlayerFollowUpAutoSuppress === 'function') {
+      return ROSModels.mergePlayerFollowUpAutoSuppress(remoteGate, localGate);
+    }
+    return {
+      ...(remoteGate && typeof remoteGate === 'object' ? remoteGate : {}),
+      ...(localGate && typeof localGate === 'object' ? localGate : {}),
+    };
   }
 
   /**
@@ -1393,6 +1437,7 @@
       BACKUPS_KEY,
       LOCAL_QUOTA_USER_MESSAGE,
       mergePlayerFollowUpNotesField,
+      mergePlayerFollowUpArchivesField,
       mergeVsWeekAuditField,
     },
   };

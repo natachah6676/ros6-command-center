@@ -1027,6 +1027,16 @@
       playerFollowUps: {},
       /** Historique permanent des commentaires de suivi (par joueur, append-only). */
       playerFollowUpNotes: {},
+      /**
+       * Snapshots immuables de suivis archivés, indexés par archiveId (arch_<episodeId>).
+       * Autonomes : ne sont pas recalculés depuis la fiche active ni le ledger.
+       */
+      playerFollowUpArchives: {},
+      /**
+       * Verrou anti-clone après archivage : { [playerId]: { hero?: true, discret?: true } }.
+       * Tant que le motif auto est encore détecté, syncAutoReasons ne recrée pas la fiche.
+       */
+      playerFollowUpAutoSuppress: {},
       /** Compteur léger VS sous seuil (fenêtre glissante, sans garder les semaines). */
       playerVsUnderStats: {},
       /** Résumés « sous seuil » des semaines clôturées (consultation Semaines passées). */
@@ -1161,7 +1171,7 @@
 
   function getPlayerFollowUpHelpNeeds(state, playerId) {
     if (!playerId) return emptyFollowUpHelpNeeds();
-    const notes = getPlayerFollowUpNotes(state, playerId);
+    const notes = getScopedPlayerFollowUpNotes(state, playerId);
     return deriveFollowUpHelpNeedsFromNotes(notes);
   }
 
@@ -1193,7 +1203,7 @@
   function getEverOpenedFollowUpHelpTypes(state, playerId) {
     if (!playerId) return [];
     const seen = Object.create(null);
-    getPlayerFollowUpNotes(state, playerId).forEach((n) => {
+    getScopedPlayerFollowUpNotes(state, playerId).forEach((n) => {
       if (!n || isFollowUpNoteDeleted(n)) return;
       if (normalizeFollowUpNoteEventType(n.eventType) !== 'help_opened') return;
       const ht = normalizeFollowUpHelpType(n.helpType);
@@ -1353,7 +1363,8 @@
 
   function createEmptyFollowUpCase(options = {}) {
     const now = new Date().toISOString();
-    return {
+    const episodeId = options.episodeId ? String(options.episodeId).trim() : '';
+    const row = {
       status: normalizeFollowUpStatus(options.status),
       reasons: emptyFollowUpReasons(options.reasons),
       manual: Boolean(options.manual || options.reasons?.manual),
@@ -1370,6 +1381,28 @@
       closedAt: options.closedAt || null,
       closeReason: normalizeFollowUpCloseReason(options.closeReason),
     };
+    // Pas d’episodeId inventé ici : les fiches legacy restent sans épisode.
+    // Les créations nouvelles passent par createPlayerFollowUpCase, qui en pose un.
+    if (episodeId) row.episodeId = episodeId;
+    return row;
+  }
+
+  /**
+   * Crée la fiche active si le slot est vide, avec un episodeId neuf.
+   * Une fiche déjà présente (y compris legacy sans episodeId) n’est pas réécrite.
+   */
+  function createPlayerFollowUpCase(state, playerId, seed = {}) {
+    if (!state || !playerId) return null;
+    if (!state.playerFollowUps || typeof state.playerFollowUps !== 'object') {
+      state.playerFollowUps = {};
+    }
+    if (!state.playerFollowUps[playerId]) {
+      const episodeId = seed.episodeId ? String(seed.episodeId).trim() : uid('ep');
+      state.playerFollowUps[playerId] = createEmptyFollowUpCase({ ...seed, episodeId });
+    } else {
+      state.playerFollowUps[playerId] = normalizeFollowUpCase(state.playerFollowUps[playerId]);
+    }
+    return state.playerFollowUps[playerId];
   }
 
   function normalizeFollowUpNote(raw) {
@@ -1392,6 +1425,7 @@
       eventType,
     };
     if (helpType) note.helpType = helpType;
+    if (raw.episodeId) note.episodeId = String(raw.episodeId).trim();
     if (raw.updatedAt) {
       note.updatedAt = String(raw.updatedAt);
       note.updatedByUserId =
@@ -1444,7 +1478,8 @@
           : prevDel
             ? prev
             : next;
-        return withEventMeta(
+        return stampFollowUpNoteEpisode(
+          withEventMeta(
           {
             id: prev.id || next.id,
             at:
@@ -1477,6 +1512,9 @@
               : {}),
           },
           tomb.eventType ? tomb : next.eventType ? next : prev
+        ),
+          prev,
+          next
         );
       }
       const prevTouch = String(prev.updatedAt || prev.at || '');
@@ -1502,8 +1540,19 @@
         out.updatedByUserId = uNewer.updatedByUserId || '';
         out.updatedByLabel = uNewer.updatedByLabel || '';
       }
-      return withEventMeta(out, newer.eventType ? newer : older);
+      return stampFollowUpNoteEpisode(
+        withEventMeta(out, newer.eventType ? newer : older),
+        prev,
+        next
+      );
     };
+
+  function stampFollowUpNoteEpisode(note, prev, next) {
+    if (!note) return note;
+    const ep = (prev && prev.episodeId) || (next && next.episodeId) || '';
+    if (ep) note.episodeId = String(ep);
+    return note;
+  }
 
     const ingest = (list) => {
       (Array.isArray(list) ? list : []).forEach((raw) => {
@@ -1572,6 +1621,12 @@
     if (!state.playerFollowUpNotes || typeof state.playerFollowUpNotes !== 'object') {
       state.playerFollowUpNotes = {};
     }
+    const caseEpisode = state.playerFollowUps?.[playerId]?.episodeId
+      ? String(state.playerFollowUps[playerId].episodeId)
+      : '';
+    const episodeId = entry.episodeId
+      ? String(entry.episodeId).trim()
+      : caseEpisode;
     const note = normalizeFollowUpNote({
       id: entry.id || uid('funote'),
       at: entry.at || new Date().toISOString(),
@@ -1580,6 +1635,7 @@
       authorUserId: entry.authorUserId,
       eventType: entry.eventType,
       helpType: entry.helpType,
+      episodeId: episodeId || undefined,
     });
     if (!note || isFollowUpNoteDeleted(note)) return null;
     const prev = state.playerFollowUpNotes[playerId]?.notes || [];
@@ -1589,10 +1645,24 @@
     return note;
   }
 
-  /**
-   * R5 : tous les commentaires.
-   * R4 : uniquement si ce R4 est « Qui suit » (assigneePlayerId) sur la fiche du joueur.
-   */
+  function getFollowUpCaseEpisodeId(state, playerId) {
+    const episodeId = state?.playerFollowUps?.[playerId]?.episodeId;
+    return episodeId ? String(episodeId) : '';
+  }
+
+  /** Notes du suivi actif. Sans episodeId sur la fiche : tout le ledger (legacy). */
+  function getScopedPlayerFollowUpNotes(state, playerId, options = {}) {
+    const notes = getPlayerFollowUpNotes(state, playerId, options);
+    const episodeId = getFollowUpCaseEpisodeId(state, playerId);
+    if (!episodeId) return notes;
+    return notes.filter((n) => n && n.episodeId === episodeId);
+  }
+
+  function noteMatchesActiveEpisode(state, playerId, note) {
+    const episodeId = getFollowUpCaseEpisodeId(state, playerId);
+    if (!episodeId) return true;
+    return Boolean(note && note.episodeId === episodeId);
+  }
   function canMutatePlayerFollowUpNotes(state, playerId, viewer = {}) {
     if (!playerId) return false;
     if (viewer.isR5) return true;
@@ -1610,6 +1680,7 @@
     const all = getPlayerFollowUpNotes(state, playerId, { includeDeleted: true });
     const current = all.find((n) => n.id === noteId);
     if (!current || isFollowUpNoteDeleted(current)) return null;
+    if (!noteMatchesActiveEpisode(state, playerId, current)) return null;
     const updated = normalizeFollowUpNote({
       ...current,
       text: clean,
@@ -1638,6 +1709,7 @@
     const all = getPlayerFollowUpNotes(state, playerId, { includeDeleted: true });
     const current = all.find((n) => n.id === noteId);
     if (!current) return null;
+    if (!noteMatchesActiveEpisode(state, playerId, current)) return null;
     if (isFollowUpNoteDeleted(current)) return current;
     const tomb = {
       id: current.id,
@@ -1645,6 +1717,9 @@
       text: current.text || '(supprimé)',
       authorLabel: current.authorLabel || '',
       authorUserId: current.authorUserId || '',
+      eventType: current.eventType,
+      helpType: current.helpType,
+      episodeId: current.episodeId,
       deletedAt: new Date().toISOString(),
       deletedByUserId: actor?.actorUserId || '',
       deletedByLabel: actor?.actorLabel || '',
@@ -1694,7 +1769,8 @@
       ? raw.notes.map(normalizeFollowUpNote).filter(Boolean).slice(0, 200)
       : [];
     const assigneePlayerId = raw.assigneePlayerId ? String(raw.assigneePlayerId) : null;
-    return {
+    const episodeId = raw.episodeId ? String(raw.episodeId).trim() : '';
+    const row = {
       status: normalizeFollowUpStatus(raw.status),
       reasons: emptyFollowUpReasons({
         ...raw.reasons,
@@ -1714,6 +1790,8 @@
       closedAt: raw.closedAt || null,
       closeReason: normalizeFollowUpCloseReason(raw.closeReason),
     };
+    if (episodeId) row.episodeId = episodeId;
+    return row;
   }
 
   function normalizePlayerFollowUps(raw) {
@@ -1724,6 +1802,303 @@
       out[playerId] = normalizeFollowUpCase(raw[playerId]);
     });
     return out;
+  }
+
+  function followUpArchiveIdForEpisode(episodeId) {
+    const episode = episodeId ? String(episodeId).trim() : '';
+    return episode ? `arch_${episode}` : '';
+  }
+
+  function sortFollowUpNotesChrono(notes) {
+    return (Array.isArray(notes) ? notes : []).slice().sort((a, b) => {
+      const cmp = String(a?.at || '').localeCompare(String(b?.at || ''));
+      if (cmp !== 0) return cmp;
+      return String(a?.id || '').localeCompare(String(b?.id || ''));
+    });
+  }
+
+  /**
+   * Union de notes d’archive : le premier texte rencontré gagne.
+   * Les notes seulement présentes d’un côté sont ajoutées. Pas de doublon d’id.
+   */
+  function mergeFollowUpArchiveNoteLists(baseNotes, extraNotes) {
+    const map = new Map();
+    const ingest = (list) => {
+      (Array.isArray(list) ? list : []).forEach((raw) => {
+        const note = normalizeFollowUpNote(raw);
+        if (!note || map.has(note.id)) return;
+        map.set(note.id, note);
+      });
+    };
+    ingest(baseNotes);
+    ingest(extraNotes);
+    return sortFollowUpNotesChrono([...map.values()]);
+  }
+
+  function normalizeFollowUpArchive(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const episodeId = raw.episodeId ? String(raw.episodeId).trim() : '';
+    if (!episodeId) return null;
+    const id = followUpArchiveIdForEpisode(episodeId);
+    const notes = mergeFollowUpArchiveNoteLists(raw.notes, []);
+    return {
+      id,
+      episodeId,
+      playerId: raw.playerId ? String(raw.playerId) : '',
+      pseudo: raw.pseudo != null ? String(raw.pseudo) : '',
+      reasons: emptyFollowUpReasons(raw.reasons),
+      manual: Boolean(raw.manual || raw.reasons?.manual),
+      assigneePlayerId: raw.assigneePlayerId ? String(raw.assigneePlayerId) : null,
+      assigneeLabel: raw.assigneeLabel != null ? String(raw.assigneeLabel) : '',
+      status: normalizeFollowUpStatus(raw.status),
+      createdAt: raw.createdAt || null,
+      contactedAt: raw.contactedAt || null,
+      closedAt: raw.closedAt || null,
+      closeReason: normalizeFollowUpCloseReason(raw.closeReason),
+      helpNeeds: normalizeFollowUpHelpNeeds(raw.helpNeeds),
+      notes,
+      archivedAt: raw.archivedAt || null,
+      archivedByUserId: raw.archivedByUserId != null ? String(raw.archivedByUserId) : '',
+      archivedByLabel: raw.archivedByLabel != null ? String(raw.archivedByLabel) : '',
+    };
+  }
+
+  function normalizePlayerFollowUpArchives(raw) {
+    if (!raw || typeof raw !== 'object') return {};
+    const out = {};
+    Object.keys(raw).forEach((key) => {
+      const archive = normalizeFollowUpArchive(raw[key]);
+      if (!archive) return;
+      out[archive.id] = out[archive.id]
+        ? mergeFollowUpArchivePair(out[archive.id], archive)
+        : archive;
+    });
+    return out;
+  }
+
+  function mergeFollowUpArchivePair(a, b) {
+    const left = a && a.episodeId ? a : normalizeFollowUpArchive(a);
+    const right = b && b.episodeId && b.notes ? b : normalizeFollowUpArchive(b);
+    if (!left) return right || null;
+    if (!right) return left;
+    const leftAt = String(left.archivedAt || '');
+    const rightAt = String(right.archivedAt || '');
+    const base = leftAt && rightAt ? (leftAt <= rightAt ? left : right) : leftAt ? left : right;
+    const other = base === left ? right : left;
+    const notes = mergeFollowUpArchiveNoteLists(base.notes, other.notes);
+    return normalizeFollowUpArchive({
+      ...base,
+      notes,
+      helpNeeds: deriveFollowUpHelpNeedsFromNotes(notes),
+    });
+  }
+
+  /**
+   * Union par archiveId. Une map vide ou absente ne retire aucune archive de l’autre côté.
+   * Même episodeId → une seule archive ; notes unies sans doublon ; champs figés = plus ancien archivedAt.
+   */
+  function mergePlayerFollowUpArchives(remoteRaw, localRaw) {
+    const remote = normalizePlayerFollowUpArchives(remoteRaw);
+    const local = normalizePlayerFollowUpArchives(localRaw);
+    const ids = new Set([...Object.keys(remote), ...Object.keys(local)]);
+    const out = {};
+    ids.forEach((id) => {
+      const merged = mergeFollowUpArchivePair(remote[id], local[id]);
+      if (merged) out[merged.id] = merged;
+    });
+    return out;
+  }
+
+  function archivedEpisodeIdSet(archives) {
+    const set = new Set();
+    Object.keys(archives || {}).forEach((id) => {
+      const episodeId = archives[id]?.episodeId;
+      if (episodeId) set.add(String(episodeId));
+    });
+    return set;
+  }
+
+  function isZombieFollowUpCase(row, archivedEpisodes) {
+    return Boolean(row && row.episodeId && archivedEpisodes.has(String(row.episodeId)));
+  }
+
+  /**
+   * Le set de fiches locales gagne (même sémantique que l’écrasement de la map),
+   * sauf si la fiche locale est le zombie d’un épisode déjà archivé :
+   * on la retire, et on conserve la fiche distante seulement si c’est un autre épisode vivant.
+   */
+  function reconcilePlayerFollowUps(localRaw, remoteRaw, archives) {
+    const remote = normalizePlayerFollowUps(remoteRaw);
+    const local = normalizePlayerFollowUps(localRaw);
+    const archived = archivedEpisodeIdSet(archives);
+    const out = {};
+    Object.keys(local).forEach((playerId) => {
+      const row = local[playerId];
+      if (!isZombieFollowUpCase(row, archived)) {
+        out[playerId] = row;
+        return;
+      }
+      const remoteRow = remote[playerId];
+      if (remoteRow && !isZombieFollowUpCase(remoteRow, archived)) {
+        out[playerId] = remoteRow;
+      }
+    });
+    return out;
+  }
+
+  function normalizePlayerFollowUpAutoSuppress(raw) {
+    if (!raw || typeof raw !== 'object') return {};
+    const out = {};
+    Object.keys(raw).forEach((playerId) => {
+      if (!playerId) return;
+      const row = raw[playerId];
+      if (!row || typeof row !== 'object') return;
+      const next = {};
+      if (row.hero) next.hero = true;
+      if (row.discret) next.discret = true;
+      if (next.hero || next.discret) out[playerId] = next;
+    });
+    return out;
+  }
+
+  function mergePlayerFollowUpAutoSuppress(remoteRaw, localRaw) {
+    const remote = normalizePlayerFollowUpAutoSuppress(remoteRaw);
+    const local = normalizePlayerFollowUpAutoSuppress(localRaw);
+    const ids = new Set([...Object.keys(remote), ...Object.keys(local)]);
+    const out = {};
+    ids.forEach((playerId) => {
+      const hero = Boolean(remote[playerId]?.hero || local[playerId]?.hero);
+      const discret = Boolean(remote[playerId]?.discret || local[playerId]?.discret);
+      if (!hero && !discret) return;
+      const next = {};
+      if (hero) next.hero = true;
+      if (discret) next.discret = true;
+      out[playerId] = next;
+    });
+    return out;
+  }
+
+  function getFollowUpAutoSuppress(state, playerId) {
+    const row = state?.playerFollowUpAutoSuppress?.[playerId];
+    return {
+      hero: Boolean(row?.hero),
+      discret: Boolean(row?.discret),
+    };
+  }
+
+  /**
+   * Lève le verrou seulement quand le motif n’est plus détecté pour de vrai.
+   * Discret : player.discret passe à false.
+   * Héros : le joueur n’est pas absent ET n’est plus dans la tranche.
+   * L’absence seule ne lève pas le verrou héros.
+   */
+  function relaxFollowUpAutoSuppress(state, player) {
+    if (!state || !player?.id) return false;
+    const gate = state.playerFollowUpAutoSuppress?.[player.id];
+    if (!gate) return false;
+    let changed = false;
+    if (gate.discret && !player.discret) {
+      delete gate.discret;
+      changed = true;
+    }
+    if (gate.hero && !player.absent) {
+      const detected = detectFollowUpReasons(player, state);
+      if (!detected.hero) {
+        delete gate.hero;
+        changed = true;
+      }
+    }
+    if (!gate.hero && !gate.discret) {
+      delete state.playerFollowUpAutoSuppress[player.id];
+    }
+    return changed;
+  }
+
+  function rememberArchivedAutoReasons(state, playerId, archivedReasons) {
+    const player = (state?.players || []).find((p) => p && p.id === playerId);
+    if (!player) return;
+    const detected = detectFollowUpReasons(player, state);
+    const next = { ...(state.playerFollowUpAutoSuppress?.[playerId] || {}) };
+    let changed = false;
+    if (archivedReasons?.discret && detected.discret) {
+      next.discret = true;
+      changed = true;
+    }
+    if (archivedReasons?.hero && detected.hero) {
+      next.hero = true;
+      changed = true;
+    }
+    if (!changed) return;
+    if (!state.playerFollowUpAutoSuppress || typeof state.playerFollowUpAutoSuppress !== 'object') {
+      state.playerFollowUpAutoSuppress = {};
+    }
+    state.playerFollowUpAutoSuppress[playerId] = next;
+  }
+
+  function cloneFollowUpNotesForArchive(notes) {
+    return mergeFollowUpArchiveNoteLists(JSON.parse(JSON.stringify(notes || [])), []);
+  }
+
+  /**
+   * Archive explicite d’une fiche terminée qui possède un episodeId.
+   * Ne crée pas d’episodeId pour une fiche legacy. Ne retire aucune note du ledger.
+   */
+  function archivePlayerFollowUp(state, playerId, actor = {}) {
+    if (!state || !playerId) return null;
+    const row = state.playerFollowUps?.[playerId];
+    if (!row || !row.episodeId || row.status !== 'done') return null;
+    const episodeId = String(row.episodeId);
+    const id = followUpArchiveIdForEpisode(episodeId);
+    const player = (state.players || []).find((p) => p && p.id === playerId);
+    const episodeNotes = getPlayerFollowUpNotes(state, playerId).filter(
+      (n) => n && n.episodeId === episodeId
+    );
+    const notes = cloneFollowUpNotesForArchive(episodeNotes);
+    const fresh = normalizeFollowUpArchive({
+      id,
+      episodeId,
+      playerId: String(playerId),
+      pseudo: player?.pseudo != null ? String(player.pseudo) : '',
+      reasons: emptyFollowUpReasons({
+        ...row.reasons,
+        manual: Boolean(row.reasons?.manual || row.manual),
+      }),
+      manual: Boolean(row.manual || row.reasons?.manual),
+      assigneePlayerId: row.assigneePlayerId || null,
+      assigneeLabel: row.assigneeLabel != null ? String(row.assigneeLabel) : '',
+      status: row.status,
+      createdAt: row.createdAt || null,
+      contactedAt: row.contactedAt || null,
+      closedAt: row.closedAt || null,
+      closeReason: row.closeReason,
+      helpNeeds: deriveFollowUpHelpNeedsFromNotes(notes),
+      notes,
+      archivedAt: new Date().toISOString(),
+      archivedByUserId: actor.actorUserId || actor.archivedByUserId || '',
+      archivedByLabel: actor.actorLabel || actor.archivedByLabel || '',
+    });
+    if (!fresh) return null;
+    if (!state.playerFollowUpArchives || typeof state.playerFollowUpArchives !== 'object') {
+      state.playerFollowUpArchives = {};
+    }
+    const prev = state.playerFollowUpArchives[fresh.id];
+    state.playerFollowUpArchives[fresh.id] = prev
+      ? mergeFollowUpArchivePair(prev, fresh)
+      : fresh;
+    delete state.playerFollowUps[playerId];
+    rememberArchivedAutoReasons(state, playerId, fresh.reasons);
+    return state.playerFollowUpArchives[fresh.id];
+  }
+
+  function helpTypesOpenedInNotes(notes) {
+    const seen = Object.create(null);
+    (Array.isArray(notes) ? notes : []).forEach((n) => {
+      if (!n || isFollowUpNoteDeleted(n)) return;
+      if (normalizeFollowUpNoteEventType(n.eventType) !== 'help_opened') return;
+      const ht = normalizeFollowUpHelpType(n.helpType);
+      if (ht) seen[ht] = true;
+    });
+    return FOLLOW_UP_HELP_TYPES.filter((t) => seen[t.id]).map((t) => t.id);
   }
 
   /** Semaine VS de référence pour le suivi : active, sinon dernière clôturée. */
@@ -2160,8 +2535,17 @@
 
     const coachingThreshold = normalizeCoachingThreshold(raw.coachingThreshold);
     const followUpSettings = normalizeFollowUpSettings(raw.followUpSettings);
-    const playerFollowUps = normalizePlayerFollowUps(raw.playerFollowUps);
+    const playerFollowUpsRaw = normalizePlayerFollowUps(raw.playerFollowUps);
     const playerFollowUpNotes = normalizePlayerFollowUpNotesLedger(raw.playerFollowUpNotes);
+    const playerFollowUpArchives = normalizePlayerFollowUpArchives(raw.playerFollowUpArchives);
+    const playerFollowUps = reconcilePlayerFollowUps(
+      playerFollowUpsRaw,
+      {},
+      playerFollowUpArchives
+    );
+    const playerFollowUpAutoSuppress = normalizePlayerFollowUpAutoSuppress(
+      raw.playerFollowUpAutoSuppress
+    );
     const playerVsUnderStats = normalizePlayerVsUnderStats(raw.playerVsUnderStats);
     const vsUnderWeekHistory = normalizeVsUnderWeekHistory(raw.vsUnderWeekHistory);
     const vsWeekAudit = normalizeVsWeekAudit(raw.vsWeekAudit);
@@ -2187,6 +2571,8 @@
       followUpSettings,
       playerFollowUps,
       playerFollowUpNotes,
+      playerFollowUpArchives,
+      playerFollowUpAutoSuppress,
       playerVsUnderStats,
       vsUnderWeekHistory,
       vsWeekAudit,
@@ -2337,14 +2723,28 @@
     normalizeFollowUpStatus,
     getFollowUpStatusLabel,
     createEmptyFollowUpCase,
+    createPlayerFollowUpCase,
     normalizeFollowUpCase,
     normalizeFollowUpNote,
     normalizePlayerFollowUps,
     normalizePlayerFollowUpNotesLedger,
     getPlayerFollowUpNotes,
+    getScopedPlayerFollowUpNotes,
     isFollowUpNoteDeleted,
     mergeFollowUpNotesArrays,
     mergePlayerFollowUpNotesLedgers,
+    normalizeFollowUpArchive,
+    normalizePlayerFollowUpArchives,
+    mergePlayerFollowUpArchives,
+    mergeFollowUpArchivePair,
+    reconcilePlayerFollowUps,
+    normalizePlayerFollowUpAutoSuppress,
+    mergePlayerFollowUpAutoSuppress,
+    getFollowUpAutoSuppress,
+    relaxFollowUpAutoSuppress,
+    archivePlayerFollowUp,
+    helpTypesOpenedInNotes,
+    followUpArchiveIdForEpisode,
     migrateFollowUpNotesFromCases,
     appendPlayerFollowUpNote,
     canMutatePlayerFollowUpNotes,
