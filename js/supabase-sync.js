@@ -524,12 +524,31 @@
         remoteStore.playerFollowUpNotes,
         localStore.playerFollowUpNotes
       ),
+      playerFollowUpArchives: mergePlayerFollowUpArchivesField(
+        remoteStore.playerFollowUpArchives,
+        localStore.playerFollowUpArchives
+      ),
+      playerFollowUpAutoSuppress: mergePlayerFollowUpAutoSuppressField(
+        remoteStore.playerFollowUpAutoSuppress,
+        localStore.playerFollowUpAutoSuppress
+      ),
       weeks: weekState.weeks,
       currentWeekId: weekState.currentWeekId,
       vsWeekLifecycle: weekState.vsWeekLifecycle,
       vsWeekAudit: mergeVsWeekAuditField(remoteStore.vsWeekAudit, localStore.vsWeekAudit),
     };
     delete merged.globalPowerAudit;
+    const remoteFollowUps = remoteStore.playerFollowUps;
+    const localFollowUps = Object.prototype.hasOwnProperty.call(localStore, 'playerFollowUps')
+      ? localStore.playerFollowUps
+      : remoteFollowUps;
+    if (global.ROSModels && typeof ROSModels.reconcilePlayerFollowUps === 'function') {
+      merged.playerFollowUps = ROSModels.reconcilePlayerFollowUps(
+        localFollowUps,
+        remoteFollowUps,
+        merged.playerFollowUpArchives
+      );
+    }
     return merged;
   }
 
@@ -569,6 +588,52 @@
       out[id] = { notes: [...byId.values()] };
     });
     return out;
+  }
+
+  function mergePlayerFollowUpArchivesField(remoteArchives, localArchives) {
+    if (global.ROSModels && typeof ROSModels.mergePlayerFollowUpArchives === 'function') {
+      return ROSModels.mergePlayerFollowUpArchives(remoteArchives, localArchives);
+    }
+    // Filet sans models : la copie distante d’un archiveId existant n’est jamais réécrite.
+    const remote =
+      remoteArchives && typeof remoteArchives === 'object' && !Array.isArray(remoteArchives)
+        ? remoteArchives
+        : {};
+    const local =
+      localArchives && typeof localArchives === 'object' && !Array.isArray(localArchives)
+        ? localArchives
+        : {};
+    const out = {};
+    const episodes = new Set();
+    Object.keys(remote).forEach((id) => {
+      const archive = remote[id];
+      if (!archive || typeof archive !== 'object') return;
+      out[id] = JSON.parse(JSON.stringify(archive));
+      if (archive.episodeId) episodes.add(String(archive.episodeId));
+    });
+    Object.keys(local).forEach((id) => {
+      const archive = local[id];
+      if (!archive || typeof archive !== 'object') return;
+      if (out[id]) return;
+      if (archive.episodeId && episodes.has(String(archive.episodeId))) return;
+      const canonical =
+        archive.episodeId && String(archive.episodeId).trim()
+          ? `arch_${String(archive.episodeId).trim()}`
+          : id;
+      if (out[canonical]) return;
+      out[canonical] = JSON.parse(JSON.stringify(archive));
+    });
+    return out;
+  }
+
+  function mergePlayerFollowUpAutoSuppressField(remoteGate, localGate) {
+    if (global.ROSModels && typeof ROSModels.mergePlayerFollowUpAutoSuppress === 'function') {
+      return ROSModels.mergePlayerFollowUpAutoSuppress(remoteGate, localGate);
+    }
+    return {
+      ...(remoteGate && typeof remoteGate === 'object' ? remoteGate : {}),
+      ...(localGate && typeof localGate === 'object' ? localGate : {}),
+    };
   }
 
   /**
@@ -1393,6 +1458,7 @@
       BACKUPS_KEY,
       LOCAL_QUOTA_USER_MESSAGE,
       mergePlayerFollowUpNotesField,
+      mergePlayerFollowUpArchivesField,
       mergeVsWeekAuditField,
     },
   };

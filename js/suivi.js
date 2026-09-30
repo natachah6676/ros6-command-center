@@ -167,17 +167,7 @@
   }
 
   function ensureCase(state, playerId, seed = {}) {
-    if (!state.playerFollowUps || typeof state.playerFollowUps !== 'object') {
-      state.playerFollowUps = {};
-    }
-    if (!state.playerFollowUps[playerId]) {
-      state.playerFollowUps[playerId] = ROSModels.createEmptyFollowUpCase(seed);
-    } else {
-      state.playerFollowUps[playerId] = ROSModels.normalizeFollowUpCase(
-        state.playerFollowUps[playerId]
-      );
-    }
-    return state.playerFollowUps[playerId];
+    return ROSModels.createPlayerFollowUpCase(state, playerId, seed);
   }
 
   function buildDisplayReasons(player, follow, state) {
@@ -209,9 +199,13 @@
     (state.players || []).forEach((player) => {
       if (!player || player.status !== 'Actif') return;
       const detected = ROSModels.detectFollowUpReasons(player, state);
+      if (ROSModels.relaxFollowUpAutoSuppress(state, player)) changed = true;
+      const gate = ROSModels.getFollowUpAutoSuppress(state, player.id);
+      const heroHit = Boolean(detected.hero && !gate.hero);
+      const discretHit = Boolean(detected.discret && !gate.discret);
       const existing = state.playerFollowUps?.[player.id];
       const hasOpen = existing && existing.status !== 'done';
-      const autoHit = Boolean(detected.hero || detected.discret);
+      const autoHit = Boolean(heroHit || discretHit);
       const openHelp = ROSModels.hasOpenFollowUpHelpNeeds(state, player.id);
       if (existing && existing.status !== 'done') {
         const before = JSON.stringify(existing.helpNeeds || {});
@@ -275,9 +269,9 @@
         if (!autoHit && !detected.manual) return;
         const seedReasons = {
           vs: false,
-          hero: Boolean(detected.hero),
+          hero: Boolean(heroHit),
           praise: false,
-          discret: Boolean(detected.discret),
+          discret: Boolean(discretHit),
           manual: Boolean(detected.manual),
         };
         const row = ensureCase(state, player.id, {
@@ -565,7 +559,7 @@
       isR4OrR5: canEditFollowUp(),
       viewerPlayerId: viewerPlayerId(),
     });
-    const notesList = ROSModels.getPlayerFollowUpNotes(state, playerId);
+    const notesList = ROSModels.getScopedPlayerFollowUpNotes(state, playerId);
     const notesHtml = notesList
       .slice()
       .sort((a, b) => (a.at < b.at ? 1 : -1))
@@ -666,6 +660,15 @@
             )}</p>`
           : '';
 
+    const archiveButtonHtml =
+      editable && follow.status === 'done' && follow.episodeId
+        ? `<div class="settings-actions" style="margin-top:0.75rem">
+            <button type="button" class="btn btn-primary" data-suivi-archive="${escapeHtml(
+              player.id
+            )}">Archiver le suivi</button>
+          </div>`
+        : '';
+
     const commentsFormHtml = editable
       ? `<form id="suiviNoteForm" class="suivi-note-form" data-player="${escapeHtml(player.id)}">
             <label class="field">
@@ -707,6 +710,7 @@
         </select>
       </label>
       ${statusButtonsHtml}
+      ${archiveButtonHtml}
       ${helpActionsHtml}
       <div class="suivi-notes-block">
         <h4>Historique des commentaires</h4>
@@ -842,9 +846,6 @@
     });
     if (status === 'done') {
       AppUI.toast('Suivi terminé — visible dans l’historique.');
-      if (global.SuiviModule) {
-        // refresh history if user is there later
-      }
       renderHistory();
     }
     render();
@@ -905,6 +906,34 @@
     const reason = await chooseCloseReason();
     if (!reason) return;
     setStatus(playerId, 'done', { closeReason: reason });
+  }
+
+  function archiveFollowUp(playerId) {
+    if (!canEditFollowUp()) {
+      AppUI.toast('Seul un R4 ou R5 peut archiver un suivi.');
+      return null;
+    }
+    const probe = ROSStorage.getState();
+    const row = probe.playerFollowUps?.[playerId];
+    if (!row || !row.episodeId || row.status !== 'done') {
+      AppUI.toast('Seuls les suivis terminés de la nouvelle génération peuvent être archivés.');
+      return null;
+    }
+    const actor = stampActor();
+    let archive = null;
+    ROSStorage.update((s) => {
+      archive = ROSModels.archivePlayerFollowUp(s, playerId, actor);
+      return s;
+    });
+    if (!archive) {
+      AppUI.toast('Archivage impossible.');
+      return null;
+    }
+    if (selectedPlayerId === playerId) selectedPlayerId = null;
+    AppUI.toast('Suivi archivé.');
+    renderHistory();
+    render();
+    return archive;
   }
 
   function markContacted(playerId) {
@@ -1128,6 +1157,11 @@
       void requestCloseFollowUp(doneBtn.dataset.suiviDone);
       return;
     }
+    const archiveBtn = event.target.closest('[data-suivi-archive]');
+    if (archiveBtn) {
+      archiveFollowUp(archiveBtn.dataset.suiviArchive);
+      return;
+    }
     const helpOpenBtn = event.target.closest('[data-suivi-help-open]');
     if (helpOpenBtn) {
       openHelpNeed(helpOpenBtn.dataset.player, helpOpenBtn.dataset.suiviHelpOpen);
@@ -1314,7 +1348,7 @@
     }
     const state = ROSStorage.getState();
     const notes = playerId
-      ? ROSModels.getPlayerFollowUpNotes(state, playerId)
+      ? ROSModels.getScopedPlayerFollowUpNotes(state, playerId)
       : Array.isArray(follow?.notes)
         ? follow.notes
         : [];
@@ -1328,7 +1362,7 @@
     const state = ROSStorage.getState();
     const notes = (
       playerId
-        ? ROSModels.getPlayerFollowUpNotes(state, playerId)
+        ? ROSModels.getScopedPlayerFollowUpNotes(state, playerId)
         : Array.isArray(follow?.notes)
           ? follow.notes.slice()
           : []
@@ -1354,7 +1388,6 @@
     };
   }
 
-  /** Filtre motif historique (fiches terminées + contacts Discret legacy). */
   function matchHistoriqueReasonFilter(row, reasonFilter) {
     if (!reasonFilter) return true;
     if (row.kind === 'discret_contact') return reasonFilter === 'discret';
@@ -1372,6 +1405,10 @@
   function matchHistoriqueHelpFilter(row, state, helpFilter) {
     if (!helpFilter) return true;
     if (row.kind === 'discret_contact') return false;
+    if (row.kind === 'archive') {
+      const types = ROSModels.helpTypesOpenedInNotes(row.archive?.notes);
+      return types.includes(helpFilter);
+    }
     const playerId = row.player?.id;
     if (!playerId) return false;
     const types = ROSModels.getEverOpenedFollowUpHelpTypes(state, playerId);
@@ -1401,6 +1438,13 @@
       .map((player) => {
         const follow = state.playerFollowUps?.[player.id];
         if (!follow || follow.status !== 'done') return null;
+        if (
+          follow.episodeId &&
+          ROSModels.followUpArchiveIdForEpisode &&
+          state.playerFollowUpArchives?.[ROSModels.followUpArchiveIdForEpisode(follow.episodeId)]
+        ) {
+          return null;
+        }
         // Motifs au moment du suivi (pas la redétection live actuelle).
         const reasons = ROSModels.emptyFollowUpReasons({
           hero: Boolean(follow.reasons?.hero || follow.contactReasons?.hero),
@@ -1449,10 +1493,55 @@
     return rows;
   }
 
+  function getArchiveHistoryRows(state, filters) {
+    const f = filters || getHistoriqueFilterValues();
+    const archives = state.playerFollowUpArchives;
+    if (!archives || typeof archives !== 'object') return [];
+    return Object.keys(archives)
+      .map((archiveId) => {
+        const archive = archives[archiveId];
+        if (!archive || !archive.id) return null;
+        const live = (state.players || []).find((p) => p && p.id === archive.playerId);
+        const player = {
+          id: archive.playerId || '',
+          pseudo: archive.pseudo || live?.pseudo || '—',
+          status: live?.status || 'Actif',
+        };
+        const helpTypes = ROSModels.helpTypesOpenedInNotes(archive.notes);
+        const row = {
+          kind: 'archive',
+          player,
+          archive,
+          follow: {
+            assigneePlayerId: archive.assigneePlayerId || null,
+            assigneeLabel: archive.assigneeLabel || '',
+            status: archive.status || 'done',
+            closeReason: archive.closeReason || null,
+            createdAt: archive.createdAt || null,
+            contactedAt: archive.contactedAt || null,
+            closedAt: archive.closedAt || null,
+          },
+          reasons: ROSModels.emptyFollowUpReasons(archive.reasons),
+          helpTypes,
+          sortAt: archive.closedAt || archive.archivedAt || '',
+        };
+        return row;
+      })
+      .filter(Boolean)
+      .filter((row) =>
+        ROSModels.isFollowUpVisibleToViewer(row, state, viewerPlayerId(), viewerIsR5())
+      )
+      .filter((row) => matchHistoriqueFilters(row, state, f));
+  }
+
   let selectedHistoryKey = null;
 
   function historyRowKey(row) {
-    if (!row || !row.player?.id) return '';
+    if (!row) return '';
+    if (row.kind === 'archive') {
+      return `archive:${row.archive?.id || ''}`;
+    }
+    if (!row.player?.id) return '';
     if (row.kind === 'discret_contact') {
       const contact = row.contact || {};
       return `discret:${row.player.id}:${contact.id || ''}:${contact.at || ''}`;
@@ -1493,7 +1582,7 @@
   }
 
   function buildHelpTimelineSummary(state, playerId) {
-    const notes = ROSModels.getPlayerFollowUpNotes(state, playerId)
+    const notes = ROSModels.getScopedPlayerFollowUpNotes(state, playerId)
       .filter((n) => n && (n.eventType === 'help_opened' || n.eventType === 'help_resolved'))
       .slice()
       .sort((a, b) => {
@@ -1536,8 +1625,83 @@
   }
 
   /** HTML consultatif uniquement — aucun write. */
+  /** Snapshot figé : aucun bouton d’édition, de suppression ou de réactivation. */
+  function renderArchiveDetailHtml(archive) {
+    if (!archive) return '';
+    const motifs = ROSModels.formatFollowUpReasonsLabel(archive.reasons);
+    const r4 = archive.assigneeLabel || '—';
+    const statusLabel = ROSModels.getFollowUpStatusLabel(archive.status || 'done');
+    const fin = ROSModels.getFollowUpCloseReasonLabel(archive.closeReason) || '—';
+    const started = ROSModels.formatCoachingDateTime(archive.createdAt) || archive.createdAt || '—';
+    const contacted = ROSModels.formatCoachingDateTime(archive.contactedAt) || archive.contactedAt || '';
+    const closed =
+      ROSModels.formatCoachingDateTime(archive.closedAt) || archive.closedAt || '—';
+    const notes = (Array.isArray(archive.notes) ? archive.notes : []).slice().sort((a, b) => {
+      const cmp = String(a.at || '').localeCompare(String(b.at || ''));
+      if (cmp !== 0) return cmp;
+      return String(a.id || '').localeCompare(String(b.id || ''));
+    });
+    const helpGroups = ROSModels.FOLLOW_UP_HELP_TYPES.map(({ id, label }) => {
+      const events = notes.filter(
+        (n) => n && n.helpType === id && (n.eventType === 'help_opened' || n.eventType === 'help_resolved')
+      );
+      if (!events.length) return null;
+      return { id, label, events };
+    }).filter(Boolean);
+    const helpSummaryHtml = helpGroups.length
+      ? `<section>
+          <h4>Demandes d’aide</h4>
+          <ul class="historique-suivi-detail-timeline">
+            ${helpGroups
+              .map((group) => {
+                const lines = group.events
+                  .map((ev) => {
+                    const when = ROSModels.formatCoachingDateTime(ev.at) || ev.at || '—';
+                    const who = ev.authorLabel || '—';
+                    const verb = ev.eventType === 'help_resolved' ? 'Résolue' : 'Ouverte';
+                    return `<li>${escapeHtml(verb)} — ${escapeHtml(when)} · ${escapeHtml(who)}</li>`;
+                  })
+                  .join('');
+                return `<li><strong>${escapeHtml(
+                  ROSModels.getFollowUpHelpTypeShortLabel(group.id) || group.label
+                )}</strong><ul>${lines}</ul></li>`;
+              })
+              .join('')}
+          </ul>
+        </section>`
+      : `<section><h4>Demandes d’aide</h4><p class="panel-subtitle">Aucune demande d’aide dans cette archive.</p></section>`;
+    const timelineHtml = notes.length
+      ? `<ul class="historique-suivi-detail-timeline">${notes
+          .map((n) => formatLedgerEventHtml(n))
+          .join('')}</ul>`
+      : `<p class="panel-subtitle">Aucun commentaire ni événement dans cette archive.</p>`;
+    return `
+      <article class="historique-suivi-detail-card" data-historique-detail-key="archive:${escapeHtml(
+        archive.id || ''
+      )}">
+        <h3>${escapeHtml(archive.pseudo || '—')}</h3>
+        <p class="panel-subtitle">Archive de suivi — consultation seule</p>
+        <dl class="historique-suivi-detail-meta">
+          <div><dt>Motif(s)</dt><dd>${escapeHtml(motifs)}</dd></div>
+          <div><dt>Qui suit</dt><dd>${escapeHtml(r4)}</dd></div>
+          <div><dt>Statut final</dt><dd>${escapeHtml(statusLabel)}</dd></div>
+          <div><dt>Raison de fin</dt><dd>${escapeHtml(fin)}</dd></div>
+          <div><dt>Début</dt><dd>${escapeHtml(started)}</dd></div>
+          ${contacted ? `<div><dt>Contact</dt><dd>${escapeHtml(contacted)}</dd></div>` : ''}
+          <div><dt>Fin</dt><dd>${escapeHtml(closed)}</dd></div>
+        </dl>
+        ${helpSummaryHtml}
+        <section>
+          <h4>Journal (commentaires et aides)</h4>
+          ${timelineHtml}
+        </section>
+      </article>
+    `;
+  }
+
   function renderHistoriqueDetailHtml(row, state) {
     if (!row) return '';
+    if (row.kind === 'archive') return renderArchiveDetailHtml(row.archive);
     if (row.kind === 'discret_contact') {
       const { player, contact } = row;
       const when = ROSModels.formatCoachingDateTime(contact.at) || contact.at || '—';
@@ -1601,7 +1765,7 @@
         </section>`
       : `<section><h4>Demandes d’aide</h4><p class="panel-subtitle">Aucune demande d’aide dans le ledger.</p></section>`;
 
-    const ledgerNotes = ROSModels.getPlayerFollowUpNotes(state, player.id)
+    const ledgerNotes = ROSModels.getScopedPlayerFollowUpNotes(state, player.id)
       .slice()
       .sort((a, b) => {
         const cmp = String(a.at || '').localeCompare(String(b.at || ''));
@@ -1660,7 +1824,11 @@
 
   function getHistoriqueRows(state, filters) {
     const f = filters || getHistoriqueFilterValues();
-    return [...getDoneFollowUpRows(state, f), ...getDiscretContactHistoryRows(state, f)].sort(
+    return [
+      ...getArchiveHistoryRows(state, f),
+      ...getDoneFollowUpRows(state, f),
+      ...getDiscretContactHistoryRows(state, f),
+    ].sort(
       (a, b) => {
         const ca = a.sortAt || '';
         const cb = b.sortAt || '';
@@ -1718,6 +1886,22 @@
     }
   }
 
+  function clearDoneFollowUpHistoryState(s) {
+    // Les archives playerFollowUpArchives ne sont pas touchées : historique permanent.
+    ROSModels.migrateFollowUpNotesFromCases(s);
+    const next = {};
+    Object.keys(s.playerFollowUps || {}).forEach((playerId) => {
+      const row = s.playerFollowUps[playerId];
+      if (!row || row.status === 'done') return;
+      next[playerId] = row;
+    });
+    s.playerFollowUps = next;
+    (s.players || []).forEach((player) => {
+      if (player) player.discretContacts = [];
+    });
+    return s;
+  }
+
   async function clearDoneFollowUpHistory() {
     if (!(global.ROSProfiles && ROSProfiles.isActiveR5 && ROSProfiles.isActiveR5())) {
       AppUI.toast('Seul le R5 peut effacer l’historique des suivis.');
@@ -1741,21 +1925,7 @@
       confirmLabel: 'Effacer l’historique',
     });
     if (!ok) return;
-    ROSStorage.update((s) => {
-      // Assure la copie ledger avant nettoyage des fiches (sans toucher au ledger).
-      ROSModels.migrateFollowUpNotesFromCases(s);
-      const next = {};
-      Object.keys(s.playerFollowUps || {}).forEach((playerId) => {
-        const row = s.playerFollowUps[playerId];
-        if (!row || row.status === 'done') return;
-        next[playerId] = row;
-      });
-      s.playerFollowUps = next;
-      (s.players || []).forEach((player) => {
-        if (player) player.discretContacts = [];
-      });
-      return s;
-    });
+    ROSStorage.update((s) => clearDoneFollowUpHistoryState(s));
     renderHistory();
     render();
     AppUI.toast('Fiches terminées et contacts Discret effacés — commentaires joueurs conservés.');
@@ -1786,6 +1956,41 @@
     body.innerHTML = rows
       .map((row) => {
         const rowKey = historyRowKey(row);
+        if (row.kind === 'archive') {
+          const archive = row.archive || {};
+          const closed =
+            ROSModels.formatCoachingDateTime(archive.closedAt) ||
+            ROSModels.formatCoachingDateTime(archive.archivedAt) ||
+            '—';
+          const motifs = ROSModels.formatFollowUpReasonsLabel(row.reasons);
+          const helpLabel = ROSModels.formatFollowUpHelpHistoryLabel(row.helpTypes || []);
+          const fin = ROSModels.getFollowUpCloseReasonLabel(archive.closeReason) || '—';
+          const notes = formatNotesPreview({ notes: archive.notes }, null);
+          return `
+          <tr data-historique-row-key="${escapeHtml(rowKey)}">
+            <td>
+              <button
+                type="button"
+                class="historique-suivi-pseudo-btn"
+                data-historique-open="${escapeHtml(rowKey)}"
+              >${escapeHtml(archive.pseudo || row.player?.pseudo || '—')}</button>
+            </td>
+            <td>
+              ${escapeHtml(motifs)}
+              ${
+                helpLabel
+                  ? `<span class="historique-suivi-help">${escapeHtml(helpLabel)}</span>`
+                  : ''
+              }
+            </td>
+            <td>${escapeHtml(fin)}</td>
+            <td>${escapeHtml(archive.assigneeLabel || '—')}</td>
+            <td>${escapeHtml(closed)}</td>
+            <td class="historique-suivi-notes">${escapeHtml(notes)}</td>
+            <td class="table-actions">—</td>
+          </tr>
+        `;
+        }
         if (row.kind === 'discret_contact') {
           const { player, contact } = row;
           const when =
@@ -1847,7 +2052,13 @@
             <td class="table-actions">
               ${
                 editable
-                  ? `<button type="button" class="btn btn-primary btn-sm" data-historique-reactivate="${escapeHtml(
+                  ? `${
+                      follow.episodeId
+                        ? `<button type="button" class="btn btn-primary btn-sm" data-historique-archive="${escapeHtml(
+                            player.id
+                          )}">Archiver</button> `
+                        : ''
+                    }<button type="button" class="btn btn-primary btn-sm" data-historique-reactivate="${escapeHtml(
                       player.id
                     )}">Réactiver</button>`
                   : '—'
@@ -1863,6 +2074,11 @@
     const openBtn = event.target.closest('[data-historique-open]');
     if (openBtn) {
       openHistoriqueDetail(openBtn.getAttribute('data-historique-open'));
+      return;
+    }
+    const archiveHistBtn = event.target.closest('[data-historique-archive]');
+    if (archiveHistBtn) {
+      archiveFollowUp(archiveHistBtn.dataset.historiqueArchive);
       return;
     }
     const btn = event.target.closest('[data-historique-reactivate]');
@@ -1925,5 +2141,7 @@
     openHistoriqueDetail,
     closeHistoriqueDetail,
     getSelectedHistoryKey: () => selectedHistoryKey,
+    archiveFollowUp,
+    clearDoneFollowUpHistoryState,
   };
 })(window);
