@@ -124,6 +124,11 @@
     return weekKey;
   }
 
+  /** Membres encore dans l'alliance. Indépendant de la semaine VS. Les absents restent comptés. */
+  function countActiveMembers(state) {
+    return ((state && state.players) || []).filter((player) => player && player.status === 'Actif').length;
+  }
+
   function renderKpis(counts) {
     els.kpis.innerHTML = `
       <div class="kpi">
@@ -301,7 +306,9 @@
     }
 
     const rows = ROSInsights.getActiveRows(state);
-    renderKpis(ROSInsights.getKpiCounts(rows));
+    const counts = ROSInsights.getKpiCounts(rows);
+    counts.total = countActiveMembers(state);
+    renderKpis(counts);
     renderWeeklyChecklist(state);
     renderAlerts(ROSInsights.buildAlerts(state, rows));
     renderAbsents(ROSInsights.getAbsentPlayers(state));
@@ -332,5 +339,5 @@
     if (els.weeklyChecklist) els.weeklyChecklist.addEventListener('change', onWeeklyChange);
   }
 
-  global.CommandModule = { init, render };
+  global.CommandModule = { init, render, countActiveMembers };
 })(window);
