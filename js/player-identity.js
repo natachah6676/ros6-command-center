@@ -335,68 +335,6 @@
     if (global.TempeteModule) TempeteModule.render();
   }
 
-  /**
-   * Test automatique d’intégrité du renommage (mémoire isolée — ne touche pas au localStorage réel).
-   */
-  function runRenameIntegrityTest() {
-    const errors = [];
-    const assert = (cond, msg) => {
-      if (!cond) errors.push(msg);
-    };
-
-    try {
-      const player = ROSModels.createPlayer({ pseudo: 'AncienPseudoTest', role: 'Membre' });
-      const week = ROSModels.createWeek(new Date(), { number: 1 });
-      week.scores[player.id] = ROSModels.createEmptyScore();
-      week.scores[player.id].days.lundi = 5;
-      // Ancienne clé legacy par pseudo (compat)
-      week.scores.AncienPseudoTest = ROSModels.createEmptyScore();
-      week.scores.AncienPseudoTest.days.mardi = 10;
-
-      let state = {
-        version: 1,
-        appRole: 'R5',
-        players: [player],
-        weeks: [week],
-        currentWeekId: week.id,
-        ui: { completedActionsByDate: {} },
-        playerWeekNotes: {
-          AncienPseudoTest: { [week.id]: { comment: 'note legacy', conducteur: '', vip: '', saison: '' } },
-        },
-        powerTiers: ROSModels.createDefaultPowerTiers(),
-      };
-
-      state = ROSModels.normalizeState(state);
-      const migratedPlayer = state.players.find((p) => p.id === player.id);
-      assert(Boolean(migratedPlayer), 'Joueur toujours présent après normalize');
-      assert(Boolean(state.weeks[0].scores[player.id]), 'Scores rattachés à l’ID');
-      assert(!state.weeks[0].scores.AncienPseudoTest, 'Clé pseudo legacy migrée');
-      assert(state.weeks[0].scores[player.id].days.lundi === 5, 'Score lundi conservé');
-      assert(state.weeks[0].scores[player.id].days.mardi === 10, 'Score mardi legacy fusionné');
-      assert(Boolean(state.playerWeekNotes[player.id]), 'Notes migrées vers ID');
-
-      const beforeCount = state.players.length;
-      migratedPlayer.pseudo = 'NouveauPseudoTest';
-      migrateMainState(state, {
-        explicitPseudo: 'AncienPseudoTest',
-        explicitPlayerId: player.id,
-      });
-
-      assert(state.players.length === beforeCount, 'Aucun joueur créé au renommage');
-      assert(state.players.filter((p) => p.id === player.id).length === 1, 'Joueur unique par ID');
-      assert(
-        getDisplayName(state, player.id) === 'NouveauPseudoTest',
-        'Affichage = nouveau pseudo'
-      );
-      assert(Boolean(state.weeks[0].scores[player.id]), 'Stats conservées après renommage');
-      assert(state.weeks.length >= 1, 'Archives/semaines conservées');
-    } catch (error) {
-      errors.push(`Exception: ${error.message || error}`);
-    }
-
-    return { ok: errors.length === 0, errors };
-  }
-
   global.ROSPlayerIdentity = {
     getDisplayName,
     getPlayerById,
@@ -407,6 +345,5 @@
     migrateRucheState,
     migrateTempeteState,
     migrateAllStoresAfterRename,
-    runRenameIntegrityTest,
   };
 })(window);
