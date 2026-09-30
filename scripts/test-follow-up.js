@@ -198,8 +198,11 @@ M.recordVsUnderSnapshotsForWeek(snapState, {
   scores: { p_vs: makeScore(3) },
 });
 assert(
-  !snapState.playerVsUnderStats.p_vs,
-  'clôture semaine muette : pas d’historique'
+  Boolean(
+    snapState.playerVsUnderStats.p_vs &&
+      snapState.playerVsUnderStats.p_vs.entries.some((e) => e.weekId === 'w_mute' && e.under)
+  ),
+  'clôture semaine muette : historique compteur quand même'
 );
 
 const specsState = {
