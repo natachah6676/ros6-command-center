@@ -440,9 +440,8 @@
   function pushVsUnderWeekArchive(state, week) {
     if (!state || !week) return state;
     const settings = getFollowUpSettings(state);
-    if (settings.vsFollowUpMutedWeekId && week.id === settings.vsFollowUpMutedWeekId) {
-      return state;
-    }
+    // vsFollowUpMutedWeekId ne bloque pas cette archive : le mute empêche seulement
+    // la redétection automatique des suivis VS / félicitations.
     const contacts = normalizeVsWeekContacts(week.vsContacts);
     const underMin = settings.vsMinUnderDays;
     const players = [];
@@ -1099,8 +1098,9 @@
       /** R4/R5 référents par motif (visibilité + suggestion d’assignation). */
       specialists: emptyFollowUpSpecialists(),
       /**
-       * Après « Remettre les compteurs VS à zéro » : ignore VS / félicitations
-       * pour cette semaine de référence (jusqu’à une nouvelle semaine).
+       * Après « Remettre les compteurs VS à zéro » : empêche la redétection
+       * automatique des suivis VS / félicitations jusqu’à la semaine suivante.
+       * N’empêche pas l’enregistrement historique à la clôture.
        */
       vsFollowUpMutedWeekId: null,
     };
@@ -2268,10 +2268,8 @@
   function recordVsUnderSnapshotsForWeek(state, week) {
     if (!state || !week) return state;
     const settings = getFollowUpSettings(state);
-    // Reset compteurs : ne pas réécrire d’historique pour la semaine muette.
-    if (settings.vsFollowUpMutedWeekId && week.id === settings.vsFollowUpMutedWeekId) {
-      return state;
-    }
+    // Le mute de remise à zéro ne saute pas ce snapshot : la clôture conserve
+    // toujours les résultats de la semaine jouée.
     if (!state.playerVsUnderStats || typeof state.playerVsUnderStats !== 'object') {
       state.playerVsUnderStats = {};
     }
