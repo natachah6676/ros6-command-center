@@ -672,16 +672,6 @@
         }
       });
     });
-
-    if (globalThis.ROSPlayerIdentity && typeof ROSPlayerIdentity.runRenameIntegrityTest === 'function') {
-      const result = ROSPlayerIdentity.runRenameIntegrityTest();
-      if (!result.ok) {
-        console.error('Test renommage joueur échoué:', result.errors);
-        toast('Alerte: le test automatique de renommage a échoué (voir console).');
-      } else {
-        console.info('Test renommage joueur: OK');
-      }
-    }
   }
 
   function init() {
