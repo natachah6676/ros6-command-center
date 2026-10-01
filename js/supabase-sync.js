@@ -532,6 +532,10 @@
         remoteStore.playerFollowUpAutoSuppress,
         localStore.playerFollowUpAutoSuppress
       ),
+      playerWeeklyFlags: mergePlayerWeeklyFlagsField(
+        remoteStore.playerWeeklyFlags,
+        localStore.playerWeeklyFlags
+      ),
       weeks: weekState.weeks,
       currentWeekId: weekState.currentWeekId,
       vsWeekLifecycle: weekState.vsWeekLifecycle,
@@ -624,6 +628,20 @@
       out[canonical] = JSON.parse(JSON.stringify(archive));
     });
     return out;
+  }
+
+  /**
+   * Union playerId → motif → semaine calendaire.
+   * Pour une même clé, l’horodatage le plus récent (pose ou retrait) fixe l’état.
+   * Appelé au push et au rebase : un cache local plus ancien ne réécrit pas le distant.
+   */
+  function mergePlayerWeeklyFlagsField(remoteFlags, localFlags) {
+    if (global.ROSModels && typeof ROSModels.mergePlayerWeeklyFlags === 'function') {
+      return ROSModels.mergePlayerWeeklyFlags(remoteFlags, localFlags);
+    }
+    const remote = remoteFlags && typeof remoteFlags === 'object' ? remoteFlags : {};
+    const local = localFlags && typeof localFlags === 'object' ? localFlags : {};
+    return { ...remote, ...local };
   }
 
   function mergePlayerFollowUpAutoSuppressField(remoteGate, localGate) {
@@ -1459,6 +1477,7 @@
       LOCAL_QUOTA_USER_MESSAGE,
       mergePlayerFollowUpNotesField,
       mergePlayerFollowUpArchivesField,
+      mergePlayerWeeklyFlagsField,
       mergeVsWeekAuditField,
     },
   };
