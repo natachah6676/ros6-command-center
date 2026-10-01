@@ -538,6 +538,24 @@
     );
   }
 
+  function setWeeklyFlag(playerId, kind, active) {
+    const player = ROSStorage.getPlayerById(playerId);
+    if (!player || player.status !== 'Actif') return;
+    if (kind !== 'shield' && kind !== 'hive') return;
+    const actor = actorStamp();
+    let changed = false;
+    ROSStorage.update((state) => {
+      const result = ROSModels.setPlayerWeeklyFlag(state, playerId, kind, active, actor);
+      changed = Boolean(result && result.changed);
+      return state;
+    });
+    if (!changed) return;
+    const label = kind === 'shield' ? 'Oubli bouclier' : 'Difficulté ruche';
+    AppUI.toast(
+      active ? `${label} signalé pour cette semaine.` : `${label} retiré pour cette semaine.`
+    );
+  }
+
   function setHeroPowerTier(playerId, tierId) {
     const nextId = (tierId || '').trim() || null;
     if (nextId && !ROSModels.getPowerTierById(ROSStorage.getState(), nextId)) {
@@ -590,6 +608,26 @@
           </label>
         `
         : '';
+    const weekKey = ROSModels.calendarWeekKey();
+    const shieldChecked = ROSModels.isPlayerWeeklyFlagActive(state, player.id, 'shield', weekKey);
+    const hiveChecked = ROSModels.isPlayerWeeklyFlagActive(state, player.id, 'hive', weekKey);
+    const weeklyToggles =
+      player.status === 'Actif'
+        ? `
+          <label class="absent-toggle weekly-flag-toggle" title="Oubli de bouclier cette semaine">
+            <input type="checkbox" data-action="weekly-flag" data-kind="shield" data-id="${player.id}" ${
+              shieldChecked ? 'checked' : ''
+            } />
+            <span>Oubli bouclier</span>
+          </label>
+          <label class="absent-toggle weekly-flag-toggle" title="Difficulté de placement dans la ruche cette semaine">
+            <input type="checkbox" data-action="weekly-flag" data-kind="hive" data-id="${player.id}" ${
+              hiveChecked ? 'checked' : ''
+            } />
+            <span>Difficulté ruche</span>
+          </label>
+        `
+        : '';
 
     const vsUnderStats = ROSModels.getPlayerVsUnderStats(state, player.id);
     const vsUnderLabel = ROSModels.formatVsUnderCounterLabel(vsUnderStats);
@@ -597,10 +635,14 @@
       globalThis.PlayerStats && typeof PlayerStats.computePlayerStats === 'function'
         ? PlayerStats.computePlayerStats(player.id).storms || 0
         : 0;
+    const shieldCount = ROSModels.countPlayerWeeklyFlags(state, player.id, 'shield');
+    const hiveCount = ROSModels.countPlayerWeeklyFlags(state, player.id, 'hive');
     const memberCounters = `
       <div class="member-counters" aria-label="Compteurs membre">
         <span class="member-counter">${ROSUI.escapeHtml(vsUnderLabel)}</span>
         <span class="member-counter">Inscrit Tempete : ${tempeteCount}</span>
+        <span class="member-counter">Oubli bouclier : ${shieldCount}</span>
+        <span class="member-counter">Difficulté ruche : ${hiveCount}</span>
       </div>
     `;
 
@@ -636,6 +678,7 @@
         ? `
           ${absentToggle}
           ${discretToggle}
+          ${weeklyToggles}
           <button type="button" class="btn btn-ghost btn-sm" data-action="edit" data-id="${player.id}">Modifier</button>
           <button type="button" class="btn btn-danger btn-sm" data-action="leave" data-id="${player.id}">Passer en Parti</button>
         `
@@ -677,6 +720,7 @@
   function onListClick(event) {
     if (
       event.target.closest('.absent-toggle') ||
+      event.target.closest('.weekly-flag-toggle') ||
       event.target.closest('.member-power-field')
     ) {
       event.stopPropagation();
@@ -706,6 +750,11 @@
     const discretInput = event.target.closest('input[data-action="discret"]');
     if (discretInput) {
       setDiscret(discretInput.dataset.id, discretInput.checked);
+      return;
+    }
+    const weeklyFlagInput = event.target.closest('input[data-action="weekly-flag"]');
+    if (weeklyFlagInput) {
+      setWeeklyFlag(weeklyFlagInput.dataset.id, weeklyFlagInput.dataset.kind, weeklyFlagInput.checked);
       return;
     }
 

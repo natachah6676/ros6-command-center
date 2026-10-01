@@ -121,6 +121,22 @@
       }
     }
 
+    if (state.playerWeeklyFlags && typeof state.playerWeeklyFlags === 'object') {
+      const result = migrateMapKeysToPlayerIds(state.playerWeeklyFlags, players, {
+        ...options,
+        mergeFn: (existing, incoming) => {
+          if (global.ROSModels && typeof ROSModels.mergePlayerWeeklyFlagRows === 'function') {
+            return ROSModels.mergePlayerWeeklyFlagRows(existing, incoming);
+          }
+          return existing ?? incoming;
+        },
+      });
+      if (result.changed) {
+        state.playerWeeklyFlags = result.map;
+        changed = true;
+      }
+    }
+
     if (state.playerVsUnderStats && typeof state.playerVsUnderStats === 'object') {
       const result = migrateMapKeysToPlayerIds(state.playerVsUnderStats, players, {
         ...options,

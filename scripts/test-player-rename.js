@@ -99,6 +99,30 @@ const raw = {
       ],
     },
   },
+  playerWeeklyFlags: {
+    [OLD_PSEUDO]: {
+      shield: {
+        '2026-09-21': {
+          at: '2026-09-23T10:00:00.000Z',
+          byLabel: 'R4',
+          byUserId: 'u1',
+          clearedAt: '',
+          clearedByLabel: '',
+          clearedByUserId: '',
+        },
+      },
+      hive: {
+        '2026-09-21': {
+          at: '2026-09-23T11:00:00.000Z',
+          byLabel: 'R5',
+          byUserId: 'u2',
+          clearedAt: '2026-09-23T12:00:00.000Z',
+          clearedByLabel: 'R5',
+          clearedByUserId: 'u2',
+        },
+      },
+    },
+  },
 };
 
 let state = M.normalizeState(raw);
@@ -129,6 +153,17 @@ assert(
   'commentaire de suivi rattaché à l’ID'
 );
 assert(!state.playerFollowUpNotes[OLD_PSEUDO], 'ledger plus indexé par le pseudo');
+assert(
+  state.playerWeeklyFlags[playerId].shield['2026-09-21'].at === '2026-09-23T10:00:00.000Z',
+  'oubli bouclier rattaché à l’ID'
+);
+assert(!state.playerWeeklyFlags[OLD_PSEUDO], 'signalements plus indexés par le pseudo');
+assert(M.countPlayerWeeklyFlags(state, playerId, 'shield') === 1, 'compteur bouclier après migration');
+assert(M.countPlayerWeeklyFlags(state, playerId, 'hive') === 0, 'ruche retirée ne compte pas');
+assert(
+  state.playerWeeklyFlags[playerId].hive['2026-09-21'].clearedAt === '2026-09-23T12:00:00.000Z',
+  'retrait ruche conservé après migration'
+);
 
 console.log('\nRenommage');
 const beforeCount = state.players.length;
@@ -150,6 +185,11 @@ assert(
   state.playerFollowUpNotes[playerId].notes.some((n) => n.id === 'note_rename_1'),
   'commentaire toujours sur l’ID'
 );
+assert(
+  state.playerWeeklyFlags[playerId].shield['2026-09-21'].byUserId === 'u1',
+  'signalements toujours sur l’ID après renommage'
+);
+assert(M.countPlayerWeeklyFlags(state, playerId, 'shield') === 1, 'compteur bouclier inchangé au renommage');
 assert(state.weeks.find((w) => w.id === week.id).scores[otherId], 'l’autre joueur n’est pas touché');
 
 console.log(`\n${passed} OK, ${failed} KO`);

@@ -1038,6 +1038,11 @@
       playerFollowUpAutoSuppress: {},
       /** Compteur léger VS sous seuil (fenêtre glissante, sans garder les semaines). */
       playerVsUnderStats: {},
+      /**
+       * Signalements informatifs par joueur, motif et lundi calendaire.
+       * Aucun effet sur VS, suivi, Tempête ou le statut.
+       */
+      playerWeeklyFlags: {},
       /** Résumés « sous seuil » des semaines clôturées (consultation Semaines passées). */
       vsUnderWeekHistory: [],
       /** Journal permanent create/close des semaines VS (plafond VS_WEEK_AUDIT_LIMIT). */
@@ -2302,6 +2307,215 @@
     return state;
   }
 
+  /** Motifs informatifs : oubli bouclier / difficulté ruche. */
+  const WEEKLY_FLAG_KINDS = ['shield', 'hive'];
+  const WEEKLY_FLAG_WEEK_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  /** Lundi calendaire local, identique à la checklist « Puissance héros MAJ ». */
+  function calendarWeekKey(date = new Date()) {
+    const d = date instanceof Date ? date : new Date(date);
+    const safe = Number.isNaN(d.getTime()) ? new Date() : d;
+    return toISODate(startOfWeekMonday(safe));
+  }
+
+  function weeklyFlagEventMs(iso) {
+    if (!iso) return 0;
+    const t = Date.parse(iso);
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  /**
+   * Une semaine compte si la pose est strictement plus récente que le retrait.
+   * Égalité : le retrait l’emporte, un cache du même instant ne ressuscite pas.
+   */
+  function isWeeklyFlagActive(record) {
+    if (!record || !record.at) return false;
+    if (!record.clearedAt) return true;
+    return weeklyFlagEventMs(record.at) > weeklyFlagEventMs(record.clearedAt);
+  }
+
+  function normalizeWeeklyFlagRecord(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const at = raw.at ? String(raw.at) : '';
+    const clearedAt = raw.clearedAt ? String(raw.clearedAt) : '';
+    if (!at && !clearedAt) return null;
+    return {
+      at,
+      byLabel: raw.byLabel != null ? String(raw.byLabel) : '',
+      byUserId: raw.byUserId != null ? String(raw.byUserId) : '',
+      clearedAt,
+      clearedByLabel: raw.clearedByLabel != null ? String(raw.clearedByLabel) : '',
+      clearedByUserId: raw.clearedByUserId != null ? String(raw.clearedByUserId) : '',
+    };
+  }
+
+  function normalizeWeeklyFlagKindMap(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const out = {};
+    Object.keys(raw).forEach((weekKey) => {
+      if (!WEEKLY_FLAG_WEEK_KEY_RE.test(weekKey)) return;
+      const record = normalizeWeeklyFlagRecord(raw[weekKey]);
+      if (record) out[weekKey] = record;
+    });
+    return out;
+  }
+
+  function normalizePlayerWeeklyFlagRow(raw) {
+    const row = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    return {
+      shield: normalizeWeeklyFlagKindMap(row.shield),
+      hive: normalizeWeeklyFlagKindMap(row.hive),
+    };
+  }
+
+  function weeklyFlagRowHasEntries(row) {
+    return Boolean(
+      row &&
+        (Object.keys(row.shield || {}).length || Object.keys(row.hive || {}).length)
+    );
+  }
+
+  function normalizePlayerWeeklyFlags(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const out = {};
+    Object.keys(raw).forEach((playerId) => {
+      const id = String(playerId || '').trim();
+      if (!id) return;
+      const row = normalizePlayerWeeklyFlagRow(raw[playerId]);
+      if (weeklyFlagRowHasEntries(row)) out[id] = row;
+    });
+    return out;
+  }
+
+  /**
+   * Pour un même champ d’horodatage, le plus récent gagne.
+   * À égalité, le distant gagne (même règle que les semaines VS).
+   */
+  function pickLaterWeeklyFlagSide(remoteRec, localRec, field) {
+    const remoteMs = weeklyFlagEventMs(remoteRec?.[field]);
+    const localMs = weeklyFlagEventMs(localRec?.[field]);
+    if (localMs > remoteMs) return localRec;
+    if (remoteMs > 0) return remoteRec;
+    if (localMs > 0) return localRec;
+    return null;
+  }
+
+  function mergeWeeklyFlagRecords(remoteRec, localRec) {
+    const remote = normalizeWeeklyFlagRecord(remoteRec);
+    const local = normalizeWeeklyFlagRecord(localRec);
+    if (!remote && !local) return null;
+    const pose = pickLaterWeeklyFlagSide(remote, local, 'at');
+    const clear = pickLaterWeeklyFlagSide(remote, local, 'clearedAt');
+    const at = pose?.at || '';
+    const clearedAt = clear?.clearedAt || '';
+    if (!at && !clearedAt) return null;
+    return {
+      at,
+      byLabel: pose?.byLabel || '',
+      byUserId: pose?.byUserId || '',
+      clearedAt,
+      clearedByLabel: clear?.clearedByLabel || '',
+      clearedByUserId: clear?.clearedByUserId || '',
+    };
+  }
+
+  function mergeWeeklyFlagKindMaps(remoteMap, localMap) {
+    const remote = normalizeWeeklyFlagKindMap(remoteMap);
+    const local = normalizeWeeklyFlagKindMap(localMap);
+    const out = {};
+    new Set([...Object.keys(remote), ...Object.keys(local)]).forEach((weekKey) => {
+      const merged = mergeWeeklyFlagRecords(remote[weekKey], local[weekKey]);
+      if (merged) out[weekKey] = merged;
+    });
+    return out;
+  }
+
+  function mergePlayerWeeklyFlagRows(remoteRow, localRow) {
+    return {
+      shield: mergeWeeklyFlagKindMaps(remoteRow?.shield, localRow?.shield),
+      hive: mergeWeeklyFlagKindMaps(remoteRow?.hive, localRow?.hive),
+    };
+  }
+
+  /** Union playerId → motif → lundi. L’événement le plus récent fixe l’état. */
+  function mergePlayerWeeklyFlags(remoteFlags, localFlags) {
+    const remote = normalizePlayerWeeklyFlags(remoteFlags);
+    const local = normalizePlayerWeeklyFlags(localFlags);
+    const out = {};
+    new Set([...Object.keys(remote), ...Object.keys(local)]).forEach((playerId) => {
+      const row = mergePlayerWeeklyFlagRows(remote[playerId], local[playerId]);
+      if (weeklyFlagRowHasEntries(row)) out[playerId] = row;
+    });
+    return out;
+  }
+
+  function countPlayerWeeklyFlags(state, playerId, kind) {
+    if (!playerId || !WEEKLY_FLAG_KINDS.includes(kind)) return 0;
+    const map = state?.playerWeeklyFlags?.[playerId]?.[kind];
+    if (!map || typeof map !== 'object') return 0;
+    return Object.keys(map).filter((weekKey) => isWeeklyFlagActive(map[weekKey])).length;
+  }
+
+  function getPlayerWeeklyFlag(state, playerId, kind, weekKey) {
+    if (!playerId || !WEEKLY_FLAG_KINDS.includes(kind) || !weekKey) return null;
+    const record = state?.playerWeeklyFlags?.[playerId]?.[kind]?.[weekKey];
+    return record ? { ...record } : null;
+  }
+
+  function isPlayerWeeklyFlagActive(state, playerId, kind, weekKey) {
+    return isWeeklyFlagActive(getPlayerWeeklyFlag(state, playerId, kind, weekKey));
+  }
+
+  /**
+   * Pose ou retire le signalement de la semaine calendaire de `now`.
+   * Refus si le joueur n’est pas Actif. Idempotent si l’état demandé est déjà celui de la semaine.
+   * Le retrait conserve la pose et ajoute clearedAt / clearedBy*.
+   */
+  function setPlayerWeeklyFlag(state, playerId, kind, active, actor, now = new Date()) {
+    if (!state || !playerId || !WEEKLY_FLAG_KINDS.includes(kind)) return { changed: false };
+    const player = (state.players || []).find((p) => p && p.id === playerId);
+    if (!player || player.status !== 'Actif') return { changed: false };
+
+    const weekKey = calendarWeekKey(now);
+    if (!state.playerWeeklyFlags || typeof state.playerWeeklyFlags !== 'object') {
+      state.playerWeeklyFlags = {};
+    }
+    if (!state.playerWeeklyFlags[playerId]) {
+      state.playerWeeklyFlags[playerId] = { shield: {}, hive: {} };
+    }
+    const row = state.playerWeeklyFlags[playerId];
+    if (!row.shield || typeof row.shield !== 'object') row.shield = {};
+    if (!row.hive || typeof row.hive !== 'object') row.hive = {};
+
+    const prev = row[kind][weekKey] || null;
+    const currently = isWeeklyFlagActive(prev);
+    if (Boolean(active) === currently) return { changed: false };
+
+    const stamp = actor && typeof actor === 'object' ? actor : {};
+    const when = now instanceof Date ? now : new Date(now);
+    const iso = (Number.isNaN(when.getTime()) ? new Date() : when).toISOString();
+    if (active) {
+      row[kind][weekKey] = {
+        at: iso,
+        byLabel: stamp.actorLabel != null ? String(stamp.actorLabel) : '',
+        byUserId: stamp.actorUserId != null ? String(stamp.actorUserId) : '',
+        clearedAt: prev?.clearedAt || '',
+        clearedByLabel: prev?.clearedByLabel || '',
+        clearedByUserId: prev?.clearedByUserId || '',
+      };
+    } else {
+      row[kind][weekKey] = {
+        at: prev?.at || '',
+        byLabel: prev?.byLabel || '',
+        byUserId: prev?.byUserId || '',
+        clearedAt: iso,
+        clearedByLabel: stamp.actorLabel != null ? String(stamp.actorLabel) : '',
+        clearedByUserId: stamp.actorUserId != null ? String(stamp.actorUserId) : '',
+      };
+    }
+    return { changed: true };
+  }
+
   function formatCoachingThresholdLabel(threshold) {
     const th = normalizeCoachingThreshold(threshold);
     const fmt = (n) => {
@@ -2573,6 +2787,7 @@
       raw.playerFollowUpAutoSuppress
     );
     const playerVsUnderStats = normalizePlayerVsUnderStats(raw.playerVsUnderStats);
+    const playerWeeklyFlags = normalizePlayerWeeklyFlags(raw.playerWeeklyFlags);
     const vsUnderWeekHistory = normalizeVsUnderWeekHistory(raw.vsUnderWeekHistory);
     const vsWeekAudit = normalizeVsWeekAudit(raw.vsWeekAudit);
     const vsWeekLifecycle = normalizeVsWeekLifecycle(raw.vsWeekLifecycle);
@@ -2600,6 +2815,7 @@
       playerFollowUpArchives,
       playerFollowUpAutoSuppress,
       playerVsUnderStats,
+      playerWeeklyFlags,
       vsUnderWeekHistory,
       vsWeekAudit,
       vsWeekLifecycle,
@@ -2805,6 +3021,16 @@
     formatVsUnderCounterLabel,
     formatVsPraiseCounterLabel,
     recordVsUnderSnapshotsForWeek,
+    WEEKLY_FLAG_KINDS,
+    calendarWeekKey,
+    isWeeklyFlagActive,
+    normalizePlayerWeeklyFlags,
+    mergePlayerWeeklyFlagRows,
+    mergePlayerWeeklyFlags,
+    countPlayerWeeklyFlags,
+    isPlayerWeeklyFlagActive,
+    getPlayerWeeklyFlag,
+    setPlayerWeeklyFlag,
     pushVsUnderWeekArchive,
     emptyFollowUpReasons,
     createDefaultAllianceSettings,
