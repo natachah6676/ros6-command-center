@@ -104,9 +104,10 @@ assert(
     boot.indexOf('purgeLegacyBackupsBeforeWrites') < boot.indexOf('ensureRemoteRow'),
     'purge avant le pull distant'
   );
+  const prepAt = boot.indexOf('prepareBootstrapStores');
   assert(
-    boot.indexOf('preserve-local-and-push') < boot.lastIndexOf('applyStoresToLocal'),
-    'un cache métier divergent n’est pas écrasé avant le push'
+    prepAt > 0 && boot.indexOf('pushToSupabase', prepAt) > prepAt,
+    'Train/Ruche/Tempête ambigus sont écartés du push avant l’envoi'
   );
   assert(
     !backupsCode.includes("removeItem('ros6_command_center_v1')") &&
@@ -399,13 +400,16 @@ console.log('\n=== Push, rebase, apply : pas de réinjection ===');
     T.planBootstrapAction({ remoteVersion: 50, localVersion: 50, differingKeys: [] }).mode === 'apply-remote',
     'contenu identique : appliquer le distant est sans perte'
   );
+  const newerTempete = T.planBootstrapAction({
+    remoteVersion: 51,
+    localVersion: 50,
+    differingKeys: ['ros6_tempete_v1'],
+  });
+  assert(newerTempete.mode === 'apply-remote', 'distant plus récent : on n’envoie pas l’ancienne Tempête');
+  assert(!newerTempete.pushKeys.includes('ros6_tempete_v1'), 'Tempête absente des clés à pousser');
   assert(
-    T.planBootstrapAction({
-      remoteVersion: 51,
-      localVersion: 50,
-      differingKeys: ['ros6_tempete_v1'],
-    }).mode === 'preserve-local-and-push',
-    'distant plus récent mais Tempête locale différente : ne pas l’écraser'
+    newerTempete.adoptRemoteKeys.includes('ros6_tempete_v1'),
+    'l’ancienne Tempête est remplacée par le distant, pas poussée'
   );
 
   const localCc = { version: 1, players: [{ id: 'p1', pseudo: 'LocalEdit' }] };
@@ -439,6 +443,168 @@ console.log('\n=== Push, rebase, apply : pas de réinjection ===');
     JSON.parse(storage.getItem('ros6_tempete_v1')).archives[0] === 'remote-storm',
     'Tempête distante appliquée sans passer par les backups'
   );
+}
+
+function loadSync(storage) {
+  const sandbox = {
+    console,
+    localStorage: storage,
+    document: { getElementById: () => null, querySelector: () => null, addEventListener() {} },
+    navigator: { onLine: true },
+    ROSSupabase: {
+      getClient: () => ({ auth: { onAuthStateChange() {}, getSession: async () => ({ data: {} }) } }),
+    },
+    AppUI: { toast() {}, confirm: async () => false },
+  };
+  sandbox.window = sandbox;
+  sandbox.global = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(syncCode, sandbox);
+  return sandbox.ROSSync.__test;
+}
+
+function moduleRemote(overrides) {
+  return {
+    stores: {
+      ros6_command_center_v1: { players: [{ id: 'p1' }] },
+      ros6_train_v1: { week: 'remote-train' },
+      ros6_ruche_v1: { grid: 'remote-ruche' },
+      ros6_tempete_v1: { archives: ['remote-storm'] },
+      ...overrides,
+    },
+  };
+}
+
+console.log('\n=== Modules : distant plus récent ne se fait pas écraser ===');
+['ros6_train_v1', 'ros6_ruche_v1', 'ros6_tempete_v1'].forEach((key) => {
+  const storage = createMemoryStorage();
+  storage.setItem('ros6_command_center_v1', JSON.stringify({ players: [{ id: 'p1' }] }));
+  storage.setItem('ros6_train_v1', JSON.stringify({ week: 'remote-train' }));
+  storage.setItem('ros6_ruche_v1', JSON.stringify({ grid: 'remote-ruche' }));
+  storage.setItem('ros6_tempete_v1', JSON.stringify({ archives: ['remote-storm'] }));
+  const stale = JSON.stringify({ stale: key, at: 'old-cache' });
+  storage.setItem(key, stale);
+  const remote = moduleRemote();
+  const T = loadSync(storage);
+  const plan = T.planBootstrapAction({
+    remoteVersion: 200,
+    localVersion: 180,
+    differingKeys: T.listDifferingStoreKeys(remote),
+  });
+  assert(!plan.pushKeys.includes(key), `${key} : pas poussé par-dessus un document plus récent`);
+  const prepared = T.prepareBootstrapStores(remote, plan, { remoteVersion: 200, localVersion: 180 });
+  assert(!prepared.pushKeys.includes(key), `${key} : le prepare ne le marque pas à envoyer`);
+  const payload = T.buildPushPayload(remote, new Set(prepared.pushKeys));
+  assert(!JSON.stringify(payload).includes('old-cache'), `${key} : l’ancien cache est absent du payload`);
+  assert(!JSON.stringify(payload).includes(stale.slice(0, 20)) || !payload.stores[key] || !JSON.stringify(payload.stores[key]).includes('old-cache'), `${key} : payload module = distant`);
+  assert(!JSON.stringify(payload.stores[key]).includes('old-cache'), `${key} : le store du payload est le distant`);
+  const hold = JSON.parse(storage.getItem(T.MODULE_HOLD_KEY));
+  assert(hold.stores[key] === stale, `${key} : l’ancien cache est conservé hors sync`);
+  assert(!JSON.stringify(payload).includes(T.MODULE_HOLD_KEY) || !payload.stores[T.MODULE_HOLD_KEY], `${key} : la mise de côté n’est pas envoyée`);
+  assert(!Object.prototype.hasOwnProperty.call(payload.stores, T.MODULE_HOLD_KEY), `${key} : hold absent du payload`);
+});
+
+console.log('\n=== Vraie édition locale identifiable ===');
+{
+  const storage = createMemoryStorage();
+  const localTrain = JSON.stringify({ week: 'edit-non-poussee' });
+  storage.setItem('ros6_command_center_v1', JSON.stringify({ players: [{ id: 'p1' }] }));
+  storage.setItem('ros6_train_v1', localTrain);
+  storage.setItem('ros6_ruche_v1', JSON.stringify({ grid: 'remote-ruche' }));
+  storage.setItem('ros6_tempete_v1', JSON.stringify({ archives: ['remote-storm'] }));
+  const remote = moduleRemote();
+  const T = loadSync(storage);
+  const plan = T.planBootstrapAction({
+    remoteVersion: 180,
+    localVersion: 180,
+    differingKeys: T.listDifferingStoreKeys(remote),
+  });
+  assert(plan.pushKeys.includes('ros6_train_v1'), 'versions égales : le Train local est une édition à pousser');
+  assert(plan.adoptRemoteKeys.length === 0, 'on ne remplace pas cette édition par le distant');
+  const prepared = T.prepareBootstrapStores(remote, plan, { remoteVersion: 180, localVersion: 180 });
+  assert(storage.getItem('ros6_train_v1') === localTrain, 'prepare ne détruit pas l’édition non poussée');
+  const payload = T.buildPushPayload(remote, new Set(prepared.pushKeys));
+  assert(payload.stores.ros6_train_v1.week === 'edit-non-poussee', 'le push emporte l’édition Train');
+  assert(payload.stores.ros6_ruche_v1.grid === 'remote-ruche', 'la Ruche identique reste le distant');
+}
+
+console.log('\n=== Redémarrage après adoption : plus d’écrasement ===');
+{
+  const storage = createMemoryStorage();
+  storage.setItem('ros6_command_center_v1', JSON.stringify({ players: [{ id: 'p1' }] }));
+  storage.setItem('ros6_train_v1', JSON.stringify({ week: 'old-cache' }));
+  storage.setItem('ros6_ruche_v1', JSON.stringify({ grid: 'remote-ruche' }));
+  storage.setItem('ros6_tempete_v1', JSON.stringify({ archives: ['remote-storm'] }));
+  const remote = moduleRemote();
+  const T = loadSync(storage);
+  const first = T.planBootstrapAction({
+    remoteVersion: 200,
+    localVersion: 180,
+    differingKeys: T.listDifferingStoreKeys(remote),
+  });
+  T.prepareBootstrapStores(remote, first, { remoteVersion: 200, localVersion: 180 });
+  const second = T.planBootstrapAction({
+    remoteVersion: 200,
+    localVersion: 200,
+    differingKeys: T.listDifferingStoreKeys(remote),
+  });
+  assert(second.pushKeys.length === 0, 'au redémarrage le Train adopté n’est pas renvoyé');
+  assert(!JSON.stringify(storage.getItem('ros6_train_v1')).includes('old-cache'), 'le cache actif est le distant');
+  const hold = JSON.parse(storage.getItem(T.MODULE_HOLD_KEY));
+  assert(hold.stores.ros6_train_v1.includes('old-cache'), 'l’ancien Train reste dans la mise de côté');
+}
+
+console.log('\n=== Échec après purge : on garde ce qui doit rester local ===');
+{
+  const storage = createMemoryStorage();
+  const localTrain = JSON.stringify({ week: 'edit-non-poussee' });
+  storage.setItem('ros6_command_center_v1', JSON.stringify({ players: [{ id: 'p1' }] }));
+  storage.setItem('ros6_train_v1', localTrain);
+  storage.setItem('ros6_ruche_v1', JSON.stringify({ grid: 'remote-ruche' }));
+  storage.setItem('ros6_tempete_v1', JSON.stringify({ archives: ['remote-storm'] }));
+  const remote = moduleRemote();
+  const T = loadSync(storage);
+  const plan = T.planBootstrapAction({
+    remoteVersion: 180,
+    localVersion: 180,
+    differingKeys: T.listDifferingStoreKeys(remote),
+  });
+  T.prepareBootstrapStores(remote, plan, { remoteVersion: 180, localVersion: 180 });
+  assert(storage.getItem('ros6_train_v1') === localTrain, 'push non abouti : l’édition Train est toujours locale');
+
+  const stale = JSON.stringify({ week: 'old-cache' });
+  storage.setItem('ros6_train_v1', stale);
+  const origSet = storage.setItem.bind(storage);
+  storage.setItem = (key, value) => {
+    if (key === 'ros6_module_hold_v1') throw quotaError();
+    origSet(key, value);
+  };
+  const blocked = T.planBootstrapAction({
+    remoteVersion: 200,
+    localVersion: 180,
+    differingKeys: ['ros6_train_v1'],
+  });
+  const prepared = T.prepareBootstrapStores(remote, blocked, { remoteVersion: 200, localVersion: 180 });
+  assert(prepared.holdOk === false, 'mise de côté impossible signalée');
+  assert(!prepared.pushKeys.includes('ros6_train_v1'), 'sans mise de côté, le vieux Train n’est pas poussé');
+  assert(storage.getItem('ros6_train_v1') === stale, 'sans mise de côté, le cache local n’est pas détruit');
+}
+
+console.log('\n=== Purge backups seule, pendant ces scénarios ===');
+{
+  const storage = createMemoryStorage();
+  seedBusiness(storage);
+  storage.setItem('ros6_backups_v1', 'B'.repeat(1024 * 1024 + 20));
+  const before = snapshotBusiness(storage);
+  const removed = [];
+  const origRemove = storage.removeItem.bind(storage);
+  storage.removeItem = (key) => {
+    removed.push(key);
+    origRemove(key);
+  };
+  loadBackups(storage);
+  assert(removed.every((key) => key === 'ros6_backups_v1'), 'seule la clé backups est retirée');
+  assert(JSON.stringify(snapshotBusiness(storage)) === JSON.stringify(before), 'les stores métier survivent à la purge');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
