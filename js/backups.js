@@ -1,11 +1,30 @@
 /**
- * Sauvegardes automatiques locales — max 1/jour, 10 plus récentes.
+ * Sauvegardes automatiques locales — au plus 2, et 1 Mo de texte pour la clé entière.
  * Couvre toutes les stores applicatives (pas seulement l’UI).
  * Local uniquement : jamais synchronisées avec ros6_state / Supabase.
+ *
+ * La purge d’un index trop gros s’exécute à l’évaluation de ce script, donc avant
+ * DOMContentLoaded, avant le pull Supabase et avant les persist() métier.
+ * Elle ne retire que ros6_backups_v1.
  */
 (function (global) {
   const BACKUPS_KEY = 'ros6_backups_v1';
-  const MAX_BACKUPS = 10;
+  /** Drapeau minuscule : la migration de purge a déjà été tentée. */
+  const LEGACY_PURGE_FLAG = 'ros6_backups_legacy_purged_v1';
+  /**
+   * Clés qu’une purge de sauvegardes ne doit jamais retirer.
+   * Documente le contrat ; purgeLegacyLocalBackupsOnce ne les référence pas.
+   */
+  const UNTOUCHABLE_LOCAL_KEYS = [
+    'ros6_command_center_v1',
+    'ros6_train_v1',
+    'ros6_ruche_v1',
+    'ros6_tempete_v1',
+    'ros6_sync_meta_v1',
+  ];
+  const MAX_BACKUPS = 2;
+  /** Taille max du JSON entier de ros6_backups_v1 (caractères UTF-16). */
+  const MAX_BACKUP_CHARS = 1024 * 1024;
 
   const DATA_KEYS = [
     'ros6_command_center_v1',
@@ -48,21 +67,83 @@
     }
   }
 
+  function backupIndexChars(backups) {
+    return JSON.stringify({ version: 1, backups: backups || [] }).length;
+  }
+
+  /**
+   * Garde les plus récentes qui tiennent dans le nombre ET dans le budget.
+   * Une entrée seule trop grosse est abandonnée (on ne bloque pas le métier).
+   */
+  function selectBackupsWithinBudget(backups) {
+    const sorted = (Array.isArray(backups) ? backups : [])
+      .slice()
+      .sort((a, b) => (String(a?.createdAt || '') < String(b?.createdAt || '') ? 1 : -1));
+    const kept = [];
+    sorted.forEach((entry) => {
+      if (!entry || kept.length >= MAX_BACKUPS) return;
+      const next = kept.concat(entry);
+      if (backupIndexChars(next) <= MAX_BACKUP_CHARS) kept.push(entry);
+    });
+    return kept;
+  }
+
+  function notifyBackupQuota() {
+    console.error('Sauvegardes: quota localStorage');
+    if (global.AppUI) {
+      AppUI.toast(
+        'Espace de stockage local du navigateur insuffisant pour enregistrer une sauvegarde. Les données métier ne sont pas touchées.'
+      );
+    }
+  }
+
   function saveIndex(index) {
+    const text = JSON.stringify(index);
+    const write = () => localStorage.setItem(BACKUPS_KEY, text);
     try {
-      localStorage.setItem(BACKUPS_KEY, JSON.stringify(index));
+      write();
       return true;
     } catch (error) {
-      if (isQuotaExceededError(error)) {
-        console.error('Sauvegardes: quota localStorage', error);
-        if (global.AppUI) {
-          AppUI.toast(
-            'Espace de stockage local du navigateur insuffisant pour enregistrer une sauvegarde. Les données métier ne sont pas touchées.'
-          );
+      if (!isQuotaExceededError(error)) throw error;
+      try {
+        // Libère uniquement cette clé, puis réessaie le JSON déjà réduit.
+        localStorage.removeItem(BACKUPS_KEY);
+        write();
+        return true;
+      } catch (retryError) {
+        if (isQuotaExceededError(retryError)) {
+          notifyBackupQuota();
+          return false;
         }
-        return false;
+        throw retryError;
       }
-      throw error;
+    }
+  }
+
+  /**
+   * Retire ros6_backups_v1 seulement s’il dépasse le budget.
+   * removeItem ne réécrit pas la clé : ça libère le quota même quand setItem échoue.
+   * N’écrit aucune store métier ni ros6_sync_meta_v1.
+   */
+  function purgeLegacyLocalBackupsOnce() {
+    try {
+      const raw = localStorage.getItem(BACKUPS_KEY);
+      const oversized = typeof raw === 'string' && raw.length > MAX_BACKUP_CHARS;
+      if (oversized) localStorage.removeItem(BACKUPS_KEY);
+      if (localStorage.getItem(LEGACY_PURGE_FLAG) !== '1') {
+        try {
+          localStorage.setItem(LEGACY_PURGE_FLAG, '1');
+        } catch (flagError) {
+          /* Le drapeau est optionnel : le contrôle de taille reste actif au prochain démarrage. */
+        }
+      }
+      return {
+        purged: oversized,
+        previousChars: oversized ? raw.length : 0,
+      };
+    } catch (error) {
+      console.error('Sauvegardes: purge locale impossible', error);
+      return { purged: false, previousChars: 0, reason: 'error' };
     }
   }
 
@@ -109,15 +190,12 @@
       max: MAX_BACKUPS,
       rawBytes,
       payloadSum,
-      label: `${count} / ${MAX_BACKUPS} sauvegarde(s) · ~${formatSize(rawBytes)} en local`,
+      label: `${count} / ${MAX_BACKUPS} sauvegarde(s) · ~${formatSize(rawBytes)} / ${formatSize(MAX_BACKUP_CHARS)} en local`,
     };
   }
 
   function pruneToMax(backups) {
-    return backups
-      .slice()
-      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
-      .slice(0, MAX_BACKUPS);
+    return selectBackupsWithinBudget(backups);
   }
 
   function createBackup(kind = 'manual') {
@@ -149,7 +227,10 @@
       payload,
     };
 
-    index.backups = pruneToMax([entry, ...index.backups]);
+    index.backups = selectBackupsWithinBudget([entry, ...index.backups]);
+    if (!index.backups.some((b) => b.id === entry.id)) {
+      return { created: false, reason: 'too-large' };
+    }
     const saved = saveIndex(index);
     if (!saved) return { created: false, reason: 'quota' };
     return { created: true, entry };
@@ -310,13 +391,24 @@
 
   function init() {
     cacheDom();
-    ensureDailyAutoBackup();
+    try {
+      purgeLegacyLocalBackupsOnce();
+      ensureDailyAutoBackup();
+    } catch (error) {
+      console.error('Sauvegardes: initialisation ignorée', error);
+    }
     els.btnCreate?.addEventListener('click', onCreateNow);
     els.list?.addEventListener('click', (event) => {
       const btn = event.target.closest('[data-backup-restore]');
       if (btn) onRestore(btn.dataset.backupRestore);
     });
     render();
+  }
+
+  try {
+    purgeLegacyLocalBackupsOnce();
+  } catch (error) {
+    console.error('Sauvegardes: purge au chargement ignorée', error);
   }
 
   global.BackupsModule = {
@@ -327,7 +419,12 @@
     listBackups,
     restoreBackup,
     getLocalBackupsStats,
+    purgeLegacyLocalBackupsOnce,
+    selectBackupsWithinBudget,
     BACKUPS_KEY,
+    LEGACY_PURGE_FLAG,
+    UNTOUCHABLE_LOCAL_KEYS,
     MAX_BACKUPS,
+    MAX_BACKUP_CHARS,
   };
 })(window);

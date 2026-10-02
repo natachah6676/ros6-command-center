@@ -24,10 +24,11 @@ Résumé :
 | `ros6_train_v1` | Train | Oui |
 | `ros6_ruche_v1` | Ruche | Oui |
 | `ros6_tempete_v1` | Tempête | Oui |
-| `ros6_backups_v1` | Sauvegardes navigateur (max 10) | **Non** — local uniquement |
+| `ros6_backups_v1` | Sauvegardes navigateur (max 2, et 1 Mo pour la clé) | **Non** — local uniquement |
 
 Les stores métier sont regroupées dans `ros6_state.data.stores` (ligne `id = main`).
-Une éventuelle copie distante de `ros6_backups_v1` (héritage) est **ignorée** par l’app et n’est plus écrite ni lue au sync.
+Une copie distante héritée de `ros6_backups_v1` n’est ni réinjectée localement ni recopiée dans les push.
+Le retrait de cette clé déjà présente dans `ros6_state` / `main` est une opération SQL unique, séparée, qui ne touche pas les autres stores.
 
 ## Profils (`ros6_user_profiles`)
 
