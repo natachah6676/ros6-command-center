@@ -31,6 +31,8 @@
    */
   const MODULE_HOLD_KEY = 'ros6_module_hold_v1';
   const MODULE_STORE_KEYS = ['ros6_train_v1', 'ros6_ruche_v1', 'ros6_tempete_v1'];
+  /** Une seule copie par module, et 1 Mo pour toute la clé. Pas d’historique. */
+  const MAX_MODULE_HOLD_CHARS = 1024 * 1024;
 
   const COMMAND_CENTER_KEY = 'ros6_command_center_v1';
 
@@ -762,9 +764,45 @@
     return { mode: 'apply-remote', differing, pushKeys: [], adoptRemoteKeys };
   }
 
+  function moduleHoldDocument(stores, versions) {
+    return {
+      heldAt: new Date().toISOString(),
+      remoteVersion: Number(versions?.remoteVersion) || 0,
+      localVersion: Number(versions?.localVersion) || 0,
+      reason: 'remote-document-newer',
+      stores,
+    };
+  }
+
+  /**
+   * Au plus une chaîne par module, les modules du tour en priorité.
+   * Les clés inconnues d’un ancien hold sont ignorées.
+   */
+  function fitModuleHoldStores(priorityKeys, incoming, previous, versions) {
+    const ordered = [];
+    (Array.isArray(priorityKeys) ? priorityKeys : []).forEach((key) => {
+      if (MODULE_STORE_KEYS.includes(key) && typeof incoming[key] === 'string' && !ordered.includes(key)) {
+        ordered.push(key);
+      }
+    });
+    MODULE_STORE_KEYS.forEach((key) => {
+      if (!ordered.includes(key) && typeof previous[key] === 'string') ordered.push(key);
+    });
+    const kept = {};
+    ordered.forEach((key) => {
+      const value = typeof incoming[key] === 'string' ? incoming[key] : previous[key];
+      const next = { ...kept, [key]: value };
+      if (JSON.stringify(moduleHoldDocument(next, versions)).length <= MAX_MODULE_HOLD_CHARS) {
+        kept[key] = value;
+      }
+    });
+    return kept;
+  }
+
   /**
    * Copie locale des modules qu’on s’apprête à remplacer par un distant plus récent.
-   * Échec d’écriture : on ne remplace pas ces stores et on ne les pousse pas.
+   * Échec ou dépassement du plafond : on ne remplace pas ces stores et on ne les pousse pas.
+   * N’écrit jamais les stores métier.
    */
   function holdModuleStores(keys, versions) {
     const moduleKeys = (Array.isArray(keys) ? keys : []).filter((key) =>
@@ -772,16 +810,17 @@
     );
     if (!moduleKeys.length) return { ok: true, held: [] };
     let previous = {};
+    let previousRaw = null;
     try {
-      const raw = localStorage.getItem(MODULE_HOLD_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
+      previousRaw = localStorage.getItem(MODULE_HOLD_KEY);
+      if (previousRaw) {
+        const parsed = JSON.parse(previousRaw);
         if (parsed && parsed.stores && typeof parsed.stores === 'object') previous = parsed.stores;
       }
     } catch (error) {
       previous = {};
     }
-    const stores = { ...previous };
+    const incoming = {};
     moduleKeys.forEach((key) => {
       let raw = null;
       try {
@@ -789,18 +828,32 @@
       } catch (error) {
         raw = null;
       }
-      if (raw != null) stores[key] = raw;
+      if (typeof raw === 'string') incoming[key] = raw;
     });
-    const text = JSON.stringify({
-      heldAt: new Date().toISOString(),
-      remoteVersion: Number(versions?.remoteVersion) || 0,
-      localVersion: Number(versions?.localVersion) || 0,
-      reason: 'remote-document-newer',
-      stores,
-    });
-    const result = safeLocalStorageSetItem(MODULE_HOLD_KEY, text);
+    const kept = fitModuleHoldStores(moduleKeys, incoming, previous, versions);
+    const missing = moduleKeys.filter((key) => incoming[key] != null && !Object.prototype.hasOwnProperty.call(kept, key));
+    if (missing.length) {
+      if (typeof previousRaw === 'string' && previousRaw.length > MAX_MODULE_HOLD_CHARS) {
+        try {
+          localStorage.removeItem(MODULE_HOLD_KEY);
+        } catch (error) {
+          /* le hold trop gros reste ; les stores métier ne sont pas touchés */
+        }
+      }
+      return { ok: false, held: [] };
+    }
+    const text = JSON.stringify(moduleHoldDocument(kept, versions));
+    let result = safeLocalStorageSetItem(MODULE_HOLD_KEY, text);
+    if (!result.ok && result.quota) {
+      try {
+        localStorage.removeItem(MODULE_HOLD_KEY);
+      } catch (error) {
+        /* ignore */
+      }
+      result = safeLocalStorageSetItem(MODULE_HOLD_KEY, text);
+    }
     if (!result.ok) return { ok: false, held: [] };
-    return { ok: true, held: moduleKeys.filter((key) => stores[key] != null) };
+    return { ok: true, held: moduleKeys.filter((key) => kept[key] != null) };
   }
 
   function applyListedStores(data, keys) {
@@ -1690,6 +1743,8 @@
       listDifferingStoreKeys,
       MODULE_HOLD_KEY,
       MODULE_STORE_KEYS,
+      MAX_MODULE_HOLD_CHARS,
+      fitModuleHoldStores,
       canonicalStoreString,
       markDirty,
       isQuotaExceededError,

@@ -607,5 +607,90 @@ console.log('\n=== Purge backups seule, pendant ces scénarios ===');
   assert(JSON.stringify(snapshotBusiness(storage)) === JSON.stringify(before), 'les stores métier survivent à la purge');
 }
 
+console.log('\n=== ros6_module_hold_v1 borné et non restauré ===');
+{
+  assert(syncCode.includes('MAX_MODULE_HOLD_CHARS'), 'plafond de taille du hold');
+  const holdFn = syncCode.slice(
+    syncCode.indexOf('function holdModuleStores'),
+    syncCode.indexOf('function applyListedStores')
+  );
+  assert(!holdFn.includes("localStorage.setItem('ros6_train_v1'"), 'le hold ne réécrit pas Train');
+  assert(!holdFn.includes("localStorage.setItem('ros6_ruche_v1'"), 'le hold ne réécrit pas Ruche');
+  assert(!holdFn.includes("localStorage.setItem('ros6_tempete_v1'"), 'le hold ne réécrit pas Tempête');
+  assert(!syncCode.includes('restoreModuleHold') && !syncCode.includes('hold.stores.ros6_train'), 'pas de restauration automatique du hold');
+
+  const storage = createMemoryStorage();
+  storage.setItem('ros6_command_center_v1', JSON.stringify({ players: [{ id: 'p1' }] }));
+  storage.setItem('ros6_train_v1', JSON.stringify({ week: 'train-v1' }));
+  storage.setItem('ros6_ruche_v1', JSON.stringify({ grid: 'ruche-remote' }));
+  storage.setItem('ros6_tempete_v1', JSON.stringify({ archives: ['storm-remote'] }));
+  const remote = moduleRemote();
+  const T = loadSync(storage);
+  assert(T.MAX_MODULE_HOLD_CHARS === 1024 * 1024, 'plafond hold = 1 Mo');
+  T.prepareBootstrapStores(
+    remote,
+    { mode: 'apply-remote', adoptRemoteKeys: ['ros6_train_v1'], pushKeys: [] },
+    { remoteVersion: 3, localVersion: 2 }
+  );
+  storage.setItem('ros6_ruche_v1', JSON.stringify({ grid: 'ruche-old' }));
+  T.prepareBootstrapStores(
+    moduleRemote({ ros6_ruche_v1: { grid: 'ruche-remote' } }),
+    { mode: 'apply-remote', adoptRemoteKeys: ['ros6_ruche_v1'], pushKeys: [] },
+    { remoteVersion: 4, localVersion: 3 }
+  );
+  const hold = JSON.parse(storage.getItem(T.MODULE_HOLD_KEY));
+  assert(Object.keys(hold.stores).length === 2, 'un seul exemplaire par module, pas un historique');
+  assert(hold.stores.ros6_train_v1.includes('train-v1'), 'le Train mis de côté reste');
+  assert(hold.stores.ros6_ruche_v1.includes('ruche-old'), 'la Ruche mise de côté est ajoutée sans dupliquer');
+  storage.setItem('ros6_train_v1', JSON.stringify({ week: 'train-v2' }));
+  T.prepareBootstrapStores(
+    moduleRemote(),
+    { mode: 'apply-remote', adoptRemoteKeys: ['ros6_train_v1'], pushKeys: [] },
+    { remoteVersion: 5, localVersion: 4 }
+  );
+  const replaced = JSON.parse(storage.getItem(T.MODULE_HOLD_KEY));
+  assert(replaced.stores.ros6_train_v1.includes('train-v2'), 'le même module est remplacé');
+  assert(!replaced.stores.ros6_train_v1.includes('train-v1'), 'l’ancienne copie du même module ne s’accumule pas');
+  assert(storage.getItem(T.MODULE_HOLD_KEY).length <= T.MAX_MODULE_HOLD_CHARS, 'le hold reste sous 1 Mo');
+
+  storage.setItem(
+    T.MODULE_HOLD_KEY,
+    JSON.stringify({ stores: { junk: 'J'.repeat(1024 * 1024), ros6_train_v1: '{"week":"keep"}' } })
+  );
+  storage.setItem('ros6_tempete_v1', JSON.stringify({ archives: ['storm-old'] }));
+  T.prepareBootstrapStores(
+    moduleRemote(),
+    { mode: 'apply-remote', adoptRemoteKeys: ['ros6_tempete_v1'], pushKeys: [] },
+    { remoteVersion: 6, localVersion: 5 }
+  );
+  const trimmed = JSON.parse(storage.getItem(T.MODULE_HOLD_KEY));
+  assert(!trimmed.stores.junk, 'une clé inconnue et volumineuse est abandonnée');
+  assert(storage.getItem(T.MODULE_HOLD_KEY).length <= T.MAX_MODULE_HOLD_CHARS, 'après trim, le hold tient dans 1 Mo');
+  assert(
+    JSON.parse(storage.getItem('ros6_tempete_v1')).archives[0] === 'remote-storm',
+    'Tempête active prend le distant'
+  );
+
+  const huge = 'H'.repeat(T.MAX_MODULE_HOLD_CHARS + 50);
+  storage.setItem('ros6_train_v1', huge);
+  const cc = storage.getItem('ros6_command_center_v1');
+  const refused = T.prepareBootstrapStores(
+    moduleRemote(),
+    { mode: 'apply-remote', adoptRemoteKeys: ['ros6_train_v1'], pushKeys: [] },
+    { remoteVersion: 9, localVersion: 8 }
+  );
+  assert(refused.holdOk === false, 'un module plus gros que le plafond n’est pas mis de côté');
+  assert(!refused.pushKeys.includes('ros6_train_v1'), 'ce module n’est pas envoyé');
+  assert(storage.getItem('ros6_train_v1') === huge, 'le cache Train n’est pas détruit');
+  assert(storage.getItem('ros6_command_center_v1') === cc, 'le centre de commandement n’est pas touché');
+
+  const payload = T.buildPushPayload(
+    { stores: { ...moduleRemote().stores, ros6_module_hold_v1: { stores: { ros6_train_v1: 'secret-hold' } } } },
+    new Set(['ros6_command_center_v1'])
+  );
+  assert(!Object.prototype.hasOwnProperty.call(payload.stores, 'ros6_module_hold_v1'), 'le hold n’entre pas dans le payload');
+  assert(!JSON.stringify(payload).includes('secret-hold'), 'le contenu du hold n’est pas transporté');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
