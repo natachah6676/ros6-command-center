@@ -8,8 +8,8 @@
  *   accidentel de champs non vides par null/undefined venant d’un cache incomplet ;
  * - semaines VS (weeks / currentWeekId) : un cache local vide ou plus ancien ne peut pas
  *   effacer ni ressusciter une semaine ; seule une clôture volontaire (closeIntent) le peut ;
- * - ros6_backups_v1 est local uniquement : jamais poussé / jamais réécrit depuis Supabase
- *   (une copie distante éventuelle est conservée telle quelle, ignorée par l’app).
+ * - ros6_backups_v1 est local uniquement : jamais poussé, jamais réinjecté depuis Supabase.
+ *   Un héritage distant n’est pas recopié dans le payload (le prochain push ne le transporte plus).
  */
 (function (global) {
   const ROW_ID = 'main';
@@ -655,10 +655,95 @@
   }
 
   /**
+   * ros6_backups_v1 n’entre dans aucun document envoyé ou réappliqué.
+   * Les autres clés hors STORE_KEYS restent recopiées.
+   */
+  function omitLegacyBackupStore(stores) {
+    if (!stores || typeof stores !== 'object') return stores;
+    if (Object.prototype.hasOwnProperty.call(stores, BACKUPS_KEY)) {
+      delete stores[BACKUPS_KEY];
+    }
+    return stores;
+  }
+
+  function canonicalStoreString(value) {
+    if (value == null || value === '') return null;
+    let parsed = value;
+    if (typeof value === 'string') {
+      try {
+        parsed = JSON.parse(value);
+      } catch (error) {
+        return value;
+      }
+    }
+    return stableStringify(parsed);
+  }
+
+  function stableStringify(value) {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+    }
+    const keys = Object.keys(value).sort();
+    return `{${keys
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(',')}}`;
+  }
+
+  /** Compare le cache local et le distant sans écrire. Ignore ros6_backups_v1. */
+  function listDifferingStoreKeys(remoteData) {
+    const remoteStores =
+      remoteData && typeof remoteData === 'object' && remoteData.stores ? remoteData.stores : {};
+    const differing = [];
+    STORE_KEYS.forEach((key) => {
+      let localRaw = null;
+      try {
+        localRaw = localStorage.getItem(key);
+      } catch (error) {
+        localRaw = null;
+      }
+      const localNorm = localRaw == null ? null : canonicalStoreString(localRaw);
+      const remoteNorm = remoteStores[key] == null ? null : canonicalStoreString(remoteStores[key]);
+      if (localNorm !== remoteNorm) differing.push(key);
+    });
+    return differing;
+  }
+
+  /**
+   * Au chargement, ne pas remplacer un cache métier qui diverge.
+   * - version locale 0 : premier rattachement, le distant gagne ;
+   * - contenu identique : appliquer le distant ;
+   * - contenu différent et version locale déjà connue : garder le local et le pousser.
+   *   Sinon le pull, une fois le quota libéré, effacerait des éditions persistées
+   *   mais pas encore envoyées.
+   * - distant plus ancien : confirmation existante.
+   */
+  function planBootstrapAction({ remoteVersion, localVersion, differingKeys } = {}) {
+    const remote = Number(remoteVersion) || 0;
+    const local = Number(localVersion) || 0;
+    const differing = (Array.isArray(differingKeys) ? differingKeys : []).filter(
+      (key) => key !== BACKUPS_KEY && STORE_KEYS.includes(key)
+    );
+    if (remote < local) return { mode: 'remote-older', differing };
+    if (local === 0) return { mode: 'apply-remote', differing };
+    if (!differing.length) return { mode: 'apply-remote', differing: [] };
+    return { mode: 'preserve-local-and-push', differing };
+  }
+
+  function purgeLegacyBackupsBeforeWrites() {
+    if (
+      global.BackupsModule &&
+      typeof global.BackupsModule.purgeLegacyLocalBackupsOnce === 'function'
+    ) {
+      return global.BackupsModule.purgeLegacyLocalBackupsOnce();
+    }
+    return null;
+  }
+
+  /**
    * Construit le document à écrire : base = distant, overlay = stores dirty locaux.
    * Les stores non dirty restent exactement ceux de Supabase.
-   * Les clés distantes hors STORE_KEYS (ex. ros6_backups_v1 hérité) sont recopées
-   * telles quelles — jamais écrasées ni effacées par ce client.
+   * ros6_backups_v1 n’est jamais recopié, même s’il est encore dans le document distant.
    * @param {object} [localStoresOverride] Pour tests / injection ; sinon lecture locale.
    */
   function buildPushPayload(remoteData, dirtyKeys, localStoresOverride) {
@@ -674,6 +759,7 @@
 
     const stores = {};
     Object.keys(remoteStores).forEach((key) => {
+      if (key === BACKUPS_KEY) return;
       stores[key] = cloneJson(remoteStores[key]);
     });
     STORE_KEYS.forEach((key) => {
@@ -694,6 +780,7 @@
       }
     });
 
+    omitLegacyBackupStore(stores);
     return {
       appName: 'WAROPS',
       stores,
@@ -728,9 +815,11 @@
     });
 
     Object.keys(remoteStores).forEach((key) => {
+      if (key === BACKUPS_KEY) return;
       if (!(key in stores)) stores[key] = cloneJson(remoteStores[key]);
     });
 
+    omitLegacyBackupStore(stores);
     return { appName: 'WAROPS', stores, collectedAt: new Date().toISOString() };
   }
 
@@ -1163,6 +1252,8 @@
   }
 
   async function bootstrapAfterAuth() {
+    // Avant toute réécriture de cache : libérer ros6_backups_v1 s’il sature le quota.
+    purgeLegacyBackupsBeforeWrites();
     setSyncStatus('saving', 'chargement');
     const meta = readMeta();
     localVersion = meta.version;
@@ -1194,14 +1285,15 @@
         remote = await fetchRemoteRow();
       }
 
+      let preserveLocalStatus = false;
       if (!remoteIsEmpty(remote?.data)) {
         const remoteVersion = Number(remote.version) || 0;
-        // Toujours préférer Supabase au chargement s’il est au moins aussi récent
-        if (remoteVersion >= localVersion || localVersion === 0) {
-          applyStoresToLocal(remote.data, { reload: false });
-          writeMeta(remoteVersion);
-          pendingDirty.clear();
-        } else if (remoteVersion < localVersion) {
+        const plan = planBootstrapAction({
+          remoteVersion,
+          localVersion,
+          differingKeys: listDifferingStoreKeys(remote.data),
+        });
+        if (plan.mode === 'remote-older') {
           const overwrite = await confirmOverwriteRemoteIfNeeded(remote);
           if (overwrite) {
             STORE_KEYS.forEach((key) => pendingDirty.add(key));
@@ -1212,10 +1304,19 @@
             pendingDirty.clear();
             AppUI.toast('Version Supabase conservée (cache local ignoré).');
           }
+        } else if (plan.mode === 'preserve-local-and-push') {
+          // Ne pas applyStoresToLocal(remote) : ça effacerait l’écart non poussé.
+          plan.differing.forEach((key) => markDirty(key));
+          await pushToSupabase({ force: false, allStores: false });
+          preserveLocalStatus = true;
+        } else {
+          applyStoresToLocal(remote.data, { reload: false });
+          writeMeta(remoteVersion);
+          pendingDirty.clear();
         }
       }
 
-      setSyncStatus('synced');
+      if (!preserveLocalStatus) setSyncStatus('synced');
     } catch (error) {
       console.error('ROSSync bootstrap', error);
       if (isQuotaExceededError(error)) {
@@ -1391,6 +1492,7 @@
   }
 
   function init(options = {}) {
+    purgeLegacyBackupsBeforeWrites();
     cacheDom();
     onReadyCallback = options.onReady || null;
     client = ROSSupabase.getClient();
@@ -1467,6 +1569,9 @@
       buildPushPayload,
       rebaseLocalAfterRemote,
       applyStoresToLocal,
+      planBootstrapAction,
+      listDifferingStoreKeys,
+      canonicalStoreString,
       markDirty,
       isQuotaExceededError,
       safeLocalStorageSetItem,

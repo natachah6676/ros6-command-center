@@ -226,8 +226,12 @@ const afterRucheKeepsRemoteBackups = T.buildPushPayload(
   localIncompleteMembers
 );
 assert(
-  afterRucheKeepsRemoteBackups.stores.ros6_backups_v1?.backups?.[0]?.id === 'remote_only',
-  'push métier ne touche pas ros6_backups_v1 distant'
+  !Object.prototype.hasOwnProperty.call(afterRucheKeepsRemoteBackups.stores, 'ros6_backups_v1'),
+  'push métier n’inclut pas ros6_backups_v1'
+);
+assert(
+  !Object.prototype.hasOwnProperty.call(rebased.stores, 'ros6_backups_v1'),
+  'rebase ne réinjecte pas ros6_backups_v1'
 );
 
 console.log('\n=== Quota localStorage ===');
