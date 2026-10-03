@@ -296,7 +296,80 @@
         changed = true;
       }
     }
+    if (rucheState.control && typeof rucheState.control === 'object') {
+      changed = migrateRucheControl(rucheState.control, resolve) || changed;
+    }
     return { changed };
+  }
+
+  /**
+   * Ids du contrôle uniquement. N’ajoute pas le bloc s’il est absent.
+   * La case centrale reste l’événement Maréchal ; un id qui s’y trouvait n’est pas replacé.
+   */
+  function migrateRucheControl(control, resolve) {
+    let changed = false;
+    const seen = new Set();
+    const asPlayerId = (value) => {
+      const next = resolve(value);
+      if (!next || next === 'FREE' || next === 'MARSHAL') return null;
+      return next;
+    };
+
+    if (Array.isArray(control.grid)) {
+      for (let r = 0; r < control.grid.length; r += 1) {
+        const row = control.grid[r];
+        if (!Array.isArray(row)) continue;
+        for (let c = 0; c < row.length; c += 1) {
+          if (r === 4 && c === 4) {
+            if (row[c] !== 'MARSHAL') {
+              row[c] = 'MARSHAL';
+              changed = true;
+            }
+            continue;
+          }
+          const next = asPlayerId(row[c]);
+          const stored = next && seen.has(next) ? null : next;
+          if (stored) seen.add(stored);
+          if (stored !== row[c]) {
+            row[c] = stored;
+            changed = true;
+          }
+        }
+      }
+    }
+
+    if (control.bottomId != null && control.bottomId !== '') {
+      const next = asPlayerId(control.bottomId);
+      const stored = next && seen.has(next) ? null : next;
+      if (stored) seen.add(stored);
+      if (stored !== control.bottomId) {
+        control.bottomId = stored;
+        changed = true;
+      }
+    } else if (control.bottomId === 'FREE' || control.bottomId === 'MARSHAL') {
+      control.bottomId = null;
+      changed = true;
+    }
+
+    if (control.statusByPlayerId && typeof control.statusByPlayerId === 'object') {
+      const nextMap = {};
+      Object.keys(control.statusByPlayerId).forEach((key) => {
+        const id = asPlayerId(key);
+        if (!id || !seen.has(id) || Object.prototype.hasOwnProperty.call(nextMap, id)) return;
+        nextMap[id] = control.statusByPlayerId[key];
+      });
+      const beforeKeys = Object.keys(control.statusByPlayerId);
+      const afterKeys = Object.keys(nextMap);
+      const same =
+        beforeKeys.length === afterKeys.length &&
+        beforeKeys.every((key) => nextMap[key] === control.statusByPlayerId[key]);
+      if (!same) {
+        control.statusByPlayerId = nextMap;
+        changed = true;
+      }
+    }
+
+    return changed;
   }
 
   function migrateTempeteState(tempeteState, players, options = {}) {

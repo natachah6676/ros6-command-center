@@ -54,7 +54,8 @@ assert(
   rucheCode.includes('Pas de puissance héros : bonus'),
   'Officiers sans tri héros'
 );
-assert(html.includes('ne change jamais automatiquement'), 'Mention non-auto actuelle');
+assert(html.includes('data-i18n="current.help"'), 'Sous-titre ruche actuelle');
+assert(html.includes('Plan prévu'), 'Libellé plan prévu');
 
 console.log('\n=== Module expose ===');
 assert(rucheCode.includes('buildOptimizedProposal'), 'buildOptimizedProposal');
