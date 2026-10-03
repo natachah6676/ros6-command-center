@@ -18,7 +18,7 @@
     'lang.en': 'English',
 
     'current.title': 'Ruche actuelle',
-    'current.help': 'Ruche enregistrée — ne change jamais automatiquement',
+    'current.help': 'Plan prévu',
     'btn.verify': 'Vérifier la ruche',
     'btn.validate': 'Valider la ruche',
     'btn.exportPng': 'Exporter en PNG',
@@ -129,8 +129,7 @@
     'export.sheetName': 'Ruche',
 
     'control.title': 'Ruche de contrôle',
-    'control.help':
-      'Positions réelles pendant le déplacement. Le statut est indiqué à la main, sans comparaison avec les autres ruches.',
+    'control.help': 'Placement réel + statuts',
     'control.summary':
       '{placed} placés · {good} bien placés · {alt} autres places validées · {move} à déplacer',
     'control.moveList': 'À déplacer : {names}',
@@ -178,7 +177,7 @@
     'lang.en': 'English',
 
     'current.title': 'Current hive',
-    'current.help': 'Saved hive — never changes automatically',
+    'current.help': 'Planned layout',
     'btn.verify': 'Verify hive',
     'btn.validate': 'Validate hive',
     'btn.exportPng': 'Export PNG',
@@ -289,8 +288,7 @@
     'export.sheetName': 'Hive',
 
     'control.title': 'Control hive',
-    'control.help':
-      'Actual positions while players move. Status is set by hand, with no comparison to the other hives.',
+    'control.help': 'Actual placement + statuses',
     'control.summary':
       '{placed} placed · {good} well placed · {alt} other spots accepted · {move} to move',
     'control.moveList': 'To move: {names}',

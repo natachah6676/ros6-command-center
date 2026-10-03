@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20260929-hist-detail1" />
+  <link rel="stylesheet" href="css/styles.css?v=20261003-ruche-layout" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -488,26 +488,73 @@
         </div>
 
         <div class="ruche-layout">
-          <div class="ruche-dual">
-            <section class="block">
-              <header class="block-header">
-                <h3 data-i18n="current.title">Ruche actuelle</h3>
-                <p data-i18n="current.help">Ruche enregistrée — ne change jamais automatiquement</p>
-              </header>
-              <div class="ruche-toolbar settings-actions">
-                <button type="button" id="rucheVerify" class="btn btn-ghost" data-i18n="btn.verify">Vérifier la ruche</button>
-                <button type="button" id="rucheValidate" class="btn btn-primary" disabled data-i18n="btn.validate">Valider la ruche</button>
-                <button type="button" id="rucheExportPng" class="btn btn-ghost" data-i18n="btn.exportPng">Exporter en PNG</button>
-                <button type="button" id="rucheExportExcel" class="btn btn-ghost" data-i18n="btn.exportExcel">Exporter en Excel</button>
-                <button type="button" id="rucheClear" class="btn btn-ghost" data-i18n="btn.clear">Vider la grille</button>
+          <div class="ruche-compare">
+            <section class="block ruche-current-block">
+              <div class="ruche-compare-meta">
+                <header class="block-header">
+                  <h3 data-i18n="current.title">Ruche actuelle</h3>
+                  <p data-i18n="current.help">Plan prévu</p>
+                </header>
+                <div class="ruche-toolbar settings-actions">
+                  <button type="button" id="rucheVerify" class="btn btn-ghost" data-i18n="btn.verify">Vérifier la ruche</button>
+                  <button type="button" id="rucheValidate" class="btn btn-primary" disabled data-i18n="btn.validate">Valider la ruche</button>
+                  <button type="button" id="rucheExportPng" class="btn btn-ghost" data-i18n="btn.exportPng">Exporter en PNG</button>
+                  <button type="button" id="rucheExportExcel" class="btn btn-ghost" data-i18n="btn.exportExcel">Exporter en Excel</button>
+                  <button type="button" id="rucheClear" class="btn btn-ghost" data-i18n="btn.clear">Vider la grille</button>
+                </div>
+                <div id="rucheVerifyResult" class="ruche-verify-result"></div>
               </div>
-              <div id="rucheVerifyResult" class="ruche-verify-result" style="margin-top:0.85rem"></div>
-              <div class="ruche-board" id="rucheBoard">
-                <div id="rucheGrid" class="ruche-grid" role="grid" data-i18n-aria="grid.aria" aria-label="Grille de ruche actuelle 10 par 10"></div>
+              <div class="ruche-compare-main">
+                <div class="ruche-board" id="rucheBoard">
+                  <div id="rucheGrid" class="ruche-grid" role="grid" data-i18n-aria="grid.aria" aria-label="Grille de ruche actuelle 10 par 10"></div>
+                </div>
               </div>
             </section>
 
-            <section class="block ruche-proposal-block">
+            <section class="block ruche-control-block" id="rucheControlBlock">
+              <div class="ruche-compare-meta">
+                <header class="block-header ruche-control-head">
+                  <div>
+                    <h3 data-i18n="control.title">Ruche de contrôle</h3>
+                    <p data-i18n="control.help">Placement réel + statuts</p>
+                  </div>
+                  <button type="button" id="rucheControlReset" class="btn btn-ghost btn-sm" data-i18n="control.btn.reset">Réinitialiser la ruche de contrôle</button>
+                </header>
+                <p id="rucheControlSummary" class="ruche-control-summary" aria-live="polite"></p>
+                <p id="rucheControlMoveList" class="ruche-control-move-list" aria-live="polite"></p>
+                <div id="rucheControlBanner" class="ruche-control-banner hidden">
+                  <p id="rucheControlBannerText"></p>
+                  <button type="button" id="rucheControlBannerCancel" class="btn btn-ghost btn-sm" data-i18n="control.btn.cancelMove">Annuler le déplacement</button>
+                </div>
+              </div>
+              <div class="ruche-compare-main">
+                <div class="ruche-board" id="rucheControlBoard">
+                  <div id="rucheControlGrid" class="ruche-grid ruche-control-grid" role="grid" data-i18n-aria="control.aria.grid" aria-label="Ruche de contrôle 10 par 10"></div>
+                </div>
+                <div id="rucheControlSheet" class="ruche-control-sheet hidden">
+                  <p id="rucheControlSheetTitle" class="ruche-control-sheet-title"></p>
+                  <label id="rucheControlSearchWrap" class="ruche-control-search hidden">
+                    <input
+                      type="search"
+                      id="rucheControlSearch"
+                      class="input"
+                      autocomplete="off"
+                      autocapitalize="off"
+                      spellcheck="false"
+                      enterkeyhint="search"
+                      data-i18n-aria="control.aria.search"
+                      aria-label="Rechercher un joueur de la ruche de contrôle"
+                    />
+                  </label>
+                  <div id="rucheControlResults" class="ruche-control-results"></div>
+                  <div id="rucheControlActions" class="ruche-control-actions hidden"></div>
+                  <button type="button" id="rucheControlSheetCancel" class="btn btn-ghost btn-sm hidden" data-i18n="confirm.cancel">Annuler</button>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <section class="block ruche-proposal-block">
               <header class="block-header">
                 <h3 data-i18n="proposal.title">Proposition optimisée</h3>
                 <p data-i18n="proposal.help">R4/R5 au plus près du Maréchal (sans regarder leur puissance héros), puis membres par puissance héros (plus fort → plus près) · n’écrase la ruche actuelle qu’après validation</p>
@@ -539,45 +586,6 @@
                 <div id="rucheProposalGrid" class="ruche-grid" role="grid" data-i18n-aria="proposal.grid.aria" aria-label="Proposition de ruche optimisée"></div>
               </div>
             </section>
-          </div>
-
-          <section class="block ruche-control-block" id="rucheControlBlock">
-            <header class="block-header">
-              <h3 data-i18n="control.title">Ruche de contrôle</h3>
-              <p data-i18n="control.help">Positions réelles pendant le déplacement. Le statut est indiqué à la main, sans comparaison avec les autres ruches.</p>
-            </header>
-            <p id="rucheControlSummary" class="ruche-control-summary" aria-live="polite"></p>
-            <p id="rucheControlMoveList" class="ruche-control-move-list" aria-live="polite"></p>
-            <div class="ruche-toolbar settings-actions">
-              <button type="button" id="rucheControlReset" class="btn btn-ghost" data-i18n="control.btn.reset">Réinitialiser la ruche de contrôle</button>
-            </div>
-            <div id="rucheControlBanner" class="ruche-control-banner hidden">
-              <p id="rucheControlBannerText"></p>
-              <button type="button" id="rucheControlBannerCancel" class="btn btn-ghost btn-sm" data-i18n="control.btn.cancelMove">Annuler le déplacement</button>
-            </div>
-            <div class="ruche-board" id="rucheControlBoard">
-              <div id="rucheControlGrid" class="ruche-grid ruche-control-grid" role="grid" data-i18n-aria="control.aria.grid" aria-label="Ruche de contrôle 10 par 10"></div>
-            </div>
-            <div id="rucheControlSheet" class="ruche-control-sheet hidden">
-              <p id="rucheControlSheetTitle" class="ruche-control-sheet-title"></p>
-              <label id="rucheControlSearchWrap" class="ruche-control-search hidden">
-                <input
-                  type="search"
-                  id="rucheControlSearch"
-                  class="input"
-                  autocomplete="off"
-                  autocapitalize="off"
-                  spellcheck="false"
-                  enterkeyhint="search"
-                  data-i18n-aria="control.aria.search"
-                  aria-label="Rechercher un joueur de la ruche de contrôle"
-                />
-              </label>
-              <div id="rucheControlResults" class="ruche-control-results"></div>
-              <div id="rucheControlActions" class="ruche-control-actions hidden"></div>
-              <button type="button" id="rucheControlSheetCancel" class="btn btn-ghost btn-sm hidden" data-i18n="confirm.cancel">Annuler</button>
-            </div>
-          </section>
 
           <section class="block ruche-archives-block">
             <header class="block-header">
