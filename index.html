@@ -541,6 +541,44 @@
             </section>
           </div>
 
+          <section class="block ruche-control-block" id="rucheControlBlock">
+            <header class="block-header">
+              <h3 data-i18n="control.title">Ruche de contrôle</h3>
+              <p data-i18n="control.help">Positions réelles pendant le déplacement. Le statut est indiqué à la main, sans comparaison avec les autres ruches.</p>
+            </header>
+            <p id="rucheControlSummary" class="ruche-control-summary" aria-live="polite"></p>
+            <p id="rucheControlMoveList" class="ruche-control-move-list" aria-live="polite"></p>
+            <div class="ruche-toolbar settings-actions">
+              <button type="button" id="rucheControlReset" class="btn btn-ghost" data-i18n="control.btn.reset">Réinitialiser la ruche de contrôle</button>
+            </div>
+            <div id="rucheControlBanner" class="ruche-control-banner hidden">
+              <p id="rucheControlBannerText"></p>
+              <button type="button" id="rucheControlBannerCancel" class="btn btn-ghost btn-sm" data-i18n="control.btn.cancelMove">Annuler le déplacement</button>
+            </div>
+            <div class="ruche-board" id="rucheControlBoard">
+              <div id="rucheControlGrid" class="ruche-grid ruche-control-grid" role="grid" data-i18n-aria="control.aria.grid" aria-label="Ruche de contrôle 10 par 10"></div>
+            </div>
+            <div id="rucheControlSheet" class="ruche-control-sheet hidden">
+              <p id="rucheControlSheetTitle" class="ruche-control-sheet-title"></p>
+              <label id="rucheControlSearchWrap" class="ruche-control-search hidden">
+                <input
+                  type="search"
+                  id="rucheControlSearch"
+                  class="input"
+                  autocomplete="off"
+                  autocapitalize="off"
+                  spellcheck="false"
+                  enterkeyhint="search"
+                  data-i18n-aria="control.aria.search"
+                  aria-label="Rechercher un joueur de la ruche de contrôle"
+                />
+              </label>
+              <div id="rucheControlResults" class="ruche-control-results"></div>
+              <div id="rucheControlActions" class="ruche-control-actions hidden"></div>
+              <button type="button" id="rucheControlSheetCancel" class="btn btn-ghost btn-sm hidden" data-i18n="confirm.cancel">Annuler</button>
+            </div>
+          </section>
+
           <section class="block ruche-archives-block">
             <header class="block-header">
               <h3 data-i18n="archives.title">Archives ruche</h3>
@@ -1469,8 +1507,8 @@
   <script src="js/notifications.js?v=20260802-4"></script>
   <script src="js/vs.js?v=20260916-vs-signals1"></script>
   <script src="js/train.js?v=20260911-export1"></script>
-  <script src="js/ruche-i18n.js?v=20260929-ruche-i18n1"></script>
-  <script src="js/ruche.js?v=20260929-ruche-i18n1"></script>
+  <script src="js/ruche-i18n.js?v=20261003-ruche-control1"></script>
+  <script src="js/ruche.js?v=20261003-ruche-control1"></script>
   <script src="js/tempete.js?v=20260809-scoped1"></script>
   <script src="js/backups.js?v=20261002-backup-quota1"></script>
   <script src="js/app.js?v=20260912-hist1"></script>

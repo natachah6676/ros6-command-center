@@ -127,6 +127,44 @@
 
     'export.pngTitle': '{tag} — Plan de ruche',
     'export.sheetName': 'Ruche',
+
+    'control.title': 'Ruche de contrôle',
+    'control.help':
+      'Positions réelles pendant le déplacement. Le statut est indiqué à la main, sans comparaison avec les autres ruches.',
+    'control.summary':
+      '{placed} placés · {good} bien placés · {alt} autres places validées · {move} à déplacer',
+    'control.moveList': 'À déplacer : {names}',
+    'control.moveList.empty': 'À déplacer : —',
+    'control.btn.reset': 'Réinitialiser la ruche de contrôle',
+    'control.btn.move': 'Déplacer',
+    'control.btn.change': 'Changer le joueur',
+    'control.btn.remove': 'Retirer',
+    'control.btn.cancelMove': 'Annuler le déplacement',
+    'control.status.good': 'Bien placé',
+    'control.status.alt_ok': 'Autre place — OK',
+    'control.status.move': 'À déplacer',
+    'control.status.good.short': 'OK',
+    'control.status.alt_ok.short': 'Autre',
+    'control.status.move.short': 'Bouge',
+    'control.search.title': 'Qui est sur cette case ?',
+    'control.search.placeholder': 'Quelques lettres du pseudo',
+    'control.search.hint': 'Saisissez quelques lettres du pseudo.',
+    'control.search.empty': 'Aucun joueur actif ne correspond.',
+    'control.change.title': 'Remplacer par un autre joueur',
+    'control.move.banner': 'Déplacer {pseudo} — touchez une case vide.',
+    'control.confirm.reset.title': 'Réinitialiser la ruche de contrôle',
+    'control.confirm.reset.message':
+      'Vider uniquement la ruche de contrôle ?\n\nLa ruche actuelle, la proposition, les archives et les couleurs restent en place.',
+    'control.confirm.reset.ok': 'Réinitialiser',
+    'control.toast.reset': 'Ruche de contrôle vidée.',
+    'control.toast.occupied': 'Cette case est occupée.',
+    'control.toast.duplicate': 'Ce joueur est déjà placé dans la ruche de contrôle.',
+    'control.aria.grid': 'Ruche de contrôle 10 par 10',
+    'control.aria.cell': 'Contrôle — case {row}, {col}',
+    'control.aria.cellPlayer': 'Contrôle — case {row}, {col} — {pseudo} — {status}',
+    'control.aria.bottom': 'Contrôle — case du bas',
+    'control.aria.bottomPlayer': 'Contrôle — case du bas — {pseudo} — {status}',
+    'control.aria.search': 'Rechercher un joueur de la ruche de contrôle',
   };
 
   const en = {
@@ -249,6 +287,44 @@
 
     'export.pngTitle': '{tag} — Hive plan',
     'export.sheetName': 'Hive',
+
+    'control.title': 'Control hive',
+    'control.help':
+      'Actual positions while players move. Status is set by hand, with no comparison to the other hives.',
+    'control.summary':
+      '{placed} placed · {good} well placed · {alt} other spots accepted · {move} to move',
+    'control.moveList': 'To move: {names}',
+    'control.moveList.empty': 'To move: —',
+    'control.btn.reset': 'Reset control hive',
+    'control.btn.move': 'Move',
+    'control.btn.change': 'Change player',
+    'control.btn.remove': 'Remove',
+    'control.btn.cancelMove': 'Cancel move',
+    'control.status.good': 'Well placed',
+    'control.status.alt_ok': 'Other spot — OK',
+    'control.status.move': 'To move',
+    'control.status.good.short': 'OK',
+    'control.status.alt_ok.short': 'Other',
+    'control.status.move.short': 'Move',
+    'control.search.title': 'Who is on this cell?',
+    'control.search.placeholder': 'A few letters of the name',
+    'control.search.hint': 'Type a few letters of the name.',
+    'control.search.empty': 'No active player matches.',
+    'control.change.title': 'Replace with another player',
+    'control.move.banner': 'Move {pseudo} — tap an empty cell.',
+    'control.confirm.reset.title': 'Reset control hive',
+    'control.confirm.reset.message':
+      'Clear only the control hive?\n\nThe current hive, the proposal, the archives and the colours stay as they are.',
+    'control.confirm.reset.ok': 'Reset',
+    'control.toast.reset': 'Control hive cleared.',
+    'control.toast.occupied': 'This cell is occupied.',
+    'control.toast.duplicate': 'This player is already on the control hive.',
+    'control.aria.grid': 'Control hive 10 by 10',
+    'control.aria.cell': 'Control — cell {row}, {col}',
+    'control.aria.cellPlayer': 'Control — cell {row}, {col} — {pseudo} — {status}',
+    'control.aria.bottom': 'Control — bottom cell',
+    'control.aria.bottomPlayer': 'Control — bottom cell — {pseudo} — {status}',
+    'control.aria.search': 'Search a control-hive player',
   };
 
   const DICTS = { fr, en };

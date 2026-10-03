@@ -106,6 +106,7 @@
   let state = null;
   let lastCheck = null;
   let skipPersist = false;
+  let controlUi = { mode: 'idle', slot: null, query: '', focusSearch: false };
 
   function uid(prefix) {
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -204,6 +205,7 @@
       colors: { ...DEFAULT_COLORS },
       archives: [],
       proposal: null,
+      control: createEmptyControl(),
     };
   }
 
@@ -232,6 +234,7 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) {
         state = createBlankState();
+        resetControlInteraction();
         persist();
         return state;
       }
@@ -253,15 +256,18 @@
         colors,
         archives: Array.isArray(parsed.archives) ? parsed.archives : [],
         proposal: normalizeProposal(parsed.proposal),
+        control: normalizeControl(parsed.control),
       };
       if (global.ROSPlayerIdentity && global.ROSStorage) {
         ROSPlayerIdentity.migrateRucheState(state, ROSStorage.getState().players);
       }
+      resetControlInteraction();
       persist();
       return state;
     } catch (error) {
       console.error('Ruche: chargement impossible', error);
       state = createBlankState();
+      resetControlInteraction();
       return state;
     }
   }
@@ -500,6 +506,11 @@
       if (bottom && bottom !== FREE) used.add(bottom);
     }
     return used;
+  }
+
+  function isPlayerUsedOnCurrentHive(playerId) {
+    if (!playerId || playerId === FREE || isMarshalLandmark(playerId)) return false;
+    return getUsedPlayerIdsExcept(null).has(playerId);
   }
 
   function getColors() {
@@ -1350,16 +1361,7 @@
     });
     if (!ok) return;
 
-    // Remplace la ruche actuelle sans archivage ni historique
-    s.grid = normalizeGrid(proposal.grid);
-    s.bottomId = normalizeCellValue(proposal.bottomId, { allowFree: true });
-    s.proposal = buildOptimizedProposal(s.grid, s.bottomId, {
-      mode: 'soft',
-      allowOfficerMoves: false,
-    });
-    persist();
-    lastCheck = null;
-    render();
+    commitValidateProposal();
     AppUI.toast(t('toast.proposal.validated'));
   }
 
@@ -1555,6 +1557,624 @@
     };
   }
 
+  function createEmptyControl() {
+    return {
+      grid: createEmptyGrid(),
+      bottomId: null,
+      statusByPlayerId: {},
+    };
+  }
+
+  function isControlStatus(value) {
+    return value === 'good' || value === 'alt_ok' || value === 'move';
+  }
+
+  function isControlPlayerId(value) {
+    return typeof value === 'string' && value && value !== FREE && !isMarshalLandmark(value);
+  }
+
+  function normalizeControl(raw) {
+    const control = createEmptyControl();
+    if (!raw || typeof raw !== 'object') return control;
+    const seen = new Set();
+    const rawGrid = Array.isArray(raw.grid) ? raw.grid : [];
+    for (let r = 0; r < GRID_SIZE; r += 1) {
+      const row = Array.isArray(rawGrid[r]) ? rawGrid[r] : [];
+      for (let c = 0; c < GRID_SIZE; c += 1) {
+        if (isMarshalCell(r, c)) {
+          control.grid[r][c] = MARSHAL;
+          continue;
+        }
+        const id = isControlPlayerId(row[c]) ? row[c] : null;
+        if (id && seen.has(id)) {
+          control.grid[r][c] = null;
+          continue;
+        }
+        if (id) seen.add(id);
+        control.grid[r][c] = id;
+      }
+    }
+    const bottom = isControlPlayerId(raw.bottomId) ? raw.bottomId : null;
+    if (bottom && seen.has(bottom)) control.bottomId = null;
+    else {
+      control.bottomId = bottom;
+      if (bottom) seen.add(bottom);
+    }
+    const rawStatus =
+      raw.statusByPlayerId && typeof raw.statusByPlayerId === 'object' && !Array.isArray(raw.statusByPlayerId)
+        ? raw.statusByPlayerId
+        : {};
+    const statuses = {};
+    seen.forEach((id) => {
+      statuses[id] = isControlStatus(rawStatus[id]) ? rawStatus[id] : 'good';
+    });
+    control.statusByPlayerId = statuses;
+    return control;
+  }
+
+  function resetControlInteraction() {
+    controlUi = { mode: 'idle', slot: null, query: '', focusSearch: false };
+  }
+
+  function cloneSlot(slot) {
+    if (!slot || (slot.type !== 'grid' && slot.type !== 'bottom')) return null;
+    if (slot.type === 'bottom') return { type: 'bottom' };
+    const row = Number(slot.row);
+    const col = Number(slot.col);
+    if (!Number.isInteger(row) || !Number.isInteger(col)) return null;
+    if (row < 0 || col < 0 || row >= GRID_SIZE || col >= GRID_SIZE) return null;
+    return { type: 'grid', row, col };
+  }
+
+  function readControlSlot(control, slot) {
+    if (!control || !slot) return null;
+    if (slot.type === 'bottom') return control.bottomId || null;
+    return control.grid?.[slot.row]?.[slot.col] ?? null;
+  }
+
+  function writeControlSlot(control, slot, value) {
+    if (slot.type === 'bottom') {
+      control.bottomId = value || null;
+      return;
+    }
+    control.grid[slot.row][slot.col] = value || null;
+  }
+
+  function listControlPlacements(control) {
+    const rows = [];
+    if (!control) return rows;
+    for (let r = 0; r < GRID_SIZE; r += 1) {
+      for (let c = 0; c < GRID_SIZE; c += 1) {
+        const id = control.grid?.[r]?.[c];
+        if (isControlPlayerId(id)) rows.push({ id, slot: { type: 'grid', row: r, col: c } });
+      }
+    }
+    if (isControlPlayerId(control.bottomId)) {
+      rows.push({ id: control.bottomId, slot: { type: 'bottom' } });
+    }
+    return rows;
+  }
+
+  function findControlSlot(control, playerId) {
+    if (!isControlPlayerId(playerId)) return null;
+    const hit = listControlPlacements(control).find((row) => row.id === playerId);
+    return hit ? hit.slot : null;
+  }
+
+  function controlPlayerLabel(playerId) {
+    const player = getPlayerById(playerId);
+    return player?.pseudo || playerId || '';
+  }
+
+  function controlStatusLabel(status, variant) {
+    const key = variant === 'short' ? `control.status.${status}.short` : `control.status.${status}`;
+    return t(key);
+  }
+
+  function getControl() {
+    return getState().control;
+  }
+
+  function getControlSummary(control = getState().control) {
+    const placements = listControlPlacements(control);
+    let good = 0;
+    let alt = 0;
+    let move = 0;
+    const moveNames = [];
+    placements.forEach((row) => {
+      const status = isControlStatus(control.statusByPlayerId?.[row.id])
+        ? control.statusByPlayerId[row.id]
+        : 'good';
+      if (status === 'alt_ok') alt += 1;
+      else if (status === 'move') {
+        move += 1;
+        moveNames.push(controlPlayerLabel(row.id));
+      } else good += 1;
+    });
+    moveNames.sort((a, b) => a.localeCompare(b, uiCompareLocale(), { sensitivity: 'base' }));
+    return { placed: placements.length, good, alt, move, moveNames };
+  }
+
+  function getControlInteraction() {
+    return {
+      mode: controlUi.mode,
+      slot: controlUi.slot ? { ...controlUi.slot } : null,
+      query: controlUi.query,
+    };
+  }
+
+  function mutateControl(mutator) {
+    const current = getState();
+    if (!current.control) current.control = createEmptyControl();
+    const draft = {
+      grid: cloneGrid(current.control.grid),
+      bottomId: current.control.bottomId,
+      statusByPlayerId: { ...current.control.statusByPlayerId },
+    };
+    const next = mutator(draft);
+    if (next === false) return false;
+    current.control = normalizeControl(next || draft);
+    persist();
+    return true;
+  }
+
+  function canPlaceControlPlayer(slot, playerId) {
+    const target = cloneSlot(slot);
+    if (!target || !isControlPlayerId(playerId)) return false;
+    if (target.type === 'grid' && isMarshalCell(target.row, target.col)) return false;
+    if (!getActivePlayers().some((player) => player.id === playerId)) return false;
+    const existing = findControlSlot(getState().control, playerId);
+    if (existing && !sameSlot(existing, target)) return false;
+    return true;
+  }
+
+  function placeControlPlayer(slot, playerId, options = {}) {
+    const target = cloneSlot(slot);
+    if (!canPlaceControlPlayer(target, playerId)) return false;
+    const ok = mutateControl((control) => {
+      const previous = readControlSlot(control, target);
+      if (isControlPlayerId(previous) && previous !== playerId) {
+        delete control.statusByPlayerId[previous];
+      }
+      writeControlSlot(control, target, playerId);
+      if (previous !== playerId || !isControlStatus(control.statusByPlayerId[playerId])) {
+        control.statusByPlayerId[playerId] = 'good';
+      }
+      return control;
+    });
+    if (ok && options.render !== false) renderControl();
+    return ok;
+  }
+
+  function setControlStatus(playerId, status) {
+    if (!isControlStatus(status)) return false;
+    const ok = mutateControl((control) => {
+      if (!findControlSlot(control, playerId)) return false;
+      control.statusByPlayerId[playerId] = status;
+      return control;
+    });
+    if (ok) renderControl();
+    return ok;
+  }
+
+  function moveControlPlayer(from, to) {
+    const source = cloneSlot(from);
+    const dest = cloneSlot(to);
+    if (!source || !dest || sameSlot(source, dest)) return false;
+    if (source.type === 'grid' && isMarshalCell(source.row, source.col)) return false;
+    if (dest.type === 'grid' && isMarshalCell(dest.row, dest.col)) return false;
+    return mutateControl((control) => {
+      const id = readControlSlot(control, source);
+      if (!isControlPlayerId(id)) return false;
+      if (readControlSlot(control, dest)) return false;
+      const status = isControlStatus(control.statusByPlayerId[id])
+        ? control.statusByPlayerId[id]
+        : 'good';
+      writeControlSlot(control, source, null);
+      writeControlSlot(control, dest, id);
+      control.statusByPlayerId[id] = status;
+      return control;
+    });
+  }
+
+  function removeControlPlayer(slot) {
+    const target = cloneSlot(slot);
+    if (!target) return false;
+    return mutateControl((control) => {
+      const id = readControlSlot(control, target);
+      if (!isControlPlayerId(id)) return false;
+      writeControlSlot(control, target, null);
+      delete control.statusByPlayerId[id];
+      return control;
+    });
+  }
+
+  function searchControlPlayers(query) {
+    const fragment = String(query || '').trim().toLowerCase();
+    if (!fragment) return [];
+    const used = new Set(listControlPlacements(getState().control).map((row) => row.id));
+    return getActivePlayers().filter((player) => {
+      if (used.has(player.id)) return false;
+      return String(player.pseudo || '').toLowerCase().includes(fragment);
+    });
+  }
+
+  function tapControlCell(slot) {
+    const target = cloneSlot(slot);
+    if (!target) return false;
+    if (target.type === 'grid' && isMarshalCell(target.row, target.col)) return false;
+    const value = readControlSlot(getState().control, target);
+    if (controlUi.mode === 'move') {
+      if (sameSlot(controlUi.slot, target)) {
+        controlUi.mode = 'actions';
+        controlUi.query = '';
+        controlUi.focusSearch = false;
+        renderControl();
+        return true;
+      }
+      if (value) {
+        if (global.AppUI) AppUI.toast(t('control.toast.occupied'));
+        return false;
+      }
+      const moved = moveControlPlayer(controlUi.slot, target);
+      if (!moved) return false;
+      resetControlInteraction();
+      renderControl();
+      return true;
+    }
+    if (isControlPlayerId(value)) {
+      controlUi = { mode: 'actions', slot: target, query: '', focusSearch: false };
+    } else {
+      controlUi = { mode: 'search', slot: target, query: '', focusSearch: true };
+    }
+    renderControl();
+    return true;
+  }
+
+  function setControlSearchQuery(query) {
+    if (controlUi.mode !== 'search' && controlUi.mode !== 'change') return false;
+    controlUi.query = String(query ?? '');
+    renderControlResults();
+    return true;
+  }
+
+  function pickControlPlayer(playerId) {
+    if (controlUi.mode !== 'search' && controlUi.mode !== 'change') return false;
+    const slot = controlUi.slot;
+    if (!searchControlPlayers(controlUi.query).some((player) => player.id === playerId)) return false;
+    const ok = placeControlPlayer(slot, playerId, { render: false });
+    if (!ok) {
+      if (global.AppUI) AppUI.toast(t('control.toast.duplicate'));
+      return false;
+    }
+    resetControlInteraction();
+    renderControl();
+    return true;
+  }
+
+  function chooseControlStatus(status) {
+    if (controlUi.mode !== 'actions' || !controlUi.slot) return false;
+    const playerId = readControlSlot(getState().control, controlUi.slot);
+    if (!isControlPlayerId(playerId)) return false;
+    return setControlStatus(playerId, status);
+  }
+
+  function startControlMove() {
+    if (controlUi.mode !== 'actions' || !controlUi.slot) return false;
+    const playerId = readControlSlot(getState().control, controlUi.slot);
+    if (!isControlPlayerId(playerId)) return false;
+    controlUi.mode = 'move';
+    controlUi.query = '';
+    controlUi.focusSearch = false;
+    renderControl();
+    return true;
+  }
+
+  function startControlChangePlayer() {
+    if (controlUi.mode !== 'actions' || !controlUi.slot) return false;
+    controlUi.mode = 'change';
+    controlUi.query = '';
+    controlUi.focusSearch = true;
+    renderControl();
+    return true;
+  }
+
+  function removeSelectedControlPlayer() {
+    if (controlUi.mode !== 'actions' || !controlUi.slot) return false;
+    const ok = removeControlPlayer(controlUi.slot);
+    if (!ok) return false;
+    resetControlInteraction();
+    renderControl();
+    return true;
+  }
+
+  function cancelControlInteraction() {
+    if (controlUi.mode === 'idle') return false;
+    if (controlUi.mode === 'move' || controlUi.mode === 'change') {
+      controlUi.mode = 'actions';
+      controlUi.query = '';
+      controlUi.focusSearch = false;
+      renderControl();
+      return true;
+    }
+    resetControlInteraction();
+    renderControl();
+    return true;
+  }
+
+  function resetControlHive() {
+    const current = getState();
+    current.control = createEmptyControl();
+    resetControlInteraction();
+    persist();
+    renderControl();
+    return true;
+  }
+
+  async function requestResetControl() {
+    const ok = await confirmRuche({
+      title: t('control.confirm.reset.title'),
+      message: t('control.confirm.reset.message'),
+      confirmLabel: t('control.confirm.reset.ok'),
+    });
+    if (!ok) return false;
+    resetControlHive();
+    if (global.AppUI) AppUI.toast(t('control.toast.reset'));
+    return true;
+  }
+
+  function controlCellClass(slot, playerId) {
+    const classes = ['ruche-cell', 'ruche-control-cell'];
+    if (slot.type === 'bottom') classes.push('ruche-bottom-cell');
+    if (playerId) classes.push('is-filled');
+    const status = playerId ? getState().control.statusByPlayerId[playerId] : null;
+    if (status) classes.push(`is-status-${status === 'alt_ok' ? 'alt' : status}`);
+    if (controlUi.slot && sameSlot(controlUi.slot, slot) && controlUi.mode !== 'idle') {
+      classes.push(controlUi.mode === 'move' ? 'is-control-source' : 'is-control-selected');
+    }
+    if (controlUi.mode === 'move' && !playerId) classes.push('is-control-target');
+    return classes.join(' ');
+  }
+
+  function renderControlSummary() {
+    const summary = getControlSummary();
+    if (els.controlSummary) {
+      els.controlSummary.textContent = t('control.summary', {
+        placed: summary.placed,
+        good: summary.good,
+        alt: summary.alt,
+        move: summary.move,
+      });
+    }
+    if (els.controlMoveList) {
+      els.controlMoveList.classList.toggle('has-moves', summary.move > 0);
+      els.controlMoveList.textContent = summary.move
+        ? t('control.moveList', { names: summary.moveNames.join(', ') })
+        : t('control.moveList.empty');
+    }
+  }
+
+  function renderControlResults() {
+    if (!els.controlResults) return;
+    const searching = controlUi.mode === 'search' || controlUi.mode === 'change';
+    els.controlResults.classList.toggle('hidden', !searching);
+    if (!searching) {
+      els.controlResults.innerHTML = '';
+      return;
+    }
+    const query = String(controlUi.query || '').trim();
+    if (!query) {
+      els.controlResults.innerHTML = `<p class="ruche-control-hint">${escapeHtml(t('control.search.hint'))}</p>`;
+      return;
+    }
+    const matches = searchControlPlayers(query);
+    if (!matches.length) {
+      els.controlResults.innerHTML = `<p class="ruche-control-hint">${escapeHtml(t('control.search.empty'))}</p>`;
+      return;
+    }
+    els.controlResults.innerHTML = matches
+      .map(
+        (player) => `
+          <button type="button" class="btn btn-ghost ruche-control-result" data-control-action="pick" data-player-id="${escapeHtml(player.id)}">
+            ${escapeHtml(player.pseudo)}
+          </button>`
+      )
+      .join('');
+  }
+
+  function renderControlActions() {
+    if (!els.controlActions) return;
+    const open = controlUi.mode === 'actions';
+    els.controlActions.classList.toggle('hidden', !open);
+    if (!open) {
+      els.controlActions.innerHTML = '';
+      return;
+    }
+    const playerId = readControlSlot(getState().control, controlUi.slot);
+    const status = getState().control.statusByPlayerId[playerId];
+    const statuses = [
+      ['good', t('control.status.good')],
+      ['alt_ok', t('control.status.alt_ok')],
+      ['move', t('control.status.move')],
+    ];
+    els.controlActions.innerHTML = `
+      <p class="ruche-control-sheet-player">${escapeHtml(controlPlayerLabel(playerId))}</p>
+      <div class="ruche-control-status-row">
+        ${statuses
+          .map(
+            ([key, label]) => `
+              <button type="button" class="btn btn-ghost ruche-control-status-btn ${status === key ? 'is-current' : ''}" data-control-action="status" data-status="${key}" aria-pressed="${status === key ? 'true' : 'false'}">
+                ${escapeHtml(label)}
+              </button>`
+          )
+          .join('')}
+      </div>
+      <button type="button" class="btn btn-ghost" data-control-action="move">${escapeHtml(t('control.btn.move'))}</button>
+      <button type="button" class="btn btn-ghost" data-control-action="change">${escapeHtml(t('control.btn.change'))}</button>
+      <button type="button" class="btn btn-ghost" data-control-action="remove">${escapeHtml(t('control.btn.remove'))}</button>
+      <button type="button" class="btn btn-ghost" data-control-action="cancel">${escapeHtml(t('confirm.cancel'))}</button>
+    `;
+  }
+
+  function revealControlSheet() {
+    const sheet = els.controlSheet;
+    if (!sheet || sheet.classList.contains('hidden')) return;
+    if (typeof sheet.scrollIntoView !== 'function') return;
+    try {
+      sheet.scrollIntoView({ block: 'nearest' });
+    } catch (error) {
+      sheet.scrollIntoView();
+    }
+  }
+
+  function renderControlSheet() {
+    const mode = controlUi.mode;
+    const sheetOpen = mode === 'search' || mode === 'change' || mode === 'actions';
+    if (els.controlSheet) els.controlSheet.classList.toggle('hidden', !sheetOpen);
+    if (els.controlSearchWrap) {
+      els.controlSearchWrap.classList.toggle('hidden', mode !== 'search' && mode !== 'change');
+    }
+    if (els.btnControlSheetCancel) {
+      els.btnControlSheetCancel.classList.toggle('hidden', mode !== 'search' && mode !== 'change');
+    }
+    if (els.controlSheetTitle) {
+      if (mode === 'change') els.controlSheetTitle.textContent = t('control.change.title');
+      else if (mode === 'search') els.controlSheetTitle.textContent = t('control.search.title');
+      else if (mode === 'actions') {
+        els.controlSheetTitle.textContent = controlPlayerLabel(
+          readControlSlot(getState().control, controlUi.slot)
+        );
+      } else els.controlSheetTitle.textContent = '';
+    }
+    if (els.controlSearch) {
+      els.controlSearch.placeholder = t('control.search.placeholder');
+      els.controlSearch.setAttribute('aria-label', t('control.aria.search'));
+      if (controlUi.focusSearch) {
+        els.controlSearch.value = controlUi.query || '';
+        if (typeof els.controlSearch.focus === 'function') els.controlSearch.focus();
+        controlUi.focusSearch = false;
+      }
+    }
+    if (els.controlBanner) {
+      const moving = mode === 'move';
+      els.controlBanner.classList.toggle('hidden', !moving);
+      if (moving && els.controlBannerText) {
+        const playerId = readControlSlot(getState().control, controlUi.slot);
+        els.controlBannerText.textContent = t('control.move.banner', {
+          pseudo: controlPlayerLabel(playerId),
+        });
+      }
+    }
+    renderControlResults();
+    renderControlActions();
+    if (sheetOpen) revealControlSheet();
+  }
+
+  function renderControlSlotButton(slot, playerId) {
+    const status = playerId ? getState().control.statusByPlayerId[playerId] : null;
+    const pseudo = playerId ? controlPlayerLabel(playerId) : '';
+    const statusText = status ? controlStatusLabel(status, 'short') : '';
+    const fullStatus = status ? controlStatusLabel(status) : '';
+    const coord = slot.type === 'bottom' ? t('cell.bottom') : `${slot.row + 1},${slot.col + 1}`;
+    const aria = playerId
+      ? slot.type === 'bottom'
+        ? t('control.aria.bottomPlayer', { pseudo, status: fullStatus })
+        : t('control.aria.cellPlayer', { row: slot.row + 1, col: slot.col + 1, pseudo, status: fullStatus })
+      : slot.type === 'bottom'
+        ? t('control.aria.bottom')
+        : t('control.aria.cell', { row: slot.row + 1, col: slot.col + 1 });
+    const loc =
+      slot.type === 'bottom'
+        ? 'data-slot-type="bottom"'
+        : `data-slot-type="grid" data-row="${slot.row}" data-col="${slot.col}"`;
+    return `
+      <button
+        type="button"
+        class="${controlCellClass(slot, playerId)}"
+        data-control-cell
+        ${loc}
+        aria-label="${escapeHtml(aria)}"
+      >
+        <span class="ruche-cell-coord">${escapeHtml(coord)}</span>
+        ${
+          playerId
+            ? `<span class="ruche-control-pseudo">${escapeHtml(pseudo)}</span><span class="ruche-control-status">${escapeHtml(statusText)}</span>`
+            : ''
+        }
+      </button>
+    `;
+  }
+
+  function renderControlGrid() {
+    if (!els.controlGrid || !els.controlBoard) return;
+    const control = getState().control;
+    const cells = [];
+    for (let r = 0; r < GRID_SIZE; r += 1) {
+      for (let c = 0; c < GRID_SIZE; c += 1) {
+        if (isMarshalCell(r, c)) {
+          const colors = getColors();
+          const fg = textColorForBg(colors.marshal);
+          cells.push(`
+            <div
+              class="ruche-cell is-filled ruche-cell-marshal"
+              data-control-cell
+              data-marshal="1"
+              data-row="${r}"
+              data-col="${c}"
+              style="background:${colors.marshal};color:${fg};border-color:${colors.marshal}"
+              aria-label="${escapeHtml(t('aria.marshalFixed'))}"
+            >
+              <span class="ruche-marshal-badge">${escapeHtml(t('cell.marshal'))}</span>
+              <span class="ruche-cell-label">${escapeHtml(t('cell.marshal'))}</span>
+            </div>
+          `);
+          continue;
+        }
+        cells.push(renderControlSlotButton({ type: 'grid', row: r, col: c }, control.grid[r][c]));
+      }
+    }
+    els.controlGrid.style.setProperty('--ruche-cols', String(GRID_SIZE));
+    els.controlGrid.innerHTML = cells.join('');
+    const existingFooter = els.controlBoard.querySelector('.ruche-control-footer');
+    if (existingFooter) existingFooter.remove();
+    els.controlBoard.insertAdjacentHTML(
+      'beforeend',
+      `<div class="ruche-footer ruche-control-footer">${renderControlSlotButton(
+        { type: 'bottom' },
+        control.bottomId
+      )}</div>`
+    );
+  }
+
+  function renderControl() {
+    if (!getState().control) return;
+    renderControlSummary();
+    renderControlGrid();
+    renderControlSheet();
+  }
+
+  function onControlBoardClick(event) {
+    const cell = event.target.closest('[data-control-cell]');
+    if (!cell || cell.dataset.marshal === '1') return;
+    const slot =
+      cell.dataset.slotType === 'bottom'
+        ? { type: 'bottom' }
+        : { type: 'grid', row: Number(cell.dataset.row), col: Number(cell.dataset.col) };
+    tapControlCell(slot);
+  }
+
+  function onControlSheetClick(event) {
+    const button = event.target.closest('[data-control-action]');
+    if (!button) return;
+    const action = button.dataset.controlAction;
+    if (action === 'pick') pickControlPlayer(button.dataset.playerId);
+    else if (action === 'status') chooseControlStatus(button.dataset.status);
+    else if (action === 'move') startControlMove();
+    else if (action === 'change') startControlChangePlayer();
+    else if (action === 'remove') removeSelectedControlPlayer();
+    else if (action === 'cancel') cancelControlInteraction();
+  }
+
   function cacheDom() {
     els.root = document.getElementById('panel-ruche');
     els.board = document.getElementById('rucheBoard');
@@ -1578,6 +2198,21 @@
     els.btnProposalValidate = document.getElementById('rucheProposalValidate');
     els.proposalMode = document.getElementById('rucheProposalMode');
     els.allowOfficerMoves = document.getElementById('rucheAllowOfficerMoves');
+    els.controlSummary = document.getElementById('rucheControlSummary');
+    els.controlMoveList = document.getElementById('rucheControlMoveList');
+    els.btnControlReset = document.getElementById('rucheControlReset');
+    els.controlBanner = document.getElementById('rucheControlBanner');
+    els.controlBannerText = document.getElementById('rucheControlBannerText');
+    els.btnControlCancelMove = document.getElementById('rucheControlBannerCancel');
+    els.controlBoard = document.getElementById('rucheControlBoard');
+    els.controlGrid = document.getElementById('rucheControlGrid');
+    els.controlSheet = document.getElementById('rucheControlSheet');
+    els.controlSheetTitle = document.getElementById('rucheControlSheetTitle');
+    els.controlSearchWrap = document.getElementById('rucheControlSearchWrap');
+    els.controlSearch = document.getElementById('rucheControlSearch');
+    els.controlResults = document.getElementById('rucheControlResults');
+    els.controlActions = document.getElementById('rucheControlActions');
+    els.btnControlSheetCancel = document.getElementById('rucheControlSheetCancel');
   }
 
   function buildOptions(currentValue, except, { allowFree = true, emptyLabel = t('cell.empty') } = {}) {
@@ -2078,6 +2713,7 @@
     renderSettings();
     if (lastCheck) renderVerifyResult(lastCheck);
     refreshValidateButton();
+    renderControl();
   }
 
   function verifyHive() {
@@ -2105,13 +2741,44 @@
     });
     if (!ok) return;
 
+    commitValidateCurrentHive();
+    lastCheck = analyzeGrid();
+    renderVerifyResult(lastCheck);
+    AppUI.toast(t('toast.archived'));
+  }
+
+  function commitClearCurrentHive() {
+    update((s) => {
+      s.grid = createEmptyGrid();
+      s.bottomId = null;
+      return s;
+    });
+    lastCheck = null;
+    renderVerifyResult(null);
+  }
+
+  function commitValidateCurrentHive() {
     update((s) => {
       archiveCurrentHive('Ruche');
       return s;
     });
-    lastCheck = analyzeGrid();
-    renderVerifyResult(lastCheck);
-    AppUI.toast(t('toast.archived'));
+  }
+
+  function commitValidateProposal() {
+    ensureProposal(false);
+    const s = getState();
+    const proposal = s.proposal;
+    if (!proposal) return false;
+    s.grid = normalizeGrid(proposal.grid);
+    s.bottomId = normalizeCellValue(proposal.bottomId, { allowFree: true });
+    s.proposal = buildOptimizedProposal(s.grid, s.bottomId, {
+      mode: 'soft',
+      allowOfficerMoves: false,
+    });
+    persist();
+    lastCheck = null;
+    render();
+    return true;
   }
 
   async function clearGrid() {
@@ -2121,13 +2788,7 @@
       confirmLabel: t('confirm.clear.ok'),
     });
     if (!ok) return;
-    update((s) => {
-      s.grid = createEmptyGrid();
-      s.bottomId = null;
-      return s;
-    });
-    lastCheck = null;
-    renderVerifyResult(null);
+    commitClearCurrentHive();
     AppUI.toast(t('toast.cleared'));
   }
 
@@ -2459,6 +3120,20 @@
       els.root.addEventListener('change', onCellChange);
       els.root.addEventListener('click', onRootClick);
     }
+    if (els.btnControlReset) els.btnControlReset.addEventListener('click', requestResetControl);
+    if (els.controlBoard) els.controlBoard.addEventListener('click', onControlBoardClick);
+    if (els.controlSheet) els.controlSheet.addEventListener('click', onControlSheetClick);
+    if (els.btnControlCancelMove) {
+      els.btnControlCancelMove.addEventListener('click', cancelControlInteraction);
+    }
+    if (els.btnControlSheetCancel) {
+      els.btnControlSheetCancel.addEventListener('click', cancelControlInteraction);
+    }
+    if (els.controlSearch) {
+      els.controlSearch.addEventListener('input', (event) => {
+        setControlSearchQuery(event.target.value);
+      });
+    }
     bindProposalDnD();
 
     if (global.RucheI18n) {
@@ -2502,5 +3177,25 @@
     ensureProposal,
     t,
     applyRucheLanguage,
+    getState,
+    getControl,
+    getControlSummary,
+    getControlInteraction,
+    searchControlPlayers,
+    tapControlCell,
+    setControlSearchQuery,
+    pickControlPlayer,
+    chooseControlStatus,
+    startControlMove,
+    startControlChangePlayer,
+    removeSelectedControlPlayer,
+    cancelControlInteraction,
+    resetControlHive,
+    requestResetControl,
+    placeControlPlayer,
+    isPlayerUsedOnCurrentHive,
+    commitClearCurrentHive,
+    commitValidateCurrentHive,
+    commitValidateProposal,
   };
 })(window);
