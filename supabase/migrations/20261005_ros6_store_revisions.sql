@@ -1,13 +1,16 @@
 -- ROS6 — révisions par store, RPC d'écriture, journal append-only.
--- À EXAMINER. Ne pas exécuter sur le Supabase de production tant que la revue n'est pas faite.
+-- Exécuter ce fichier ENTIER, en une seule fois. Ne pas le découper instruction par instruction.
+-- BEGIN/COMMIT : une erreur annule aussi le retrait des droits d'UPDATE.
+-- La RPC est créée et autorisée avant ce retrait.
 --
 -- N'altère pas le jsonb data, la version globale, les joueurs, la Ruche ni l'historique.
 -- Initialise seulement store_revisions (0 pour chaque store synchronisé).
--- Après application, un navigateur encore ouvert sur l'ancien WarOps ne peut plus
--- UPDATE/INSERT ros6_state : ces policies sont retirées. La lecture SELECT reste.
+-- Après COMMIT, un navigateur encore ouvert sur l'ancien WarOps ne peut plus
+-- UPDATE/INSERT/UPSERT ros6_state. La lecture SELECT reste.
 --
--- Ordre de mise en service : CE FICHIER d'abord, puis le JS qui appelle ros6_push_stores.
--- Le JS ne retombe pas sur un UPDATE direct.
+-- Ordre de mise en service : CE FICHIER d'abord, contrôle SELECT, puis le JS.
+
+begin;
 
 -- ---------------------------------------------------------------------------
 -- 1. Métadonnées de révision (colonne sur la ligne courante, pas une copie des stores)
@@ -200,7 +203,7 @@ begin
     and intent_at > 0
     and touch_at > 0
     and intent_at = touch_at
-    and (stored_touch = 0 or intent_at >= stored_touch) then
+    and (stored_touch = 0 or intent_at > stored_touch) then
     return jsonb_build_object(
       'acceptReset', true,
       'placementCountBefore', before_count,
@@ -237,6 +240,10 @@ create index if not exists ros6_change_log_created_at_idx
 
 create index if not exists ros6_change_log_store_idx
   on public.ros6_change_log (store_key, created_at desc);
+
+create index if not exists ros6_change_log_reset_intent_idx
+  on public.ros6_change_log ((detail->>'intentAtMs'))
+  where action = 'reset';
 
 create or replace function public.ros6_change_log_append_only()
 returns trigger
@@ -378,6 +385,10 @@ begin
     end if;
   end loop;
 
+  -- Validation complète avant toute écriture de ros6_state.
+  -- Un store refusé annule tout l'appel : aucun autre store du même appel n'est écrit.
+  -- Tous les joueurs du centre de commandement sont examinés ; le premier conflit
+  -- rejette le store entier, il n'applique pas les joueurs précédents.
   for v_key in select jsonb_object_keys(p_stores) loop
     v_stored := coalesce(v_row.data #> array['stores', v_key], '{}'::jsonb);
     if jsonb_typeof(v_stored) <> 'object' then
@@ -404,6 +415,36 @@ begin
         'code', v_status->>'code',
         'store', v_key,
         'detail', v_status,
+        'revisions', v_revisions,
+        'version', v_row.version,
+        'data', v_row.data
+      );
+    end if;
+
+    if v_control is not null
+      and coalesce((v_control->>'acceptReset')::boolean, false)
+      and exists (
+        select 1
+        from public.ros6_change_log
+        where action = 'reset'
+          and detail->>'intentAtMs' = (public.ros6_iso_ms(v_incoming #>> '{controlIntent,at}'))::text
+      ) then
+      insert into public.ros6_change_log (
+        user_id, store_key, old_revision, new_revision, action, client_id, detail
+      ) values (
+        v_uid, v_key, coalesce((v_revisions->>v_key)::integer, 0), null,
+        'control_reset_required', v_client,
+        jsonb_build_object(
+          'reason', 'intent_reuse',
+          'intentAt', v_incoming #>> '{controlIntent,at}',
+          'placementCountBefore', v_control->'placementCountBefore'
+        )
+      );
+      return jsonb_build_object(
+        'ok', false,
+        'code', 'control_reset_required',
+        'store', v_key,
+        'detail', jsonb_build_object('reason', 'intent_reuse'),
         'revisions', v_revisions,
         'version', v_row.version,
         'data', v_row.data
@@ -455,12 +496,17 @@ begin
     end;
     if v_control is not null and coalesce((v_control->>'acceptReset')::boolean, false) then
       v_action := 'reset';
-      v_detail := v_control;
+      v_detail := v_control || jsonb_build_object(
+        'intentAt', v_incoming #>> '{controlIntent,at}',
+        'intentAtMs', (public.ros6_iso_ms(v_incoming #>> '{controlIntent,at}'))::text
+      );
       if octet_length(v_detail::text) > 150000 then
         v_detail := jsonb_build_object(
           'acceptReset', true,
           'placementCountBefore', v_control->'placementCountBefore',
           'placementCountAfter', v_control->'placementCountAfter',
+          'intentAt', v_incoming #>> '{controlIntent,at}',
+          'intentAtMs', (public.ros6_iso_ms(v_incoming #>> '{controlIntent,at}'))::text,
           'snapshotOmitted', true
         );
       end if;
@@ -529,3 +575,5 @@ $do$;
 grant select on table public.ros6_state to authenticated;
 
 notify pgrst, 'reload schema';
+
+commit;

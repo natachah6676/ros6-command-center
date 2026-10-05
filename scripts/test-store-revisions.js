@@ -220,6 +220,37 @@ async function main() {
     )
   ).rows[0];
 
+  assert(/^\s*(?:--[^\n]*\n\s*)*begin\s*;/i.test(migration), 'la migration commence par BEGIN');
+  assert(/commit\s*;\s*$/i.test(migration.trim()), 'la migration se termine par COMMIT');
+  assert(/^\s*(?:--[^\n]*\n\s*)*begin\s*;/i.test(rollback), 'le rollback commence par BEGIN');
+  assert(/commit\s*;\s*$/i.test(rollback.trim()), 'le rollback se termine par COMMIT');
+
+  let abortRejected = false;
+  try {
+    await db.exec(`
+      begin;
+      drop policy if exists "ros6_state_update_authenticated" on public.ros6_state;
+      do $$ begin raise exception 'audit abort'; end $$;
+      commit;
+    `);
+  } catch (error) {
+    abortRejected = /audit abort/.test(error.message || '');
+  }
+  try {
+    await db.exec('rollback');
+  } catch (error) {
+    /* transaction déjà annulée */
+  }
+  const updatePolicyAfterAbort = (
+    await db.query(
+      `select count(*)::int as n from pg_policies where tablename = 'ros6_state' and cmd = 'UPDATE'`
+    )
+  ).rows[0].n;
+  assert(
+    abortRejected && updatePolicyAfterAbort === 1,
+    'une erreur annule le retrait de la policy UPDATE'
+  );
+
   await db.exec(migration);
 
   const after = (
@@ -275,6 +306,72 @@ async function main() {
     );
     return res.rows[0];
   }
+
+  const md5AtMigration = after.data_md5;
+  let blockedOldSaves = 0;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await asUser(R5, async () => {
+        await db.query(
+          `update public.ros6_state
+           set version = version + 1, data = data || '{"tamper":true}'::jsonb
+           where id = 'main' and version = 3784`
+        );
+      });
+    } catch (error) {
+      if (/permission denied|42501/i.test(error.message || '')) blockedOldSaves += 1;
+    }
+  }
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await asUser(R5, async () => {
+        await db.query(
+          `insert into public.ros6_state (id, data, version)
+           values ('main', '{"tamper":true}'::jsonb, 9)
+           on conflict (id) do update set data = excluded.data, version = excluded.version`
+        );
+      });
+    } catch (error) {
+      if (/permission denied|42501/i.test(error.message || '')) blockedOldSaves += 1;
+    }
+  }
+  try {
+    await asUser(R5, async () => {
+      await db.query(
+        `update public.ros6_state set store_revisions = '{}'::jsonb where id = 'main'`
+      );
+    });
+  } catch (error) {
+    if (/permission denied|42501/i.test(error.message || '')) blockedOldSaves += 1;
+  }
+  const stillReadable = await asUser(R5, async () => {
+    const res = await db.query(`select id from public.ros6_state where id = 'main'`);
+    return res.rows.length;
+  });
+  assert(blockedOldSaves === 6, 'un ancien onglet : UPDATE, UPSERT et révision directe refusés');
+  assert(stillReadable === 1, 'le même onglet peut encore lire ros6_state');
+  const afterOldTab = (
+    await db.query(`select md5(data::text) as data_md5 from public.ros6_state where id = 'main'`)
+  ).rows[0];
+  assert(afterOldTab.data_md5 === md5AtMigration, 'ces sauvegardes ne modifient pas data');
+
+  const shapes = await db.query(
+    `select
+       public.ros6_control_placement_count($1::jsonb) as mixed,
+       public.ros6_control_placement_count(null) as empty_null,
+       public.ros6_control_placement_count('{"grid":"ancienne-chaine","bottomId":"FREE"}'::jsonb) as legacy,
+       public.ros6_control_placement_count('{"grid":[[null,"FREE","MARSHAL",""]],"bottomId":null}'::jsonb) as markers`,
+    [
+      JSON.stringify({
+        grid: [[null, 'FREE', 'MARSHAL', 'p1'], 'pas-une-rangee', ['p2']],
+        bottomId: 'FREE',
+      }),
+    ]
+  );
+  assert(Number(shapes.rows[0].mixed) === 2, 'FREE, MARSHAL, null et ligne invalide ne comptent pas comme placements');
+  assert(Number(shapes.rows[0].empty_null) === 0, 'contrôle null = 0 placement');
+  assert(Number(shapes.rows[0].legacy) === 0, 'ancienne structure sans grille = 0 placement');
+  assert(Number(shapes.rows[0].markers) === 0, 'marqueurs seuls = 0 placement');
 
   const trainA = await push(R5, { ros6_train_v1: { marker: 'appareil-A' } }, { ros6_train_v1: 0 }, 'device-a');
   const rucheB = await push(
@@ -475,6 +572,76 @@ async function main() {
     'device-a'
   );
   assert(reset.ok === true, '84 → 0 avec reset explicite : accepté');
+  const refilled = await push(
+    R5,
+    {
+      ros6_ruche_v1: ruche(controlOf(84)),
+    },
+    { ros6_ruche_v1: Number((await row()).store_revisions.ros6_ruche_v1) },
+    'device-b'
+  );
+  assert(refilled.ok === true, 'un remplissage après reset est une écriture normale');
+  const replay = await push(
+    R5,
+    {
+      ros6_ruche_v1: ruche(controlOf(0), {
+        controlIntent: { action: 'reset', at: resetAt },
+        controlUpdatedAt: resetAt,
+      }),
+    },
+    { ros6_ruche_v1: Number((await row()).store_revisions.ros6_ruche_v1) },
+    'device-a'
+  );
+  assert(
+    replay.ok === false && replay.detail && replay.detail.reason === 'intent_reuse',
+    'le même controlIntent reset ne peut pas vider une seconde fois'
+  );
+  assert(
+    T.countControlPlacements((await row()).data.stores.ros6_ruche_v1.control) === 84,
+    'le rejeu du reset laisse les placements'
+  );
+  const equalAt = '2026-10-05T19:45:00.000Z';
+  const touched = await push(
+    R5,
+    {
+      ros6_ruche_v1: ruche(controlOf(84), { controlUpdatedAt: equalAt }),
+    },
+    { ros6_ruche_v1: Number((await row()).store_revisions.ros6_ruche_v1) },
+    'device-b'
+  );
+  assert(touched.ok === true, 'un contrôle horodaté peut être réécrit sans le vider');
+  const equalReset = await push(
+    R5,
+    {
+      ros6_ruche_v1: ruche(controlOf(0), {
+        controlIntent: { action: 'reset', at: equalAt },
+        controlUpdatedAt: equalAt,
+      }),
+    },
+    { ros6_ruche_v1: Number((await row()).store_revisions.ros6_ruche_v1) },
+    'device-a'
+  );
+  assert(
+    equalReset.ok === false && !(equalReset.detail && equalReset.detail.reason === 'intent_reuse'),
+    'un reset au même instant que controlUpdatedAt est refusé'
+  );
+  assert(
+    T.countControlPlacements((await row()).data.stores.ros6_ruche_v1.control) === 84,
+    'ce refus laisse les placements'
+  );
+  const secondResetAt = '2026-10-05T20:00:00.000Z';
+  const secondReset = await push(
+    R5,
+    {
+      ros6_ruche_v1: ruche(controlOf(0), {
+        controlIntent: { action: 'reset', at: secondResetAt },
+        controlUpdatedAt: secondResetAt,
+      }),
+    },
+    { ros6_ruche_v1: Number((await row()).store_revisions.ros6_ruche_v1) },
+    'device-a'
+  );
+  assert(secondReset.ok === true, 'un nouveau reset, avec un nouvel horodatage, reste possible');
   current = await row();
   assert(T.countControlPlacements(current.data.stores.ros6_ruche_v1.control) === 0, 'le contrôle volontaire est vide');
   const resetLog = (
@@ -544,6 +711,131 @@ async function main() {
     logUpdate = /append-only/.test(error.message || '');
   }
   assert(logUpdate, 'le journal refuse UPDATE, même pour le propriétaire');
+
+  const ccBeforePlayers = await row();
+  const planted = await push(
+    R5,
+    {
+      ros6_command_center_v1: {
+        players: [
+          member({
+            status: 'Actif',
+            leftAt: null,
+            pseudo: 'premier',
+            statusChangedAt: '2026-10-05T18:00:00.000Z',
+          }),
+          member({
+            id: 'player_ros6_second',
+            status: 'Parti',
+            leftAt: '2026-10-05T18:30:00.000Z',
+            statusChangedAt: '2026-10-05T18:30:00.000Z',
+            pseudo: 'second',
+          }),
+        ],
+        weeks: [{ id: 'week-kept', label: 'historique' }],
+      },
+    },
+    { ros6_command_center_v1: Number(ccBeforePlayers.store_revisions.ros6_command_center_v1) },
+    'device-a'
+  );
+  assert(planted.ok === true, 'deux joueurs sont enregistrés ensemble');
+  const beforePartial = await row();
+  const trainMarker = beforePartial.data.stores.ros6_train_v1.marker;
+  const partial = await push(
+    R5,
+    {
+      ros6_train_v1: { marker: 'ne-doit-pas-passer' },
+      ros6_command_center_v1: {
+        players: [
+          member({
+            status: 'Actif',
+            leftAt: null,
+            pseudo: 'premier-modifie',
+            statusChangedAt: '2026-10-05T18:00:00.000Z',
+          }),
+          member({
+            id: 'player_ros6_second',
+            status: 'Actif',
+            leftAt: null,
+            statusChangedAt: '2026-10-01T00:00:00.000Z',
+            pseudo: 'second',
+          }),
+        ],
+        weeks: [{ id: 'week-kept', label: 'historique' }],
+      },
+    },
+    {
+      ros6_train_v1: Number(beforePartial.store_revisions.ros6_train_v1),
+      ros6_command_center_v1: Number(beforePartial.store_revisions.ros6_command_center_v1),
+    },
+    'device-b'
+  );
+  assert(
+    partial.ok === false &&
+      partial.code === 'status_conflict' &&
+      partial.detail &&
+      partial.detail.playerId === 'player_ros6_second',
+    'le second joueur en conflit rejette le store, pas seulement le premier'
+  );
+  const afterPartial = await row();
+  const keptPlayers = afterPartial.data.stores.ros6_command_center_v1.players;
+  const firstPlayer = keptPlayers.find((player) => player.id === PLAYER);
+  const secondPlayer = keptPlayers.find((player) => player.id === 'player_ros6_second');
+  assert(firstPlayer && firstPlayer.pseudo === 'premier', 'le joueur valide du même store n’est pas écrit');
+  assert(secondPlayer && secondPlayer.status === 'Parti', 'le joueur en conflit reste Parti');
+  assert(afterPartial.data.stores.ros6_train_v1.marker === trainMarker, 'l’autre store du même appel n’est pas écrit');
+
+  let unknownStore = false;
+  try {
+    await push(R5, { not_a_store: { hack: true } }, { not_a_store: 0 }, 'device-a');
+  } catch (error) {
+    unknownStore = /store not allowed/.test(error.message || '');
+  }
+  assert(unknownStore, 'un nom de store arbitraire est refusé');
+  assert(
+    (await row()).data.stores.ros6_tempete_v1.marker === 'tempete-initial',
+    'ce refus ne modifie aucun store'
+  );
+
+  await db.exec(`
+    create or replace function public.ros6_audit_block_log()
+    returns trigger language plpgsql as $fn$
+    begin
+      if current_setting('ros6.block_log', true) = '1' then
+        raise exception 'journal indisponible';
+      end if;
+      return new;
+    end
+    $fn$;
+    drop trigger if exists ros6_audit_block_log on public.ros6_change_log;
+    create trigger ros6_audit_block_log
+      before insert on public.ros6_change_log
+      for each row execute function public.ros6_audit_block_log();
+  `);
+  await db.query(`select set_config('ros6.block_log', '1', false)`);
+  const md5BeforeLogFailure = (
+    await db.query(`select md5(data::text) as m from public.ros6_state where id = 'main'`)
+  ).rows[0].m;
+  let logFailed = false;
+  try {
+    await push(
+      R5,
+      { ros6_tempete_v1: { marker: 'sans-journal' } },
+      { ros6_tempete_v1: Number((await row()).store_revisions.ros6_tempete_v1) },
+      'device-a'
+    );
+  } catch (error) {
+    logFailed = /journal indisponible/.test(error.message || '');
+  }
+  await db.query(`select set_config('ros6.block_log', '0', false)`);
+  await db.exec('drop trigger if exists ros6_audit_block_log on public.ros6_change_log');
+  assert(logFailed, 'un journal indisponible fait échouer l’écriture');
+  assert(
+    (await db.query(`select md5(data::text) as m from public.ros6_state where id = 'main'`)).rows[0].m ===
+      md5BeforeLogFailure,
+    'cet échec ne laisse pas l’écriture métier'
+  );
+  assert((await row()).data.stores.ros6_tempete_v1.marker === 'tempete-initial', 'Tempête reste inchangée');
 
   const md5BeforeRerun = (await db.query(`select md5(data::text) as m from public.ros6_state where id = 'main'`)).rows[0].m;
   const revBeforeRerun = (await row()).store_revisions.ros6_train_v1;

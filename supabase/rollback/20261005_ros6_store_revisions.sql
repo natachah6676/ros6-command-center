@@ -1,7 +1,11 @@
 -- ROLLBACK de 20261005_ros6_store_revisions.sql
--- Ne pas exécuter par erreur : ceci retire la protection et rouvre l'UPDATE direct.
+-- Exécuter le fichier entier, une seule fois. BEGIN/COMMIT : un échec ne retire pas
+-- la RPC sans avoir rouvert l'UPDATE.
 -- Ne modifie pas data, version, joueurs, Ruche, ni train_history_*.
 -- Les révisions et le journal sont supprimés. Les stores restent dans ros6_state.data.
+-- Après ce rollback, redéployer l'ancien JavaScript : le nouveau client appelle une RPC absente.
+
+begin;
 
 drop trigger if exists ros6_change_log_no_truncate on public.ros6_change_log;
 drop trigger if exists ros6_change_log_no_update on public.ros6_change_log;
@@ -35,3 +39,5 @@ create policy "ros6_state_update_authenticated"
 grant select, insert, update on table public.ros6_state to authenticated;
 
 notify pgrst, 'reload schema';
+
+commit;
