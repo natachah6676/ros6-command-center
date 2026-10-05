@@ -327,11 +327,17 @@ assert(
 const plan = T.planBootstrapAction({
   remoteVersion: 3784,
   localVersion: 3773,
-  differingKeys: ['ros6_ruche_v1'],
+  remoteRevisions: { ros6_ruche_v1: 4, ros6_train_v1: 9 },
+  localRevisions: { ros6_ruche_v1: 4, ros6_train_v1: 8 },
+  differingKeys: ['ros6_ruche_v1', 'ros6_train_v1'],
 });
 assert(
-  plan.adoptRemoteKeys.includes('ros6_ruche_v1') && plan.pushKeys.length === 0,
-  'la version globale n’est pas le verrou : le module est toujours adopté, le contrôle est filtré à part'
+  plan.pushKeys.includes('ros6_ruche_v1') && !plan.adoptRemoteKeys.includes('ros6_ruche_v1'),
+  'version globale plus haute et révision Ruche identique : la Ruche locale reste à pousser'
+);
+assert(
+  plan.adoptRemoteKeys.includes('ros6_train_v1') && !plan.pushKeys.includes('ros6_train_v1'),
+  'seule la révision Train plus haute fait adopter le Train'
 );
 
 console.log('\n=== Ruche : ouvrir ne marque pas dirty ===');

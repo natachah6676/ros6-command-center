@@ -393,8 +393,14 @@ console.log('\n=== Push, rebase, apply : pas de réinjection ===');
     'version locale 0 : le distant reste la source (pas de push d’un cache non versionné)'
   );
   assert(
-    T.planBootstrapAction({ remoteVersion: 7, localVersion: 9, differingKeys: [] }).mode === 'remote-older',
-    'distant plus ancien : confirmation existante'
+    T.planBootstrapAction({
+      remoteVersion: 7,
+      localVersion: 9,
+      remoteRevisions: { ros6_train_v1: 1 },
+      localRevisions: { ros6_train_v1: 4 },
+      differingKeys: ['ros6_train_v1'],
+    }).mode === 'remote-older',
+    'révision locale plus haute : confirmation existante'
   );
   assert(
     T.planBootstrapAction({ remoteVersion: 50, localVersion: 50, differingKeys: [] }).mode === 'apply-remote',
@@ -403,9 +409,11 @@ console.log('\n=== Push, rebase, apply : pas de réinjection ===');
   const newerTempete = T.planBootstrapAction({
     remoteVersion: 51,
     localVersion: 50,
+    remoteRevisions: { ros6_tempete_v1: 8 },
+    localRevisions: { ros6_tempete_v1: 3 },
     differingKeys: ['ros6_tempete_v1'],
   });
-  assert(newerTempete.mode === 'apply-remote', 'distant plus récent : on n’envoie pas l’ancienne Tempête');
+  assert(newerTempete.mode === 'apply-remote', 'révision Tempête plus haute : on n’envoie pas l’ancienne Tempête');
   assert(!newerTempete.pushKeys.includes('ros6_tempete_v1'), 'Tempête absente des clés à pousser');
   assert(
     newerTempete.adoptRemoteKeys.includes('ros6_tempete_v1'),
@@ -489,9 +497,11 @@ console.log('\n=== Modules : distant plus récent ne se fait pas écraser ===');
   const plan = T.planBootstrapAction({
     remoteVersion: 200,
     localVersion: 180,
+    remoteRevisions: { [key]: 6 },
+    localRevisions: { [key]: 2 },
     differingKeys: T.listDifferingStoreKeys(remote),
   });
-  assert(!plan.pushKeys.includes(key), `${key} : pas poussé par-dessus un document plus récent`);
+  assert(!plan.pushKeys.includes(key), `${key} : pas poussé par-dessus une révision plus haute`);
   const prepared = T.prepareBootstrapStores(remote, plan, { remoteVersion: 200, localVersion: 180 });
   assert(!prepared.pushKeys.includes(key), `${key} : le prepare ne le marque pas à envoyer`);
   const payload = T.buildPushPayload(remote, new Set(prepared.pushKeys));
@@ -540,6 +550,8 @@ console.log('\n=== Redémarrage après adoption : plus d’écrasement ===');
   const first = T.planBootstrapAction({
     remoteVersion: 200,
     localVersion: 180,
+    remoteRevisions: { ros6_train_v1: 6 },
+    localRevisions: { ros6_train_v1: 2 },
     differingKeys: T.listDifferingStoreKeys(remote),
   });
   T.prepareBootstrapStores(remote, first, { remoteVersion: 200, localVersion: 180 });
@@ -582,6 +594,8 @@ console.log('\n=== Échec après purge : on garde ce qui doit rester local ===')
   const blocked = T.planBootstrapAction({
     remoteVersion: 200,
     localVersion: 180,
+    remoteRevisions: { ros6_train_v1: 6 },
+    localRevisions: { ros6_train_v1: 2 },
     differingKeys: ['ros6_train_v1'],
   });
   const prepared = T.prepareBootstrapStores(remote, blocked, { remoteVersion: 200, localVersion: 180 });

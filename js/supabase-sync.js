@@ -9,7 +9,8 @@
  * - le statut Actif/Parti suit statusChangedAt (dernière modification volontaire) :
  *   le plus récent gagne ; un Actif sans date ne ressuscite pas un Parti ;
  * - la ruche de contrôle ne passe de N placements à 0 que si controlIntent.action === 'reset'.
- *   Une future révision par store pourra exiger la même action ; ros6_state.version ne suffit pas ;
+ *   Le serveur (ros6_push_stores) exige la même action et une révision par store.
+ *   ros6_state.version n’autorise plus une écriture ;
  * - semaines VS (weeks / currentWeekId) : un cache local vide ou plus ancien ne peut pas
  *   effacer ni ressusciter une semaine ; seule une clôture volontaire (closeIntent) le peut ;
  * - ros6_backups_v1 est local uniquement : jamais poussé, jamais réinjecté depuis Supabase.
@@ -86,6 +87,8 @@
   let client = null;
   let session = null;
   let localVersion = 0;
+  /** Dernières révisions de store acquittées. Distinct de ros6_state.version. */
+  let ackedRevisions = {};
   let suppressPush = false;
   let pushTimer = null;
   let pushing = false;
@@ -142,25 +145,47 @@
     if (els.app) els.app.classList.toggle('hidden', show);
   }
 
+  function normalizeStoreRevisions(raw) {
+    const out = {};
+    STORE_KEYS.forEach((key) => {
+      const value = Number(raw && raw[key]);
+      out[key] = Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
+    });
+    return out;
+  }
+
+  function storeRevision(map, key) {
+    const value = Number(map && map[key]);
+    return Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
+  }
+
   function readMeta() {
     try {
       const raw = localStorage.getItem(META_KEY);
-      if (!raw) return { version: 0, savedAt: '' };
+      if (!raw) return { version: 0, savedAt: '', storeRevisions: normalizeStoreRevisions(null) };
       const parsed = JSON.parse(raw);
       return {
         version: Number(parsed.version) || 0,
         savedAt: String(parsed.savedAt || ''),
+        storeRevisions: normalizeStoreRevisions(parsed.storeRevisions),
       };
     } catch (error) {
-      return { version: 0, savedAt: '' };
+      return { version: 0, savedAt: '', storeRevisions: normalizeStoreRevisions(null) };
     }
   }
 
-  function writeMeta(version) {
+  function writeMeta(version, storeRevisions) {
     localVersion = Number(version) || 0;
+    if (storeRevisions && typeof storeRevisions === 'object') {
+      ackedRevisions = normalizeStoreRevisions(storeRevisions);
+    }
     const result = safeLocalStorageSetItem(
       META_KEY,
-      JSON.stringify({ version: localVersion, savedAt: new Date().toISOString() })
+      JSON.stringify({
+        version: localVersion,
+        savedAt: new Date().toISOString(),
+        storeRevisions: ackedRevisions,
+      })
     );
     if (!result.ok && result.quota) {
       const err = new Error(LOCAL_QUOTA_USER_MESSAGE);
@@ -802,46 +827,76 @@
   }
 
   /**
-   * Décision au chargement.
+   * Décision au chargement, par révision de store.
+   * ros6_state.version ne dit pas quel module a changé : une écriture Train
+   * ne rend pas la Ruche plus récente.
    *
-   * Certitude disponible : ros6_sync_meta_v1.version est la dernière version
-   * de document acquittée par cet appareil. savedAt date cet acquittement,
-   * pas la dernière édition. La version distante est globale à tout le document :
-   * elle ne dit pas quel store a changé.
-   *
-   * - versions égales et contenu différent : le serveur n’a pas bougé depuis
-   *   l’acquittement. L’écart est une édition locale non poussée. On la pousse.
-   * - distant plus récent et Train/Ruche/Tempête différents : ambigu
-   *   (cache non rafraîchi après un pull en échec, ou édition locale en plus).
-   *   On ne pousse pas ces stores. On adopte le distant seulement après avoir
-   *   copié l’ancien cache dans ros6_module_hold_v1.
-   * - centre de commandement : fusion de champs, y compris si le distant est plus récent.
+   * - révision distante plus haute : le store distant gagne (centre de commandement :
+   *   on fusionne quand même les champs locaux puis on réécrit avec la nouvelle révision) ;
+   * - révision identique et contenu différent : édition locale non poussée ;
+   * - navigateur jamais synchronisé (meta version 0) face à une base déjà utilisée :
+   *   on adopte le distant, on ne pousse pas un cache vide.
    */
-  function planBootstrapAction({ remoteVersion, localVersion, differingKeys } = {}) {
-    const remote = Number(remoteVersion) || 0;
-    const local = Number(localVersion) || 0;
+  function planBootstrapAction({
+    remoteVersion,
+    localVersion,
+    remoteRevisions,
+    localRevisions,
+    differingKeys,
+  } = {}) {
+    const remoteDoc = Number(remoteVersion) || 0;
+    const localDoc = Number(localVersion) || 0;
     const differing = (Array.isArray(differingKeys) ? differingKeys : []).filter(
       (key) => !isUnsyncedSideKey(key) && STORE_KEYS.includes(key)
     );
     const none = { differing, pushKeys: [], adoptRemoteKeys: [] };
-    if (remote < local) return { mode: 'remote-older', ...none };
-    if (local === 0 || !differing.length) {
-      return { mode: 'apply-remote', differing, pushKeys: [], adoptRemoteKeys: differing };
+    if (!differing.length) {
+      return { mode: 'apply-remote', ...none };
     }
-    if (remote === local) {
-      return {
-        mode: 'preserve-local-and-push',
-        differing,
-        pushKeys: differing.slice(),
-        adoptRemoteKeys: [],
-      };
+    const neverSynced =
+      localDoc === 0 &&
+      STORE_KEYS.every((key) => storeRevision(localRevisions, key) === 0) &&
+      remoteDoc > 0;
+    if (neverSynced) {
+      return { mode: 'apply-remote', differing, pushKeys: [], adoptRemoteKeys: differing.slice() };
     }
-    const pushKeys = differing.filter((key) => key === COMMAND_CENTER_KEY);
-    const adoptRemoteKeys = differing.filter((key) => MODULE_STORE_KEYS.includes(key));
+    if (differing.some((key) => storeRevision(localRevisions, key) > storeRevision(remoteRevisions, key))) {
+      return { mode: 'remote-older', ...none };
+    }
+    const pushKeys = [];
+    const adoptRemoteKeys = [];
+    differing.forEach((key) => {
+      const remoteRev = storeRevision(remoteRevisions, key);
+      const localRev = storeRevision(localRevisions, key);
+      if (remoteRev > localRev && key !== COMMAND_CENTER_KEY) {
+        adoptRemoteKeys.push(key);
+        return;
+      }
+      pushKeys.push(key);
+    });
     if (pushKeys.length) {
       return { mode: 'preserve-local-and-push', differing, pushKeys, adoptRemoteKeys };
     }
-    return { mode: 'apply-remote', differing, pushKeys: [], adoptRemoteKeys };
+    return { mode: 'apply-remote', differing, pushKeys, adoptRemoteKeys };
+  }
+
+  /**
+   * Arguments de ros6_push_stores : uniquement les stores dirty,
+   * chacun avec la révision lue sur la ligne serveur, pas ros6_state.version.
+   */
+  function buildStorePushRequest(remoteRow, dirtyKeys, localStoresOverride) {
+    const dirty = dirtyKeys instanceof Set ? dirtyKeys : new Set(dirtyKeys || []);
+    const keys = STORE_KEYS.filter((key) => dirty.has(key));
+    const payload = buildPushPayload(remoteRow && remoteRow.data, new Set(keys), localStoresOverride);
+    const remoteRevisions = (remoteRow && remoteRow.store_revisions) || {};
+    const stores = {};
+    const base = {};
+    keys.forEach((key) => {
+      if (payload.stores[key] == null) return;
+      stores[key] = payload.stores[key];
+      base[key] = storeRevision(remoteRevisions, key);
+    });
+    return { p_stores: stores, p_base_revisions: base };
   }
 
   function moduleHoldDocument(stores, versions) {
@@ -1274,7 +1329,7 @@
   async function fetchRemoteRow() {
     const { data, error } = await client
       .from('ros6_state')
-      .select('id, data, version, updated_at, updated_by')
+      .select('id, data, version, store_revisions, updated_at, updated_by')
       .eq('id', ROW_ID)
       .maybeSingle();
     if (error) throw error;
@@ -1284,17 +1339,46 @@
   async function ensureRemoteRow() {
     const existing = await fetchRemoteRow();
     if (existing) return existing;
-    // Mode local : ne jamais créer / écrire la ligne distante.
-    if (!cloudWritesAllowed()) {
-      throw new Error('Mode local : écriture Supabase désactivée');
+    throw new Error('Ligne ros6_state main absente');
+  }
+
+  function rejectionSignature(result) {
+    const detail = result && result.detail;
+    return [result && result.code, result && result.store, result && result.actual, detail && detail.playerId].join(
+      ':'
+    );
+  }
+
+  function adoptServerSnapshot(result, dirtyForPush) {
+    const serverData = result && result.data ? result.data : { stores: {} };
+    writeMeta(result && result.version, result && result.revisions);
+    const rebased = rebaseLocalAfterRemote(serverData, dirtyForPush);
+    applyStoresToLocal(rebased, { reload: false });
+    hydrateAppFromLocalCache();
+    STORE_KEYS.forEach((key) => {
+      if (!dirtyForPush.has(key)) return;
+      const remoteStore = serverData.stores ? serverData.stores[key] : null;
+      const localStore = rebased.stores ? rebased.stores[key] : null;
+      if (canonicalStoreString(localStore) === canonicalStoreString(remoteStore)) {
+        pendingDirty.delete(key);
+      }
+    });
+  }
+
+  function getOrCreateClientId() {
+    const key = 'ros6_client_id_v1';
+    try {
+      const existing = localStorage.getItem(key);
+      if (existing) return String(existing).slice(0, 80);
+      const created =
+        global.crypto && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+      localStorage.setItem(key, created);
+      return created;
+    } catch (error) {
+      return '';
     }
-    const { data, error } = await client
-      .from('ros6_state')
-      .insert({ id: ROW_ID, data: {}, version: 0, updated_by: session.user.id })
-      .select('id, data, version, updated_at, updated_by')
-      .single();
-    if (error) throw error;
-    return data;
   }
 
   async function pushToSupabase({ force = false, allStores = false } = {}) {
@@ -1319,6 +1403,7 @@
     setSyncStatus('saving');
     let lastResult = { ok: false, reason: 'noop' };
     let attempts = 0;
+    let lastRejection = '';
     const maxAttempts = 8;
 
     try {
@@ -1356,16 +1441,48 @@
           break;
         }
 
-        const remoteVersion = Number(remote.version) || 0;
         const localStoresMap = collectLocalStoresMap();
+        const keysToWrite = force && allStores ? new Set(STORE_KEYS) : dirtyForPush;
+        const request = buildStorePushRequest(
+          remote,
+          keysToWrite,
+          localStoresMap
+        );
+        if (!Object.keys(request.p_stores).length) {
+          writeMeta(remote.version, remote.store_revisions);
+          setSyncStatus('synced');
+          lastResult = { ok: true, reason: 'nothing-to-send', version: remote.version };
+          break;
+        }
+        request.p_client_id = getOrCreateClientId();
 
-        if (!force && isExternalRemoteConflict(remoteVersion)) {
-          // Rebase : remote gagne pour les stores non dirty ; dirty conservés/fusionnés.
+        const { data, error } = await client.rpc('ros6_push_stores', request);
+        if (error) {
+          const denied = /acces ROS6 refuse|authentication required|42501|permission denied/i.test(
+            error.message || ''
+          );
+          if (denied) {
+            setSyncStatus('error', 'accès refusé');
+            if (global.AppUI) AppUI.toast('Synchronisation refusée pour ce compte.');
+            lastResult = { ok: false, reason: 'forbidden', error };
+            break;
+          }
+          throw error;
+        }
+        const result = typeof data === 'string' ? JSON.parse(data) : data;
+        if (!result || result.ok !== true) {
+          const signature = rejectionSignature(result);
+          if (signature && signature === lastRejection) {
+            setSyncStatus('error', 'conflit non résolu');
+            if (global.AppUI) {
+              AppUI.toast('Conflit de synchronisation — la donnée serveur a été conservée.');
+            }
+            lastResult = { ok: false, reason: 'conflict', result };
+            break;
+          }
+          lastRejection = signature;
           try {
-            writeMeta(remoteVersion);
-            const rebased = rebaseLocalAfterRemote(remote.data || {}, dirtyForPush);
-            applyStoresToLocal(rebased, { reload: false });
-            hydrateAppFromLocalCache();
+            adoptServerSnapshot(result, keysToWrite);
           } catch (localError) {
             if (isQuotaExceededError(localError)) {
               notifyLocalQuotaIssue({ remoteSaved: false });
@@ -1374,76 +1491,42 @@
             }
             throw localError;
           }
+          if (![...keysToWrite].some((key) => pendingDirty.has(key))) {
+            setSyncStatus('synced');
+            lastResult = {
+              ok: true,
+              reason: 'merged-without-write',
+              version: result && result.version,
+            };
+            break;
+          }
           setSyncStatus('saving', 'fusion après conflit');
           if (global.AppUI && attempts === 1) {
-            AppUI.toast(
-              'Version distante plus récente — fusion des modules modifiés, sans écraser le reste.'
-            );
+            AppUI.toast('Conflit de révision — relecture, fusion, nouvel essai.');
           }
           pushQueued = true;
           continue;
         }
 
-        if (!force && remoteVersion > localVersion && ownPushedVersions.has(remoteVersion)) {
-          writeMeta(remoteVersion);
-        }
+        Object.keys(request.p_stores).forEach((key) => pendingDirty.delete(key));
 
-        // force : toujours fusionner sur la base distante (jamais un replace aveugle)
-        const keysToWrite =
-          force && allStores ? new Set(STORE_KEYS) : dirtyForPush;
-        const payload = buildPushPayload(remote.data || {}, keysToWrite, localStoresMap);
-        const nextVersion = remoteVersion + 1;
-
-        if (force) {
-          const { error } = await client.from('ros6_state').upsert(
-            {
-              id: ROW_ID,
-              data: payload,
-              version: nextVersion,
-              updated_at: new Date().toISOString(),
-              updated_by: session.user.id,
-            },
-            { onConflict: 'id' }
-          );
-          if (error) throw error;
-        } else {
-          const { data: updated, error } = await client
-            .from('ros6_state')
-            .update({
-              data: payload,
-              version: nextVersion,
-              updated_at: new Date().toISOString(),
-              updated_by: session.user.id,
-            })
-            .eq('id', ROW_ID)
-            .eq('version', remoteVersion)
-            .select('id, version')
-            .maybeSingle();
-
-          if (error) throw error;
-
-          if (!updated) {
-            pushQueued = true;
-            continue;
-          }
-        }
-
-        keysToWrite.forEach((key) => pendingDirty.delete(key));
-        ownPushedVersions.add(nextVersion);
-
-        // Push distant OK — l’écriture localStorage ne doit plus masquer ça en « erreur Supabase ».
         try {
-          writeMeta(nextVersion);
-          applyStoresToLocal(payload, { reload: false });
+          writeMeta(result.version, result.revisions);
+          applyStoresToLocal(result.data || { stores: request.p_stores }, { reload: false });
           setSyncStatus('synced');
-          lastResult = { ok: true, version: nextVersion, stores: [...keysToWrite] };
+          lastResult = {
+            ok: true,
+            version: result.version,
+            revisions: result.revisions,
+            stores: Object.keys(request.p_stores),
+          };
         } catch (localError) {
           if (isQuotaExceededError(localError)) {
             notifyLocalQuotaIssue({ remoteSaved: true });
             lastResult = {
               ok: true,
-              version: nextVersion,
-              stores: [...keysToWrite],
+              version: result.version,
+              stores: Object.keys(request.p_stores),
               localQuotaExceeded: true,
             };
           } else {
@@ -1518,20 +1601,11 @@
     const payload = collectStores();
     downloadSafetyExport(payload);
 
-    const { error } = await client
-      .from('ros6_state')
-      .upsert(
-        {
-          id: ROW_ID,
-          data: payload,
-          version: 1,
-          updated_at: new Date().toISOString(),
-          updated_by: session.user.id,
-        },
-        { onConflict: 'id' }
-      );
-    if (error) throw error;
-    writeMeta(1);
+    STORE_KEYS.forEach((key) => pendingDirty.add(key));
+    const imported = await pushToSupabase({ force: true, allStores: true });
+    if (!imported || imported.ok !== true) {
+      throw new Error('Import Supabase refusé');
+    }
     pendingDirty.clear();
     AppUI.toast('Données locales importées dans Supabase.');
     return true;
@@ -1570,6 +1644,7 @@
     setSyncStatus('saving', 'chargement');
     const meta = readMeta();
     localVersion = meta.version;
+    ackedRevisions = meta.storeRevisions;
 
     // Localhost : auth OK, app sur localStorage uniquement — aucun pull/push ros6_state.
     if (!cloudWritesAllowed()) {
@@ -1604,6 +1679,8 @@
         const plan = planBootstrapAction({
           remoteVersion,
           localVersion,
+          remoteRevisions: remote.store_revisions,
+          localRevisions: ackedRevisions,
           differingKeys: listDifferingStoreKeys(remote.data),
         });
         if (plan.mode === 'remote-older') {
@@ -1892,6 +1969,8 @@
       rebaseLocalAfterRemote,
       applyStoresToLocal,
       planBootstrapAction,
+      buildStorePushRequest,
+      normalizeStoreRevisions,
       prepareBootstrapStores,
       listDifferingStoreKeys,
       MODULE_HOLD_KEY,

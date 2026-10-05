@@ -6,6 +6,7 @@ create table if not exists public.ros6_state (
   id text primary key,
   data jsonb not null default '{}'::jsonb,
   version integer not null default 0,
+  store_revisions jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now(),
   updated_by uuid null references auth.users (id)
 );
@@ -23,20 +24,14 @@ create policy "ros6_state_select_authenticated"
   to authenticated
   using (true);
 
+-- Écriture réservée à public.ros6_push_stores.
+-- Ne pas recréer de policy INSERT/UPDATE : un ancien WarOps contournerait les révisions.
+-- Migration : supabase/migrations/20261005_ros6_store_revisions.sql
 drop policy if exists "ros6_state_insert_authenticated" on public.ros6_state;
-create policy "ros6_state_insert_authenticated"
-  on public.ros6_state
-  for insert
-  to authenticated
-  with check (true);
-
 drop policy if exists "ros6_state_update_authenticated" on public.ros6_state;
-create policy "ros6_state_update_authenticated"
-  on public.ros6_state
-  for update
-  to authenticated
-  using (true)
-  with check (true);
+
+alter table public.ros6_state
+  add column if not exists store_revisions jsonb not null default '{}'::jsonb;
 
 -- ---------------------------------------------------------------------------
 -- Profils utilisateurs
