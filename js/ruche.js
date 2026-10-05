@@ -235,7 +235,6 @@
       if (!raw) {
         state = createBlankState();
         resetControlInteraction();
-        persist();
         return state;
       }
       const parsed = JSON.parse(raw);
@@ -258,11 +257,15 @@
         proposal: normalizeProposal(parsed.proposal),
         control: normalizeControl(parsed.control),
       };
+      const loadedIntent = readStoredControlIntent(parsed.controlIntent);
+      if (loadedIntent) state.controlIntent = loadedIntent;
+      if (typeof parsed.controlUpdatedAt === 'string' && parsed.controlUpdatedAt) {
+        state.controlUpdatedAt = parsed.controlUpdatedAt;
+      }
       if (global.ROSPlayerIdentity && global.ROSStorage) {
         ROSPlayerIdentity.migrateRucheState(state, ROSStorage.getState().players);
       }
       resetControlInteraction();
-      persist();
       return state;
     } catch (error) {
       console.error('Ruche: chargement impossible', error);
@@ -1218,7 +1221,8 @@
       (options.allowOfficerMoves === true ||
         (options.allowOfficerMoves == null && getAllowOfficerMoves()));
     s.proposal = buildOptimizedProposal(s.grid, s.bottomId, { mode, allowOfficerMoves });
-    persist();
+    // Régénération explicite seulement. L’affichage (force false) ne doit pas salir le store.
+    if (force) persist();
     return s.proposal;
   }
 
@@ -1557,6 +1561,22 @@
     };
   }
 
+  function readStoredControlIntent(raw) {
+    if (!raw || raw.action !== 'reset' || typeof raw.at !== 'string' || !raw.at) return null;
+    return { action: 'reset', at: raw.at };
+  }
+
+  function markControlEdit(current) {
+    current.controlUpdatedAt = new Date().toISOString();
+    if (current.controlIntent) delete current.controlIntent;
+  }
+
+  function markControlReset(current) {
+    const at = new Date().toISOString();
+    current.controlIntent = { action: 'reset', at };
+    current.controlUpdatedAt = at;
+  }
+
   function createEmptyControl() {
     return {
       grid: createEmptyGrid(),
@@ -1714,6 +1734,7 @@
     const next = mutator(draft);
     if (next === false) return false;
     current.control = normalizeControl(next || draft);
+    markControlEdit(current);
     persist();
     return true;
   }
@@ -1905,6 +1926,7 @@
   function resetControlHive() {
     const current = getState();
     current.control = createEmptyControl();
+    markControlReset(current);
     resetControlInteraction();
     persist();
     renderControl();

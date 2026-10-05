@@ -6,6 +6,10 @@
  * - un push fusionne ces stores sur la base distante (les autres stores distants restent intacts) ;
  * - Gestion des membres (ros6_command_center_v1.players) est protégée contre l’écrasement
  *   accidentel de champs non vides par null/undefined venant d’un cache incomplet ;
+ * - le statut Actif/Parti suit statusChangedAt (dernière modification volontaire) :
+ *   le plus récent gagne ; un Actif sans date ne ressuscite pas un Parti ;
+ * - la ruche de contrôle ne passe de N placements à 0 que si controlIntent.action === 'reset'.
+ *   Une future révision par store pourra exiger la même action ; ros6_state.version ne suffit pas ;
  * - semaines VS (weeks / currentWeekId) : un cache local vide ou plus ancien ne peut pas
  *   effacer ni ressusciter une semaine ; seule une clôture volontaire (closeIntent) le peut ;
  * - ros6_backups_v1 est local uniquement : jamais poussé, jamais réinjecté depuis Supabase.
@@ -35,6 +39,8 @@
   const MAX_MODULE_HOLD_CHARS = 1024 * 1024;
 
   const COMMAND_CENTER_KEY = 'ros6_command_center_v1';
+  const RUCHE_KEY = 'ros6_ruche_v1';
+  const CONTROL_RESET_ACTION = 'reset';
 
   /** Champs membres : une valeur distante non vide ne cède pas à un vide local sans clear explicite. */
   const PROTECTED_NONEMPTY_PLAYER_FIELDS = [
@@ -271,9 +277,85 @@
     return next;
   }
 
+  function parseIsoMs(value) {
+    if (typeof value !== 'string' || !value) return 0;
+    const time = Date.parse(value);
+    return Number.isFinite(time) ? time : 0;
+  }
+
+  function isExplicitPlayerStatus(status) {
+    return status === 'Actif' || status === 'Parti';
+  }
+
+  function statusSnapshot(player) {
+    if (!player || !isExplicitPlayerStatus(player.status)) return null;
+    const statusChangedAt =
+      typeof player.statusChangedAt === 'string' && parseIsoMs(player.statusChangedAt) > 0
+        ? player.statusChangedAt
+        : undefined;
+    return {
+      status: player.status,
+      leftAt: player.status === 'Parti' ? player.leftAt || null : null,
+      statusChangedAt,
+    };
+  }
+
+  /**
+   * Statut Actif/Parti : la modification volontaire la plus récente gagne.
+   * Un Actif sans date n’écrase jamais un Parti. Aucune date n’est inventée.
+   * leftAt suit le statut retenu (null si Actif, date du Parti sinon).
+   */
+  function resolvePlayerStatus(remotePlayer, localPlayer) {
+    const remote = statusSnapshot(remotePlayer);
+    const local = statusSnapshot(localPlayer);
+    if (!remote) return local;
+    if (!local) return remote;
+
+    const remoteMs = remote.statusChangedAt ? parseIsoMs(remote.statusChangedAt) : 0;
+    const localMs = local.statusChangedAt ? parseIsoMs(local.statusChangedAt) : 0;
+    let winner;
+
+    if (remote.status !== local.status) {
+      if (localMs > remoteMs && localMs > 0) winner = local;
+      else if (remoteMs > localMs && remoteMs > 0) winner = remote;
+      else if (localMs > 0 && remoteMs === 0) winner = local;
+      else if (remoteMs > 0 && localMs === 0) winner = remote;
+      else if (remote.status === 'Parti' || local.status === 'Parti') {
+        winner = remote.status === 'Parti' ? remote : local;
+      } else {
+        winner = localMs >= remoteMs ? local : remote;
+      }
+    } else if (localMs > remoteMs) {
+      winner = local;
+    } else {
+      winner = remote;
+    }
+
+    if (winner.status === 'Actif') {
+      return { status: 'Actif', leftAt: null, statusChangedAt: winner.statusChangedAt };
+    }
+    const other = winner === local ? remote : local;
+    return {
+      status: 'Parti',
+      leftAt: winner.leftAt || other.leftAt || null,
+      statusChangedAt: winner.statusChangedAt,
+    };
+  }
+
+  function applyResolvedPlayerStatus(merged, remotePlayer, localPlayer) {
+    const side = resolvePlayerStatus(remotePlayer, localPlayer);
+    if (!side) return merged;
+    merged.status = side.status;
+    merged.leftAt = side.status === 'Actif' ? null : side.leftAt || null;
+    if (side.statusChangedAt) merged.statusChangedAt = side.statusChangedAt;
+    else delete merged.statusChangedAt;
+    return merged;
+  }
+
   /**
    * Fusion d’une fiche joueur : le local (édition membres) prime,
-   * sauf vide accidentel qui écraserait une valeur distante non vide.
+   * sauf vide accidentel qui écraserait une valeur distante non vide,
+   * et sauf le couple statut / leftAt, tranché par statusChangedAt.
    * Clear volontaire = player.syncClears[field] truthy.
    */
   function mergePlayerRecord(remotePlayer, localPlayer) {
@@ -292,15 +374,13 @@
       if (isEmptyFieldValue(localVal) && !isEmptyFieldValue(remoteVal)) {
         if (clears[field]) {
           merged[field] = null;
-        } else if (field === 'leftAt' && localPlayer.status === 'Actif') {
-          // Retour Actif : leftAt null est volontaire.
-          merged[field] = null;
         } else {
           merged[field] = remoteVal;
         }
       }
     });
 
+    applyResolvedPlayerStatus(merged, remotePlayer, localPlayer);
     return stripPlayerSyncMeta(merged);
   }
 
@@ -905,6 +985,63 @@
     return null;
   }
 
+  function countControlPlacements(control) {
+    if (!control || typeof control !== 'object') return 0;
+    let count = 0;
+    const grid = Array.isArray(control.grid) ? control.grid : [];
+    grid.forEach((row) => {
+      if (!Array.isArray(row)) return;
+      row.forEach((cell) => {
+        if (typeof cell === 'string' && cell && cell !== 'FREE' && cell !== 'MARSHAL') count += 1;
+      });
+    });
+    if (
+      typeof control.bottomId === 'string' &&
+      control.bottomId &&
+      control.bottomId !== 'FREE' &&
+      control.bottomId !== 'MARSHAL'
+    ) {
+      count += 1;
+    }
+    return count;
+  }
+
+  function readControlIntent(store) {
+    const intent = store && store.controlIntent;
+    if (!intent || intent.action !== CONTROL_RESET_ACTION) return null;
+    if (parseIsoMs(intent.at) <= 0) return null;
+    return { action: CONTROL_RESET_ACTION, at: intent.at };
+  }
+
+  /**
+   * Le reste du document entrant est conservé.
+   * Un passage à 0 placement n’est accepté que pour l’action explicite « reset »,
+   * et seulement si son horodatage n’est pas antérieur à controlUpdatedAt du document peuplé.
+   */
+  function mergeRucheStore(preserved, incoming) {
+    if (incoming == null) return preserved == null ? null : cloneJson(preserved);
+    const next = cloneJson(incoming);
+    if (!preserved || typeof preserved !== 'object') return next;
+    const keptCount = countControlPlacements(preserved.control);
+    const nextCount = countControlPlacements(next.control);
+    if (keptCount > 0 && nextCount === 0) {
+      const intent = readControlIntent(next);
+      const intentAt = intent ? parseIsoMs(intent.at) : 0;
+      const keptTouch = parseIsoMs(preserved.controlUpdatedAt);
+      const resetWins = intentAt > 0 && (keptTouch === 0 || intentAt >= keptTouch);
+      if (!resetWins) {
+        next.control = cloneJson(preserved.control);
+        if (typeof preserved.controlUpdatedAt === 'string' && preserved.controlUpdatedAt) {
+          next.controlUpdatedAt = preserved.controlUpdatedAt;
+        } else {
+          delete next.controlUpdatedAt;
+        }
+        delete next.controlIntent;
+      }
+    }
+    return next;
+  }
+
   /**
    * Construit le document à écrire : base = distant, overlay = stores dirty locaux.
    * Les stores non dirty restent exactement ceux de Supabase.
@@ -940,6 +1077,8 @@
       if (local == null) return;
       if (key === COMMAND_CENTER_KEY) {
         stores[key] = mergeCommandCenterStore(remoteStores[key], local);
+      } else if (key === RUCHE_KEY) {
+        stores[key] = mergeRucheStore(remoteStores[key], local);
       } else {
         stores[key] = cloneJson(local);
       }
@@ -971,11 +1110,17 @@
         const local = getLocalStore(key);
         if (key === COMMAND_CENTER_KEY) {
           stores[key] = mergeCommandCenterStore(remoteStores[key], local);
+        } else if (key === RUCHE_KEY) {
+          stores[key] =
+            local != null ? mergeRucheStore(remoteStores[key], local) : cloneJson(remoteStores[key]);
         } else {
           stores[key] = local != null ? cloneJson(local) : cloneJson(remoteStores[key]);
         }
       } else if (remoteStores[key] != null) {
-        stores[key] = cloneJson(remoteStores[key]);
+        stores[key] =
+          key === RUCHE_KEY
+            ? mergeRucheStore(getLocalStore(key), remoteStores[key])
+            : cloneJson(remoteStores[key]);
       }
     });
 
@@ -1061,7 +1206,10 @@
       STORE_KEYS.forEach((key) => {
         if (isUnsyncedSideKey(key)) return;
         if (!(key in stores) || stores[key] == null) return;
-        const value = stores[key];
+        let value = stores[key];
+        if (key === RUCHE_KEY && value && typeof value === 'object') {
+          value = mergeRucheStore(getLocalStore(key), value);
+        }
         const text = typeof value === 'string' ? value : JSON.stringify(value);
         const result = safeLocalStorageSetItem(key, text);
         if (!result.ok && result.quota) quotaFailures.push(key);
@@ -1732,6 +1880,11 @@
     /** Helpers exposés pour tests unitaires (non utilisés par l’UI). */
     __test: {
       mergePlayerRecord,
+      resolvePlayerStatus,
+      mergeRucheStore,
+      countControlPlacements,
+      RUCHE_KEY,
+      CONTROL_RESET_ACTION,
       mergeCommandCenterStore,
       mergeVsWeekState,
       getActiveVsWeek,

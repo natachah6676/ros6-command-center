@@ -2618,6 +2618,9 @@
             createdAt: p.createdAt || new Date().toISOString(),
             leftAt: p.leftAt || null,
           };
+          if (typeof p.statusChangedAt === 'string' && p.statusChangedAt) {
+            player.statusChangedAt = p.statusChangedAt;
+          }
           // Intentions de clear volontaires (sync) — jamais une source métier distante
           if (p.syncClears && typeof p.syncClears === 'object') {
             player.syncClears = { ...p.syncClears };

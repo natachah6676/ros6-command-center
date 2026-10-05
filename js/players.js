@@ -385,7 +385,6 @@
         // Renommage sur place : même ID, historique intact (scores / notes / modules)
         player.pseudo = pseudo;
         player.role = role;
-        player.status = status;
         player.absent = absent;
         player.discret = discret;
         player.inactive = inactive;
@@ -396,14 +395,10 @@
           ROSSync.clearPlayerFieldCleared(player, 'heroPowerTierId');
         }
         player.preferredVolant = preferredVolant;
-        if (previousStatus === 'Actif' && status === 'Parti') {
-          player.leftAt = new Date().toISOString();
-          player.absent = false;
-          player.discret = false;
-          player.inactive = false;
-        }
-        if (previousStatus === 'Parti' && status === 'Actif') {
-          player.leftAt = null;
+        if (previousStatus !== status && (status === 'Actif' || status === 'Parti')) {
+          stampStatusChange(player, status);
+        } else {
+          player.status = status;
         }
         if (previousPseudo !== pseudo) {
           renamedFrom = previousPseudo;
@@ -460,6 +455,21 @@
     if (global.SuiviModule && typeof SuiviModule.render === 'function') SuiviModule.render();
   }
 
+  function stampStatusChange(player, status) {
+    const at = new Date().toISOString();
+    player.status = status;
+    player.statusChangedAt = at;
+    if (status === 'Parti') {
+      player.leftAt = at;
+      player.absent = false;
+      player.discret = false;
+      player.inactive = false;
+    } else if (status === 'Actif') {
+      player.leftAt = null;
+    }
+    return at;
+  }
+
   async function markAsLeft(playerId) {
     const player = ROSStorage.getPlayerById(playerId);
     if (!player || player.status !== 'Actif') return;
@@ -473,12 +483,7 @@
 
     ROSStorage.update((state) => {
       const target = state.players.find((p) => p.id === playerId);
-      if (target) {
-        target.status = 'Parti';
-        target.leftAt = new Date().toISOString();
-        target.absent = false;
-        target.discret = false;
-      }
+      if (target && target.status === 'Actif') stampStatusChange(target, 'Parti');
       return state;
     });
 
@@ -491,10 +496,7 @@
 
     ROSStorage.update((state) => {
       const target = state.players.find((p) => p.id === playerId);
-      if (target) {
-        target.status = 'Actif';
-        target.leftAt = null;
-      }
+      if (target && target.status === 'Parti') stampStatusChange(target, 'Actif');
       return state;
     });
 
@@ -821,5 +823,7 @@
     openEditModal,
     openDetail,
     closeDetail,
+    markAsLeft,
+    reactivate,
   };
 })(window);
