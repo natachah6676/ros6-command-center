@@ -676,6 +676,8 @@
       const week = s.weeks.find((w) => w.id === s.currentWeekId);
       if (!week || week.id !== closedId) return s;
       const closer = stampClosedWeek(week);
+      // Avant les snapshots : ils complètent les brackets manquants, le journal ne doit pas les compter.
+      ROSModels.recordVsUnderDaysLedger(s, week);
       ROSModels.recordVsUnderSnapshotsForWeek(s, week);
       ROSModels.pushVsUnderWeekArchive(s, week);
       ROSModels.pushVsWeekAudit(

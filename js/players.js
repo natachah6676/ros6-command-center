@@ -16,6 +16,7 @@
     els.filterDiscret = document.getElementById('filterDiscretAdmin');
     els.powerCounter = document.getElementById('playersPowerCounter');
     els.btnAdd = document.getElementById('btnAddPlayer');
+    els.btnExport = document.getElementById('btnExportPlayers8w');
     els.modal = document.getElementById('playerModal');
     els.form = document.getElementById('playerForm');
     els.modalTitle = document.getElementById('playerModalTitle');
@@ -768,7 +769,48 @@
     `;
   }
 
+  function canExportPlayers() {
+    return typeof ROSProfiles.isActiveR5 === 'function' && ROSProfiles.isActiveR5();
+  }
+
+  function syncEightWeekExportButton() {
+    if (!els.btnExport) return;
+    els.btnExport.hidden = !canExportPlayers();
+  }
+
+  function readTempeteArchives() {
+    try {
+      const raw = localStorage.getItem('ros6_tempete_v1');
+      const parsed = raw ? JSON.parse(raw) : null;
+      return Array.isArray(parsed?.archives) ? parsed.archives : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  function exportPlayersEightWeeks() {
+    if (!canExportPlayers()) {
+      AppUI.toast('Export réservé au R5.');
+      return;
+    }
+    const built = ROSModels.buildPlayerEightWeekExport(
+      ROSStorage.getState(),
+      readTempeteArchives(),
+      new Date()
+    );
+    const blob = new Blob([built.csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `ros6-joueurs-8-semaines-${ROSModels.toISODate(new Date())}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
   function render() {
+    syncEightWeekExportButton();
     const players = filteredPlayers();
     els.list.innerHTML = players.map(renderCard).join('');
     els.empty.classList.toggle('hidden', players.length > 0);
@@ -836,6 +878,8 @@
     cacheDom();
     fillHeroPowerFilterOptions();
     els.btnAdd.addEventListener('click', openCreateModal);
+    if (els.btnExport) els.btnExport.addEventListener('click', exportPlayersEightWeeks);
+    syncEightWeekExportButton();
     els.form.addEventListener('submit', savePlayer);
     els.list.addEventListener('click', onListClick);
     els.list.addEventListener('change', onListChange);
@@ -891,5 +935,7 @@
     markAsLeft,
     reactivate,
     deletePlayerPermanently,
+    exportPlayersEightWeeks,
+    syncEightWeekExportButton,
   };
 })(window);

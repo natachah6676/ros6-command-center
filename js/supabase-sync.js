@@ -724,6 +724,14 @@
       vsWeekLifecycle: weekState.vsWeekLifecycle,
       vsWeekAudit: mergeVsWeekAuditField(remoteStore.vsWeekAudit, localStore.vsWeekAudit),
     };
+    if (global.ROSModels && typeof ROSModels.mergeVsUnderDaysLedger === 'function') {
+      const ledger = ROSModels.mergeVsUnderDaysLedger(
+        remoteStore.vsUnderDaysLedger,
+        localStore.vsUnderDaysLedger
+      );
+      if (ledger.length) merged.vsUnderDaysLedger = ledger;
+      else delete merged.vsUnderDaysLedger;
+    }
     const deletedPlayers = { ...tombstoneMap(localStore), ...tombstoneMap(remoteStore) };
     if (Object.keys(deletedPlayers).length) merged.deletedPlayers = deletedPlayers;
     else delete merged.deletedPlayers;

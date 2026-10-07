@@ -2307,6 +2307,307 @@
     return state;
   }
 
+  /**
+   * Journal futur des jours sous seuil, distinct de playerVsUnderStats et de
+   * vsUnderWeekHistory. À la clôture, chaque joueur scoré y compris 0 ou 1 jour.
+   * Les semaines déjà closes ne sont pas reconstruites.
+   */
+  const VS_UNDER_DAYS_LEDGER_LIMIT = 16;
+  const EIGHT_WEEK_EXPORT_HEADERS = [
+    'Pseudo',
+    'Statut',
+    'Puissance héros',
+    'VS jours sous seuil connus',
+    'VS données complètes',
+    'Tempêtes inscrit',
+    'Tempêtes remplaçant',
+    'Difficultés Ruche',
+    'Oublis bouclier',
+  ];
+
+  function explicitUnderDayCount(score) {
+    if (!score || isScoreAbsent(score)) return null;
+    const brackets = score.dayBrackets;
+    if (!brackets || typeof brackets !== 'object') return null;
+    let under = 0;
+    for (let i = 0; i < DAYS.length; i += 1) {
+      const bracket = brackets[DAYS[i].key];
+      if (bracket !== 'high' && bracket !== 'ok' && bracket !== 'mid' && bracket !== 'low') {
+        return null;
+      }
+      if (bracket === 'mid' || bracket === 'low') under += 1;
+    }
+    return under;
+  }
+
+  function normalizeVsUnderDaysLedgerPlayer(raw) {
+    if (!raw || !raw.playerId) return null;
+    if (raw.underDays == null || raw.underDays === '') return null;
+    const underDays = Number(raw.underDays);
+    if (!Number.isFinite(underDays)) return null;
+    return {
+      playerId: String(raw.playerId),
+      underDays: Math.max(0, Math.min(DAYS.length, Math.round(underDays))),
+    };
+  }
+
+  function normalizeVsUnderDaysLedgerEntry(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const weekId = raw.weekId ? String(raw.weekId) : '';
+    if (!weekId) return null;
+    const seen = new Set();
+    const players = [];
+    (Array.isArray(raw.players) ? raw.players : []).forEach((item) => {
+      const player = normalizeVsUnderDaysLedgerPlayer(item);
+      if (!player || seen.has(player.playerId)) return;
+      seen.add(player.playerId);
+      players.push(player);
+    });
+    return {
+      weekId,
+      startDate: raw.startDate || '',
+      endDate: raw.endDate || '',
+      closedAt: raw.closedAt || null,
+      players,
+    };
+  }
+
+  function normalizeVsUnderDaysLedger(raw) {
+    if (!Array.isArray(raw)) return [];
+    const byId = new Map();
+    raw.forEach((item) => {
+      const entry = normalizeVsUnderDaysLedgerEntry(item);
+      if (entry && !byId.has(entry.weekId)) byId.set(entry.weekId, entry);
+    });
+    return [...byId.values()].slice(0, VS_UNDER_DAYS_LEDGER_LIMIT);
+  }
+
+  function mergeVsUnderDaysLedger(remoteRaw, localRaw) {
+    const byId = new Map();
+    const take = (entry) => {
+      const prev = byId.get(entry.weekId);
+      if (!prev) {
+        byId.set(entry.weekId, entry);
+        return;
+      }
+      const prevCount = prev.players.length;
+      const nextCount = entry.players.length;
+      if (nextCount > prevCount) byId.set(entry.weekId, entry);
+      else if (nextCount === prevCount && String(entry.closedAt || '') >= String(prev.closedAt || '')) {
+        byId.set(entry.weekId, entry);
+      }
+    };
+    normalizeVsUnderDaysLedger(remoteRaw).forEach(take);
+    normalizeVsUnderDaysLedger(localRaw).forEach(take);
+    return [...byId.values()]
+      .sort((a, b) => String(b.startDate || '').localeCompare(String(a.startDate || '')))
+      .slice(0, VS_UNDER_DAYS_LEDGER_LIMIT);
+  }
+
+  function recordVsUnderDaysLedger(state, week) {
+    if (!state || !week || !week.id) return state;
+    const players = [];
+    (state.players || []).forEach((player) => {
+      if (!player || player.status !== 'Actif' || player.absent) return;
+      const underDays = explicitUnderDayCount(week.scores?.[player.id]);
+      if (underDays == null) return;
+      players.push({ playerId: String(player.id), underDays });
+    });
+    const entry = {
+      weekId: String(week.id),
+      startDate: week.startDate || '',
+      endDate: week.endDate || '',
+      closedAt: week.closedAt || new Date().toISOString(),
+      players,
+    };
+    const prev = normalizeVsUnderDaysLedger(state.vsUnderDaysLedger).filter(
+      (item) => item.weekId !== entry.weekId
+    );
+    prev.unshift(entry);
+    state.vsUnderDaysLedger = prev.slice(0, VS_UNDER_DAYS_LEDGER_LIMIT);
+    return state;
+  }
+
+  function parseCalendarInput(value) {
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+    const match = String(value || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!match) return null;
+    const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0, 0);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  function calendarKeyFromTimestamp(value) {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+      const date = parseCalendarInput(text);
+      return date ? calendarWeekKey(date) : '';
+    }
+    const date = new Date(text);
+    if (Number.isNaN(date.getTime())) return '';
+    return calendarWeekKey(date);
+  }
+
+  function lastEightCalendarWeekKeys(now = new Date()) {
+    const monday = startOfWeekMonday(now instanceof Date ? now : new Date(now));
+    const keys = [];
+    for (let i = 7; i >= 0; i -= 1) keys.push(toISODate(addDays(monday, -7 * i)));
+    return keys;
+  }
+
+  function ledgerByMonday(state) {
+    const map = new Map();
+    normalizeVsUnderDaysLedger(state?.vsUnderDaysLedger).forEach((entry) => {
+      const key = calendarKeyFromTimestamp(entry.startDate);
+      if (!key) return;
+      const prev = map.get(key);
+      if (!prev || String(entry.closedAt || '') >= String(prev.closedAt || '')) map.set(key, entry);
+    });
+    return map;
+  }
+
+  function historyUnderDaysByMonday(state) {
+    const map = new Map();
+    (Array.isArray(state?.vsUnderWeekHistory) ? state.vsUnderWeekHistory : []).forEach((entry) => {
+      const key = calendarKeyFromTimestamp(entry?.startDate);
+      if (!key || map.has(key) || !entry) return;
+      const players = new Map();
+      (Array.isArray(entry.players) ? entry.players : []).forEach((player) => {
+        if (!player || player.underDays == null || player.underDays === '') return;
+        const underDays = Number(player.underDays);
+        if (!player.playerId || !Number.isFinite(underDays)) return;
+        players.set(String(player.playerId), underDays);
+      });
+      map.set(key, players);
+    });
+    return map;
+  }
+
+  function statsUnderDaysByMonday(state, playerId) {
+    const map = new Map();
+    const entries = state?.playerVsUnderStats?.[playerId]?.entries;
+    (Array.isArray(entries) ? entries : []).forEach((entry) => {
+      if (!entry || entry.underDays == null || entry.underDays === '') return;
+      const key = calendarKeyFromTimestamp(entry.startDate);
+      const underDays = Number(entry.underDays);
+      if (!key || map.has(key) || !Number.isFinite(underDays)) return;
+      map.set(key, underDays);
+    });
+    return map;
+  }
+
+  function openWeekForMonday(state, mondayKey) {
+    const week = (state?.weeks || []).find((item) => item && item.id === state.currentWeekId);
+    if (!week || week.archived) return null;
+    if (calendarKeyFromTimestamp(week.startDate) !== mondayKey) return null;
+    return week;
+  }
+
+  function knownVsUnderDays(state, playerId, weekKeys) {
+    const ledger = ledgerByMonday(state);
+    const history = historyUnderDaysByMonday(state);
+    const stats = statsUnderDaysByMonday(state, playerId);
+    const player = (state?.players || []).find((item) => item && String(item.id) === String(playerId));
+    let knownDays = 0;
+    let knownWeeks = 0;
+    weekKeys.forEach((key) => {
+      const closed = ledger.get(key);
+      if (closed) {
+        const row = closed.players.find((item) => item.playerId === String(playerId));
+        if (!row) return;
+        knownDays += row.underDays;
+        knownWeeks += 1;
+        return;
+      }
+      const open = openWeekForMonday(state, key);
+      if (open) {
+        if (player?.absent) return;
+        const underDays = explicitUnderDayCount(open.scores?.[playerId]);
+        if (underDays == null) return;
+        knownDays += underDays;
+        knownWeeks += 1;
+        return;
+      }
+      if (stats.has(key)) {
+        knownDays += stats.get(key);
+        knownWeeks += 1;
+        return;
+      }
+      const archived = history.get(key);
+      if (archived && archived.has(String(playerId))) {
+        knownDays += archived.get(String(playerId));
+        knownWeeks += 1;
+      }
+    });
+    return { knownDays, complete: knownWeeks === weekKeys.length };
+  }
+
+  function countStormRolesInWeeks(archives, playerId, weekKeys) {
+    const allowed = new Set(weekKeys);
+    const id = String(playerId);
+    let inscrit = 0;
+    let remplacant = 0;
+    (Array.isArray(archives) ? archives : []).forEach((archive) => {
+      if (!archive || !archive.closedAt) return;
+      const key = calendarKeyFromTimestamp(archive.closedAt);
+      if (!allowed.has(key)) return;
+      const listed = (rows) =>
+        (Array.isArray(rows) ? rows : []).some((item) => item && String(item.id) === id);
+      if (listed(archive.participants)) inscrit += 1;
+      if (listed(archive.remplacants)) remplacant += 1;
+    });
+    return { inscrit, remplacant };
+  }
+
+  function countWeeklyFlagsInWeeks(state, playerId, kind, weekKeys) {
+    const allowed = new Set(weekKeys);
+    const bucket = state?.playerWeeklyFlags?.[playerId]?.[kind];
+    if (!bucket || typeof bucket !== 'object') return 0;
+    return Object.keys(bucket).reduce((sum, weekKey) => {
+      if (!allowed.has(weekKey) || !isWeeklyFlagActive(bucket[weekKey])) return sum;
+      return sum + 1;
+    }, 0);
+  }
+
+  function csvExcelCell(value) {
+    let text = value == null ? '' : String(value);
+    if (/^[=+\-@]/.test(text)) text = `'${text}`;
+    if (/[;"\n\r]/.test(text)) text = `"${text.replace(/"/g, '""')}"`;
+    return text;
+  }
+
+  function buildPlayerEightWeekExport(state, archives, now = new Date()) {
+    const weekKeys = lastEightCalendarWeekKeys(now);
+    const players = (state?.players || [])
+      .filter((player) => player && player.id)
+      .slice()
+      .sort((a, b) =>
+        String(a.pseudo || '').localeCompare(String(b.pseudo || ''), 'fr', { sensitivity: 'base' })
+      );
+    const rows = players.map((player) => {
+      const vs = knownVsUnderDays(state, player.id, weekKeys);
+      const storms = countStormRolesInWeeks(archives, player.id, weekKeys);
+      return [
+        player.pseudo || '',
+        player.status || '',
+        getPlayerPowerLabel(player, state),
+        String(vs.knownDays),
+        vs.complete ? 'Oui' : 'Non',
+        String(storms.inscrit),
+        String(storms.remplacant),
+        String(countWeeklyFlagsInWeeks(state, player.id, 'hive', weekKeys)),
+        String(countWeeklyFlagsInWeeks(state, player.id, 'shield', weekKeys)),
+      ];
+    });
+    const lines = [EIGHT_WEEK_EXPORT_HEADERS.map(csvExcelCell).join(';')];
+    rows.forEach((row) => lines.push(row.map(csvExcelCell).join(';')));
+    return {
+      weekKeys,
+      rows,
+      csv: `\uFEFF${lines.join('\r\n')}\r\n`,
+    };
+  }
+
   /** Motifs informatifs : oubli bouclier / difficulté ruche. */
   const WEEKLY_FLAG_KINDS = ['shield', 'hive'];
   const WEEKLY_FLAG_WEEK_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -2825,6 +3126,7 @@
     );
     const playerVsUnderStats = normalizePlayerVsUnderStats(raw.playerVsUnderStats);
     const playerWeeklyFlags = normalizePlayerWeeklyFlags(raw.playerWeeklyFlags);
+    const vsUnderDaysLedger = normalizeVsUnderDaysLedger(raw.vsUnderDaysLedger);
     const vsUnderWeekHistory = normalizeVsUnderWeekHistory(raw.vsUnderWeekHistory);
     const vsWeekAudit = normalizeVsWeekAudit(raw.vsWeekAudit);
     const vsWeekLifecycle = normalizeVsWeekLifecycle(raw.vsWeekLifecycle);
@@ -2854,6 +3156,7 @@
       playerVsUnderStats,
       playerWeeklyFlags,
       vsUnderWeekHistory,
+      ...(vsUnderDaysLedger.length ? { vsUnderDaysLedger } : {}),
       vsWeekAudit,
       vsWeekLifecycle,
       alliance,
@@ -3060,6 +3363,14 @@
     formatVsUnderCounterLabel,
     formatVsPraiseCounterLabel,
     recordVsUnderSnapshotsForWeek,
+    VS_UNDER_DAYS_LEDGER_LIMIT,
+    EIGHT_WEEK_EXPORT_HEADERS,
+    explicitUnderDayCount,
+    normalizeVsUnderDaysLedger,
+    mergeVsUnderDaysLedger,
+    recordVsUnderDaysLedger,
+    lastEightCalendarWeekKeys,
+    buildPlayerEightWeekExport,
     WEEKLY_FLAG_KINDS,
     calendarWeekKey,
     isWeeklyFlagActive,
