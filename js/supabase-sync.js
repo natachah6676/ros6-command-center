@@ -8,6 +8,8 @@
  *   accidentel de champs non vides par null/undefined venant d’un cache incomplet ;
  * - le statut Actif/Parti suit statusChangedAt (dernière modification volontaire) :
  *   le plus récent gagne ; un Actif sans date ne ressuscite pas un Parti ;
+ * - après un refus status_conflict, si les deux fiches n'ont pas de statusChangedAt,
+ *   le statut serveur est repris. La fusion générale, elle, ne change pas ;
  * - la ruche de contrôle ne passe de N placements à 0 que si controlIntent.action === 'reset'.
  *   Le serveur (ros6_push_stores) exige la même action et une révision par store.
  *   ros6_state.version n’autorise plus une écriture ;
@@ -409,6 +411,22 @@
     return stripPlayerSyncMeta(merged);
   }
 
+  /**
+   * Uniquement après un status_conflict. Les deux fiches n'ont pas de date :
+   * le statut serveur tranche, sans en inventer une. Une fiche datée n'entre pas ici.
+   */
+  function applyServerUndatedStatus(merged, remotePlayer, localPlayer) {
+    const remote = statusSnapshot(remotePlayer);
+    const local = statusSnapshot(localPlayer);
+    if (!merged || !remote || !local) return merged;
+    if (remote.status === local.status) return merged;
+    if (remote.statusChangedAt || local.statusChangedAt) return merged;
+    const next = { ...merged, status: remote.status };
+    next.leftAt = remote.status === 'Actif' ? null : remote.leftAt || null;
+    delete next.statusChangedAt;
+    return next;
+  }
+
   function getCloseIntent(store) {
     const intent = store?.vsWeekLifecycle?.closeIntent;
     if (!intent || typeof intent !== 'object') return null;
@@ -601,9 +619,10 @@
     return withLifecycle(weekPayload(remoteWeek));
   }
 
-  function mergeCommandCenterStore(remoteStore, localStore) {
+  function mergeCommandCenterStore(remoteStore, localStore, options) {
     if (!localStore) return cloneJson(remoteStore);
     if (!remoteStore) return cloneJson(localStore);
+    const preferServerUndatedStatus = !!(options && options.preferServerUndatedStatus);
 
     const remotePlayers = Array.isArray(remoteStore.players) ? remoteStore.players : [];
     const localPlayers = Array.isArray(localStore.players) ? localStore.players : [];
@@ -618,7 +637,10 @@
         return;
       }
       seen.add(localP.id);
-      mergedPlayers.push(mergePlayerRecord(remoteById.get(localP.id), localP));
+      const remoteP = remoteById.get(localP.id);
+      let record = mergePlayerRecord(remoteP, localP);
+      if (preferServerUndatedStatus) record = applyServerUndatedStatus(record, remoteP, localP);
+      mergedPlayers.push(record);
     });
 
     // 2) Joueurs uniquement côté serveur : ne jamais les perdre (cache incomplet)
@@ -1152,7 +1174,7 @@
    * Après conflit distant : adopter le remote pour les stores non dirty,
    * conserver / fusionner les stores dirty locaux.
    */
-  function rebaseLocalAfterRemote(remoteData, dirtyKeys) {
+  function rebaseLocalAfterRemote(remoteData, dirtyKeys, options) {
     const remoteStores =
       remoteData && typeof remoteData === 'object' && remoteData.stores
         ? remoteData.stores
@@ -1164,7 +1186,7 @@
       if (dirty.has(key)) {
         const local = getLocalStore(key);
         if (key === COMMAND_CENTER_KEY) {
-          stores[key] = mergeCommandCenterStore(remoteStores[key], local);
+          stores[key] = mergeCommandCenterStore(remoteStores[key], local, options);
         } else if (key === RUCHE_KEY) {
           stores[key] =
             local != null ? mergeRucheStore(remoteStores[key], local) : cloneJson(remoteStores[key]);
@@ -1352,7 +1374,9 @@
   function adoptServerSnapshot(result, dirtyForPush) {
     const serverData = result && result.data ? result.data : { stores: {} };
     writeMeta(result && result.version, result && result.revisions);
-    const rebased = rebaseLocalAfterRemote(serverData, dirtyForPush);
+    const rebased = rebaseLocalAfterRemote(serverData, dirtyForPush, {
+      preferServerUndatedStatus: !!(result && result.code === 'status_conflict'),
+    });
     applyStoresToLocal(rebased, { reload: false });
     hydrateAppFromLocalCache();
     STORE_KEYS.forEach((key) => {
@@ -1379,6 +1403,13 @@
     } catch (error) {
       return '';
     }
+  }
+
+  function bindPushClient(nextClient, nextSession) {
+    client = nextClient;
+    session = nextSession || { user: { id: 'test-user' } };
+    bootstrapped = true;
+    suppressPush = false;
   }
 
   async function pushToSupabase({ force = false, allStores = false } = {}) {
@@ -1958,6 +1989,10 @@
     __test: {
       mergePlayerRecord,
       resolvePlayerStatus,
+      applyServerUndatedStatus,
+      rejectionSignature,
+      bindPushClient,
+      runPushAttempt,
       mergeRucheStore,
       countControlPlacements,
       RUCHE_KEY,

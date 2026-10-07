@@ -513,6 +513,233 @@ assert(Date.parse(back.statusChangedAt) >= Date.parse(leftAt), 'Réactiver pose 
 const otherAfter = storedAfterBack.players.find((p) => p.id === 'player_other');
 assert(otherAfter.statusChangedAt == null && otherAfter.status === 'Actif', 'Réactiver ne touche pas les autres fiches');
 
+console.log('\n=== status_conflict sans date : le serveur tranche, une seule fois ===');
+function withoutStatusDate(overrides) {
+  const player = member(overrides);
+  delete player.statusChangedAt;
+  return player;
+}
+function commandCenter(players) {
+  return { players, weeks: [{ id: 'week-1', label: 'Semaine' }] };
+}
+function isoMs(value) {
+  const time = Date.parse(value || '');
+  return Number.isFinite(time) ? time : 0;
+}
+function serverWouldRejectStatus(serverPlayer, sent) {
+  if (!sent || sent.status === serverPlayer.status) {
+    const storedMs = isoMs(serverPlayer.statusChangedAt);
+    const incomingMs = isoMs(sent && sent.statusChangedAt);
+    if (storedMs > 0 && incomingMs < storedMs) return true;
+    if (
+      serverPlayer.status === 'Parti' &&
+      serverPlayer.leftAt &&
+      !(sent && sent.leftAt) &&
+      incomingMs <= storedMs
+    ) {
+      return true;
+    }
+    return false;
+  }
+  const incomingMs = isoMs(sent.statusChangedAt);
+  const storedMs = isoMs(serverPlayer.statusChangedAt);
+  return !(incomingMs > storedMs && incomingMs > 0);
+}
+async function pushStatus(serverPlayer, localPlayer, { alwaysReject = false, remotePlayers, localPlayers } = {}) {
+  T.pendingDirty.clear();
+  const serverList = remotePlayers || [serverPlayer];
+  const localList = localPlayers || [localPlayer];
+  const serverStore = commandCenter(serverList);
+  syncSandbox.localStorage.setItem('ros6_command_center_v1', JSON.stringify(commandCenter(localList)));
+  T.markDirty('ros6_command_center_v1');
+  const row = {
+    id: 'main',
+    version: 12,
+    store_revisions: {
+      ros6_command_center_v1: 4,
+      ros6_train_v1: 1,
+      ros6_ruche_v1: 2,
+      ros6_tempete_v1: 3,
+    },
+    data: { stores: { ros6_command_center_v1: serverStore } },
+  };
+  const sentStatuses = [];
+  let calls = 0;
+  T.bindPushClient({
+    from() {
+      return {
+        select() {
+          return {
+            eq() {
+              return { maybeSingle: async () => ({ data: row, error: null }) };
+            },
+          };
+        },
+      };
+    },
+    async rpc(_name, request) {
+      calls += 1;
+      const sent = request.p_stores.ros6_command_center_v1.players.find((p) => p.id === serverPlayer.id);
+      sentStatuses.push(sent && sent.status);
+      const reject = alwaysReject || serverWouldRejectStatus(serverPlayer, sent);
+      if (reject) {
+        return {
+          data: {
+            ok: false,
+            code: 'status_conflict',
+            store: 'ros6_command_center_v1',
+            detail: { code: 'status_conflict', playerId: serverPlayer.id },
+            version: row.version,
+            revisions: row.store_revisions,
+            data: row.data,
+          },
+          error: null,
+        };
+      }
+      return {
+        data: {
+          ok: true,
+          code: 'applied',
+          version: row.version,
+          revisions: { ...row.store_revisions, ros6_command_center_v1: 5 },
+          data: { stores: request.p_stores },
+        },
+        error: null,
+      };
+    },
+  });
+  const result = await T.runPushAttempt({ force: false, allStores: false });
+  const stored = JSON.parse(syncSandbox.localStorage.getItem('ros6_command_center_v1'));
+  return { result, calls, sentStatuses, stored };
+}
+
+const other = member({ id: 'player_other', pseudo: 'Autre', status: 'Actif', leftAt: null });
+delete other.statusChangedAt;
+const serverActif = withoutStatusDate({ id: 'player_msbm3azj_ziewgt', pseudo: 'Remi boomboom', status: 'Actif', leftAt: null });
+const cacheParti = withoutStatusDate({ id: 'player_msbm3azj_ziewgt', pseudo: 'Remi boomboom', status: 'Parti', leftAt: null });
+const generalStillParti = T.mergePlayerRecord(serverActif, cacheParti);
+assert(generalStillParti.status === 'Parti', 'sans refus, la fusion générale préfère encore Parti si les deux dates manquent');
+
+const loopActif = await pushStatus(serverActif, cacheParti, {
+  remotePlayers: [serverActif, other],
+  localPlayers: [cacheParti],
+});
+const remiAfter = loopActif.stored.players.find((p) => p.id === serverActif.id);
+const otherAfterConflict = loopActif.stored.players.find((p) => p.id === other.id);
+assert(loopActif.sentStatuses[0] === 'Parti', 'le premier envoi part encore en Parti');
+assert(loopActif.result.ok === true && loopActif.result.reason !== 'conflict', 'le refus sans date ne s’arrête pas en conflit');
+assert(loopActif.calls <= 2, 'pas de boucle de status_conflict');
+assert(loopActif.calls === 1 || loopActif.sentStatuses[1] === 'Actif', 'le nouvel essai reprend Actif serveur');
+assert(remiAfter.status === 'Actif' && remiAfter.leftAt == null, 'serveur Actif/null + cache Parti/null → Actif serveur');
+assert(otherAfterConflict && otherAfterConflict.status === 'Actif', 'aucun joueur serveur ne disparaît');
+
+const serverParti = withoutStatusDate({ status: 'Parti', leftAt: null, pseudo: 'Ancien' });
+const cacheActif = withoutStatusDate({ status: 'Actif', leftAt: null, pseudo: 'Ancien' });
+const adoptedParti = T.mergeCommandCenterStore(
+  commandCenter([serverParti, other]),
+  commandCenter([cacheActif]),
+  { preferServerUndatedStatus: true }
+);
+const partiRow = adoptedParti.players.find((p) => p.id === PLAYER_ID);
+assert(partiRow.status === 'Parti' && partiRow.statusChangedAt == null, 'serveur Parti/null + cache Actif/null → Parti serveur');
+assert(adoptedParti.players.some((p) => p.id === other.id), 'la reprise du statut serveur garde les autres joueurs');
+const loopParti = await pushStatus(serverParti, cacheActif, {
+  remotePlayers: [serverParti, other],
+  localPlayers: [cacheActif],
+});
+assert(loopParti.sentStatuses[0] === 'Parti', 'un cache Actif sans date ne part pas en écriture contre un Parti serveur sans date');
+assert(loopParti.result.ok === true && loopParti.result.reason !== 'conflict', 'ce Parti serveur ne boucle pas');
+assert(loopParti.calls === 1, 'un seul appel quand la fusion générale a déjà le statut serveur');
+
+const datedParti = member({
+  status: 'Parti',
+  leftAt: '2026-10-05T14:00:00.000Z',
+  statusChangedAt: '2026-10-05T14:00:00.000Z',
+});
+const undatedActifCache = withoutStatusDate({ status: 'Actif', leftAt: null });
+const keptDated = T.applyServerUndatedStatus(
+  T.mergePlayerRecord(datedParti, undatedActifCache),
+  datedParti,
+  undatedActifCache
+);
+assert(keptDated.status === 'Parti' && keptDated.statusChangedAt === '2026-10-05T14:00:00.000Z', 'serveur Parti/daté + cache Actif/null → Parti');
+const datedActif = member({ status: 'Actif', leftAt: null, statusChangedAt: '2026-10-05T15:00:00.000Z' });
+const undatedPartiCache = withoutStatusDate({ status: 'Parti', leftAt: '2026-09-01T00:00:00.000Z' });
+const keptDatedActif = T.applyServerUndatedStatus(
+  T.mergePlayerRecord(datedActif, undatedPartiCache),
+  datedActif,
+  undatedPartiCache
+);
+assert(keptDatedActif.status === 'Actif' && keptDatedActif.leftAt == null, 'serveur Actif/daté + cache Parti/null → Actif');
+
+const voluntaryLeave = member({
+  status: 'Parti',
+  leftAt: '2026-10-07T09:00:00.000Z',
+  statusChangedAt: '2026-10-07T09:00:00.000Z',
+});
+const serverWasActif = withoutStatusDate({ status: 'Actif', leftAt: null });
+const leavePush = await pushStatus(serverWasActif, voluntaryLeave);
+assert(leavePush.calls === 1 && leavePush.result.ok === true && leavePush.result.version === 12, 'Actif → Parti volontaire : date nouvelle, écriture acceptée');
+assert(leavePush.sentStatuses[0] === 'Parti', 'le départ volontaire est bien envoyé');
+
+const voluntaryBack = member({
+  status: 'Actif',
+  leftAt: null,
+  statusChangedAt: '2026-10-07T10:00:00.000Z',
+});
+const serverWasParti = member({
+  status: 'Parti',
+  leftAt: '2026-10-05T14:00:00.000Z',
+  statusChangedAt: '2026-10-05T14:00:00.000Z',
+});
+const backPush = await pushStatus(serverWasParti, voluntaryBack);
+assert(backPush.calls === 1 && backPush.result.ok === true, 'Parti → Actif volontaire : date nouvelle, écriture acceptée');
+assert(backPush.sentStatuses[0] === 'Actif' && backPush.stored.players[0].status === 'Actif', 'la réactivation acceptée est Actif');
+
+const staleActif = withoutStatusDate({ status: 'Actif', leftAt: null });
+const resurrection = await pushStatus(datedParti, staleActif);
+assert(resurrection.sentStatuses[0] === 'Parti', 'un ancien cache sans date ne ressuscite pas un Parti daté');
+assert(resurrection.result.ok === true && resurrection.stored.players[0].status === 'Parti', 'le Parti serveur daté reste en place');
+
+const equalParti = member({
+  status: 'Parti',
+  leftAt: '2026-10-05T12:00:00.000Z',
+  statusChangedAt: '2026-10-05T12:00:00.000Z',
+});
+const equalActif = member({
+  status: 'Actif',
+  leftAt: null,
+  statusChangedAt: '2026-10-05T12:00:00.000Z',
+});
+const unresolved = await pushStatus(equalActif, equalParti, { alwaysReject: true });
+assert(unresolved.calls === 2, 'deux refus identiques, puis arrêt');
+assert(unresolved.result.ok === false && unresolved.result.reason === 'conflict', 'un vrai conflit non résolu s’arrête encore');
+
+syncSandbox.localStorage.setItem('ros6_ruche_v1', JSON.stringify(rucheDoc(controlOf(0))));
+syncSandbox.localStorage.setItem('ros6_train_v1', JSON.stringify({ marker: 'local-train' }));
+syncSandbox.localStorage.setItem('ros6_tempete_v1', JSON.stringify({ marker: 'local-tempete' }));
+const moduleRebase = T.rebaseLocalAfterRemote(
+  {
+    stores: {
+      ros6_ruche_v1: rucheDoc(controlOf(4), { controlUpdatedAt: '2026-10-03T00:00:00.000Z' }),
+      ros6_train_v1: { marker: 'remote-train' },
+      ros6_tempete_v1: { marker: 'remote-tempete' },
+      ros6_command_center_v1: commandCenter([datedParti]),
+    },
+  },
+  new Set(['ros6_ruche_v1', 'ros6_train_v1', 'ros6_tempete_v1']),
+  { preferServerUndatedStatus: true }
+);
+assert(T.countControlPlacements(moduleRebase.stores.ros6_ruche_v1.control) === 4, 'le correctif de statut ne vide pas la ruche de contrôle');
+assert(moduleRebase.stores.ros6_train_v1.marker === 'local-train', 'Train dirty n’est pas remplacé');
+assert(moduleRebase.stores.ros6_tempete_v1.marker === 'local-tempete', 'Tempête dirty n’est pas remplacée');
+const vsRebase = T.rebaseLocalAfterRemote(
+  { stores: { ros6_command_center_v1: commandCenter([datedParti]) } },
+  new Set(['ros6_command_center_v1']),
+  { preferServerUndatedStatus: true }
+);
+assert(vsRebase.stores.ros6_command_center_v1.weeks[0].id === 'week-1', 'la semaine VS reste dans la fusion');
+
 console.log(`\n${passed} réussis, ${failed} échoués`);
 if (failed) process.exit(1);
 }
