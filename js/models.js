@@ -2579,7 +2579,7 @@
   function buildPlayerEightWeekExport(state, archives, now = new Date()) {
     const weekKeys = lastEightCalendarWeekKeys(now);
     const players = (state?.players || [])
-      .filter((player) => player && player.id)
+      .filter((player) => player && player.id && player.status === 'Actif')
       .slice()
       .sort((a, b) =>
         String(a.pseudo || '').localeCompare(String(b.pseudo || ''), 'fr', { sensitivity: 'base' })

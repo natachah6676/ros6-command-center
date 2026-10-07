@@ -311,13 +311,11 @@ console.log('\n=== Export : semaines calendaires, VS incomplet, tempête, ruche,
   assert(lines[0] === HEADERS.join(';'), 'en-tête Excel exact');
   assert(!/score|classement|recommand/i.test(lines[0]), 'aucune colonne de score, classement ou recommandation');
   const alpha = rowOf(lines, 'Alpha').split(';');
-  const beta = rowOf(lines, 'Beta').split(';');
+  assert(!rowOf(lines, 'Beta'), 'un joueur Parti n’apparaît pas dans l’export');
+  assert(!lines.some((line) => line.split(';')[1] === 'Parti'), 'aucune ligne du CSV n’a le statut Parti');
   assert(alpha[1] === 'Actif' && alpha[2] === '35 à 40 M', 'statut et palier de puissance actuels');
   assert(alpha[3] === '3' && alpha[4] === 'Non', 'Alpha : 0 journalisé + 1 du journal prioritaire + 0 félicitation, semaine ouverte 2, total 3, incomplet');
-  assert(beta[1] === 'Parti' && beta[2] === 'Non renseignée', 'Beta : statut actuel et puissance absente');
-  assert(beta[3] === '1' && beta[4] === 'Non', 'Beta : seul le 1 journalisé est connu, pas un 0 inventé');
   assert(alpha[5] === '2' && alpha[6] === '1', 'Alpha : deux inscriptions et un remplacement, présence ignorée');
-  assert(beta[5] === '0' && beta[6] === '1', 'Beta : seulement remplaçant');
   assert(alpha[7] === '1' && alpha[8] === '1', 'ruche et bouclier limités aux 8 lundis cochés');
   assert(lines.some((line) => line.includes(`"'=Gamma;test"`)), 'pseudo Excel et point-virgule sont neutralisés');
 
