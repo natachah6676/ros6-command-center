@@ -383,6 +383,24 @@ select.input,
   filter: brightness(1.08);
 }
 
+/* Suppression définitive — distincte du rouge « Passer en Parti » */
+.btn-erase {
+  background: transparent;
+  color: #c4b59a;
+  border: 1px dashed rgba(196, 181, 154, 0.75);
+}
+
+.btn-erase:hover:not(:disabled) {
+  background: rgba(196, 181, 154, 0.12);
+  color: #f3ead8;
+}
+
+.detail-erase {
+  margin-top: 1.4rem;
+  padding-top: 1rem;
+  border-top: 1px dashed rgba(196, 181, 154, 0.35);
+}
+
 .btn-sm {
   padding: 0.4rem 0.65rem;
   font-size: 0.85rem;

@@ -300,11 +300,71 @@
         </p>
         ${renderHistoryTable(playerId)}
       </div>
+      ${renderPermanentDelete(player)}
     `;
 
     els.overlay.hidden = false;
     els.drawer.classList.add('is-open');
     els.drawer.setAttribute('aria-hidden', 'false');
+  }
+
+  function renderPermanentDelete(player) {
+    const allowed =
+      detailAllowEdit &&
+      global.ROSProfiles &&
+      typeof ROSProfiles.isActiveR5 === 'function' &&
+      ROSProfiles.isActiveR5();
+    if (!allowed || !player?.id) return '';
+    return `
+      <div class="detail-erase">
+        <button type="button" class="btn btn-erase" data-action="erase-player" data-id="${ROSUI.escapeHtml(player.id)}">Supprimer définitivement</button>
+      </div>
+    `;
+  }
+
+  async function deletePlayerPermanently(playerId) {
+    if (
+      !global.ROSProfiles ||
+      typeof ROSProfiles.isActiveR5 !== 'function' ||
+      !ROSProfiles.isActiveR5()
+    ) {
+      if (global.AppUI) AppUI.toast('Seul le R5 peut supprimer définitivement une fiche.');
+      return false;
+    }
+    const player = ROSStorage.getPlayerById(playerId);
+    if (!player) return false;
+
+    const ok = await AppUI.confirm({
+      title: 'Supprimer définitivement',
+      message: `Supprimer définitivement ${player.pseudo} ? Cette action est réservée aux fiches créées par erreur et ne peut pas être annulée.`,
+      confirmLabel: 'Confirmer',
+      cancelLabel: 'Annuler',
+    });
+    if (!ok) return false;
+
+    const at = new Date().toISOString();
+    ROSStorage.update((state) => {
+      state.players = (state.players || []).filter((item) => item && item.id !== playerId);
+      if (
+        !state.deletedPlayers ||
+        typeof state.deletedPlayers !== 'object' ||
+        Array.isArray(state.deletedPlayers)
+      ) {
+        state.deletedPlayers = {};
+      }
+      state.deletedPlayers[playerId] = { at, pseudo: player.pseudo || '' };
+      state.playerDeleteIntent = {
+        action: 'delete',
+        playerId,
+        pseudo: player.pseudo || '',
+        at,
+      };
+      return state;
+    });
+
+    if (detailPlayerId === playerId && els.drawer) closeDetail();
+    if (global.AppUI) AppUI.toast(`${player.pseudo} a été supprimé définitivement.`);
+    return true;
   }
 
   function saveWeekNote(weekId, field, value) {
@@ -796,6 +856,11 @@
       if (detailPlayerId && detailAllowEdit) openEditModal(detailPlayerId);
     });
     els.detailBody.addEventListener('change', onDetailChange);
+    els.detailBody.addEventListener('click', (event) => {
+      const erase = event.target.closest('[data-action="erase-player"]');
+      if (!erase) return;
+      deletePlayerPermanently(erase.dataset.id);
+    });
 
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && els.drawer.classList.contains('is-open')) {
@@ -825,5 +890,6 @@
     closeDetail,
     markAsLeft,
     reactivate,
+    deletePlayerPermanently,
   };
 })(window);

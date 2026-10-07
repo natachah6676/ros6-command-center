@@ -10,6 +10,9 @@
  *   le plus récent gagne ; un Actif sans date ne ressuscite pas un Parti ;
  * - après un refus status_conflict, si les deux fiches n'ont pas de statusChangedAt,
  *   le statut serveur est repris. La fusion générale, elle, ne change pas ;
+ * - une fiche ne disparaît que si le serveur a déjà un tombeau, ou si cet envoi
+ *   porte playerDeleteIntent (action delete) pour cet identifiant précis.
+ *   Le rôle R5 est vérifié par ros6_push_stores, pas par le navigateur ;
  * - la ruche de contrôle ne passe de N placements à 0 que si controlIntent.action === 'reset'.
  *   Le serveur (ros6_push_stores) exige la même action et une révision par store.
  *   ros6_state.version n’autorise plus une écriture ;
@@ -619,9 +622,50 @@
     return withLifecycle(weekPayload(remoteWeek));
   }
 
+  function tombstoneMap(store) {
+    const raw = store && store.deletedPlayers;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    return raw;
+  }
+
+  function explicitDeleteIntent(store) {
+    const intent = store && store.playerDeleteIntent;
+    if (!intent || intent.action !== 'delete') return null;
+    const playerId = typeof intent.playerId === 'string' ? intent.playerId.trim() : '';
+    const at = typeof intent.at === 'string' ? intent.at : '';
+    if (!playerId || !at) return null;
+    return {
+      action: 'delete',
+      playerId,
+      pseudo: typeof intent.pseudo === 'string' ? intent.pseudo : '',
+      at,
+    };
+  }
+
+  function forgottenPlayerIds(remoteStore, localStore) {
+    const ids = new Set([
+      ...Object.keys(tombstoneMap(remoteStore)),
+      ...Object.keys(tombstoneMap(localStore)),
+    ]);
+    const localIntent = explicitDeleteIntent(localStore);
+    const remoteIntent = explicitDeleteIntent(remoteStore);
+    if (localIntent) ids.add(localIntent.playerId);
+    if (remoteIntent) ids.add(remoteIntent.playerId);
+    return ids;
+  }
+
+  function withoutForgottenPlayers(store, forgotten) {
+    if (!store || typeof store !== 'object') return store;
+    const next = cloneJson(store);
+    if (!Array.isArray(next.players) || !forgotten.size) return next;
+    next.players = next.players.filter((player) => !player?.id || !forgotten.has(player.id));
+    return next;
+  }
+
   function mergeCommandCenterStore(remoteStore, localStore, options) {
-    if (!localStore) return cloneJson(remoteStore);
-    if (!remoteStore) return cloneJson(localStore);
+    const forgotten = forgottenPlayerIds(remoteStore, localStore);
+    if (!localStore) return withoutForgottenPlayers(remoteStore, forgotten);
+    if (!remoteStore) return withoutForgottenPlayers(localStore, forgotten);
     const preferServerUndatedStatus = !!(options && options.preferServerUndatedStatus);
 
     const remotePlayers = Array.isArray(remoteStore.players) ? remoteStore.players : [];
@@ -630,8 +674,10 @@
     const seen = new Set();
     const mergedPlayers = [];
 
-    // 1) Joueurs présents localement (édition membres / VS) avec protection champs
+    // 1) Joueurs présents localement (édition membres / VS) avec protection champs.
+    // Un tombeau ou une intention de suppression empêche de le remettre dans l'envoi.
     localPlayers.forEach((localP) => {
+      if (localP?.id && forgotten.has(localP.id)) return;
       if (!localP?.id) {
         mergedPlayers.push(stripPlayerSyncMeta(localP));
         return;
@@ -643,9 +689,10 @@
       mergedPlayers.push(record);
     });
 
-    // 2) Joueurs uniquement côté serveur : ne jamais les perdre (cache incomplet)
+    // 2) Joueurs uniquement côté serveur : ne jamais les perdre (cache incomplet),
+    // sauf s'ils sont déjà supprimés ou visés par l'intention explicite.
     remotePlayers.forEach((remoteP) => {
-      if (!remoteP?.id || seen.has(remoteP.id)) return;
+      if (!remoteP?.id || seen.has(remoteP.id) || forgotten.has(remoteP.id)) return;
       seen.add(remoteP.id);
       mergedPlayers.push(stripPlayerSyncMeta(cloneJson(remoteP)));
     });
@@ -677,6 +724,12 @@
       vsWeekLifecycle: weekState.vsWeekLifecycle,
       vsWeekAudit: mergeVsWeekAuditField(remoteStore.vsWeekAudit, localStore.vsWeekAudit),
     };
+    const deletedPlayers = { ...tombstoneMap(localStore), ...tombstoneMap(remoteStore) };
+    if (Object.keys(deletedPlayers).length) merged.deletedPlayers = deletedPlayers;
+    else delete merged.deletedPlayers;
+    const deleteIntent = explicitDeleteIntent(localStore);
+    if (deleteIntent) merged.playerDeleteIntent = deleteIntent;
+    else delete merged.playerDeleteIntent;
     delete merged.globalPowerAudit;
     const remoteFollowUps = remoteStore.playerFollowUps;
     const localFollowUps = Object.prototype.hasOwnProperty.call(localStore, 'playerFollowUps')

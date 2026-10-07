@@ -2592,14 +2592,48 @@
     return state;
   }
 
+  function normalizeDeletedPlayers(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const out = {};
+    Object.keys(raw).forEach((id) => {
+      if (!id) return;
+      const row = raw[id];
+      if (!row || typeof row !== 'object' || Array.isArray(row)) return;
+      out[id] = {
+        at: typeof row.at === 'string' ? row.at : '',
+        pseudo: typeof row.pseudo === 'string' ? row.pseudo : '',
+      };
+    });
+    return out;
+  }
+
+  function normalizePlayerDeleteIntent(raw) {
+    if (!raw || raw.action !== 'delete') return null;
+    const playerId = typeof raw.playerId === 'string' ? raw.playerId.trim() : '';
+    const at = typeof raw.at === 'string' ? raw.at : '';
+    if (!playerId || !at) return null;
+    return {
+      action: 'delete',
+      playerId,
+      pseudo: typeof raw.pseudo === 'string' ? raw.pseudo : '',
+      at,
+    };
+  }
+
   function normalizeState(raw) {
     const base = createBlankState();
     if (!raw || typeof raw !== 'object') return createInitialState();
 
     const powerTiers = normalizePowerTiers(raw.powerTiers);
+    const deletedPlayers = normalizeDeletedPlayers(raw.deletedPlayers);
+    const playerDeleteIntent = normalizePlayerDeleteIntent(raw.playerDeleteIntent);
+    const forgottenPlayerIds = new Set(Object.keys(deletedPlayers));
+    if (playerDeleteIntent) forgottenPlayerIds.add(playerDeleteIntent.playerId);
 
     const players = Array.isArray(raw.players)
-      ? raw.players.map((p) => {
+      ? raw.players
+          .filter((p) => p && (!p.id || !forgottenPlayerIds.has(p.id)))
+          .map((p) => {
           const heroPowerTierId = migrateHeroPowerTierId(p, powerTiers);
           const player = {
             id: p.id || uid('player'),
@@ -2824,6 +2858,8 @@
       vsWeekLifecycle,
       alliance,
     };
+    if (Object.keys(deletedPlayers).length) normalized.deletedPlayers = deletedPlayers;
+    if (playerDeleteIntent) normalized.playerDeleteIntent = playerDeleteIntent;
 
     // Compatibilité : anciennes clés « pseudo » → identifiant interne
     if (global.ROSPlayerIdentity && typeof global.ROSPlayerIdentity.migrateMainState === 'function') {
