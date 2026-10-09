@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WarOps a déménagé</title>
+  <meta http-equiv="refresh" content="0; url=https://warops.vercel.app/">
+  <link rel="canonical" href="https://warops.vercel.app/">
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 36rem; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.5; color: #1a1a1a; }
+    a { color: #0b57d0; }
+  </style>
+</head>
+<body>
+  <h1>WarOps a déménagé</h1>
+  <p>L’ancienne adresse GitHub Pages n’est plus utilisée. Ouvrez la plateforme officielle.</p>
+  <p><a id="warops-link" href="https://warops.vercel.app/">https://warops.vercel.app/</a></p>
+  <script>
+    (function () {
+      var target = "https://warops.vercel.app/";
+      var extra = (window.location.search || "") + (window.location.hash || "");
+      var link = document.getElementById("warops-link");
+      if (link) link.href = target + extra;
+      window.location.replace(target + extra);
+    })();
+  </script>
+</body>
+</html>
