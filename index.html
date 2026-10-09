@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20261007-player-delete1" />
+  <link rel="stylesheet" href="css/styles.css?v=20261009-tempete-select1" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -645,10 +645,24 @@
               <button type="button" id="tempeteResetAvailability" class="btn btn-ghost">
                 Réinitialiser les disponibilités
               </button>
+              <button type="button" id="tempeteResetSelection" class="btn btn-ghost">
+                Réinitialiser la sélection
+              </button>
               <button type="button" id="tempeteSuggestRemplacants" class="btn btn-ghost">
                 💡 Suggérer des remplaçants
               </button>
             </div>
+            <label class="field tempete-player-search">
+              <span>Rechercher un joueur</span>
+              <input
+                type="search"
+                id="tempetePlayerSearch"
+                class="input"
+                placeholder="Rechercher par pseudo…"
+                autocomplete="off"
+                aria-label="Rechercher un joueur par pseudo"
+              />
+            </label>
             <div class="table-wrap">
               <table class="archive-table" id="tempetePlayersTable">
                 <thead>
@@ -664,6 +678,7 @@
               </table>
             </div>
             <p id="tempetePlayersEmpty" class="empty-state hidden">Aucun joueur actif.</p>
+            <p id="tempetePlayersNoMatch" class="empty-state hidden">Aucun joueur ne correspond à cette recherche.</p>
             <p id="tempeteSelectionSummary" class="panel-subtitle" style="margin-top:0.75rem"></p>
             <div id="tempeteSuggestions" class="tempete-suggestions hidden" style="margin-top:0.85rem"></div>
           </section>
@@ -1522,7 +1537,7 @@
   <script src="js/train.js?v=20260911-export1"></script>
   <script src="js/ruche-i18n.js?v=20261003-ruche-control1"></script>
   <script src="js/ruche.js?v=20261005-sync-safety1"></script>
-  <script src="js/tempete.js?v=20260809-scoped1"></script>
+  <script src="js/tempete.js?v=20261009-tempete-select1"></script>
   <script src="js/backups.js?v=20261002-backup-quota1"></script>
   <script src="js/app.js?v=20260912-hist1"></script>
 </body>

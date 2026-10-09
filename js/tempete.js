@@ -50,6 +50,8 @@
   let state = null;
   let skipPersist = false;
   let presenceFilter = 'all';
+  /** Filtre d’affichage uniquement — n’est pas enregistré dans ros6_tempete_v1. */
+  let playerSearchQuery = '';
   /** Mode de la fenêtre commune : 'verify' | 'close' */
   let rosterModalMode = null;
   /** Tempête ciblée par la fenêtre commune ('A' | 'B'). */
@@ -553,6 +555,40 @@
 
   function countSelection(team, selection) {
     return Object.values(team.roster).filter((r) => r.selection === selection).length;
+  }
+
+  /** Comparaison de pseudo : sans casse ni accents. */
+  function foldPlayerSearch(value) {
+    return String(value ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLocaleLowerCase('fr');
+  }
+
+  function playerMatchesSearch(pseudo, query) {
+    const folded = foldPlayerSearch(query).trim();
+    if (!folded) return true;
+    return foldPlayerSearch(pseudo).includes(folded);
+  }
+
+  /**
+   * Retire participants et remplaçants de cette Tempête seulement.
+   * Les disponibilités, l’attendance et l’autre Tempête ne sont pas touchés.
+   * La stratégie et le mail de cette Tempête deviennent caducs, comme un changement manuel de sélection.
+   */
+  function resetTeamSelection(team) {
+    let participants = 0;
+    let remplacants = 0;
+    Object.keys(team.roster || {}).forEach((id) => {
+      const entry = normalizeRosterEntry(team.roster[id]);
+      if (entry.selection === 'participant') participants += 1;
+      else if (entry.selection === 'remplacant') remplacants += 1;
+      else return;
+      team.roster[id] = { ...entry, selection: 'non_retenu' };
+    });
+    team.strategy = null;
+    team.mail = '';
+    return { participants, remplacants };
   }
 
   function getSelectedPlayers(team, selection) {
@@ -1216,9 +1252,12 @@
     els.hourB = document.getElementById('tempeteHourB');
     els.playersBody = document.getElementById('tempetePlayersBody');
     els.playersEmpty = document.getElementById('tempetePlayersEmpty');
+    els.playersNoMatch = document.getElementById('tempetePlayersNoMatch');
+    els.playerSearch = document.getElementById('tempetePlayerSearch');
     els.selectionSummary = document.getElementById('tempeteSelectionSummary');
     els.suggestions = document.getElementById('tempeteSuggestions');
     els.btnResetAvailability = document.getElementById('tempeteResetAvailability');
+    els.btnResetSelection = document.getElementById('tempeteResetSelection');
     els.btnSuggestRemplacants = document.getElementById('tempeteSuggestRemplacants');
     els.btnGenerateMail = document.getElementById('tempeteGenerateMail');
     els.btnCopyMail = document.getElementById('tempeteCopyMail');
@@ -1257,11 +1296,19 @@
     if (!players.length) {
       els.playersBody.innerHTML = '';
       els.playersEmpty?.classList.remove('hidden');
+      els.playersNoMatch?.classList.add('hidden');
       return;
     }
     els.playersEmpty?.classList.add('hidden');
+    const visible = players.filter((p) => playerMatchesSearch(p.pseudo, playerSearchQuery));
+    if (!visible.length) {
+      els.playersBody.innerHTML = '';
+      els.playersNoMatch?.classList.remove('hidden');
+    } else {
+      els.playersNoMatch?.classList.add('hidden');
+    }
 
-    els.playersBody.innerHTML = players
+    els.playersBody.innerHTML = visible
       .map((p) => {
         const entry = ensureRosterEntry(team, p.id);
         const assignment = getStormAssignment(p.id);
@@ -2236,6 +2283,33 @@
     AppUI.toast('Disponibilités réinitialisées : Indisponible.');
   }
 
+  async function onResetSelection() {
+    const teamKey = activeTeamKey();
+    const team = getTeam(teamKey);
+    const nP = countSelection(team, 'participant');
+    const nR = countSelection(team, 'remplacant');
+    const ok = await AppUI.confirm({
+      title: 'Réinitialiser la sélection',
+      message:
+        `Retirer les ${nP} participant(s) et ${nR} remplaçant(s) de la Tempête ${teamKey} ?\n\n` +
+        'Les disponibilités restent. Les archives et l’autre Tempête ne sont pas modifiées. ' +
+        'La stratégie et le mail de cette Tempête seront effacés.',
+      confirmLabel: 'Réinitialiser la sélection',
+    });
+    if (!ok) return;
+
+    update((s) => {
+      resetTeamSelection(s.teams[teamKey]);
+      clearTeamValidation(s, teamKey);
+      return s;
+    });
+    const ui = assignmentsUiFor(teamKey);
+    ui.open = false;
+    ui.snapshot = null;
+    renderSuggestions(null);
+    AppUI.toast(`Sélection de la Tempête ${teamKey} réinitialisée.`);
+  }
+
   async function onGenerateForTeam(teamKey) {
     const key = teamKey === 'B' ? 'B' : 'A';
     setActiveTeam(key);
@@ -2582,6 +2656,11 @@
 
     els.btnOpenSelection?.addEventListener('click', openSelectionModal);
     els.btnResetAvailability?.addEventListener('click', onResetAvailabilities);
+    els.btnResetSelection?.addEventListener('click', onResetSelection);
+    els.playerSearch?.addEventListener('input', () => {
+      playerSearchQuery = els.playerSearch.value || '';
+      renderPlayers();
+    });
     els.btnSuggestRemplacants?.addEventListener('click', onSuggestRemplacants);
     els.btnGenerateMail?.addEventListener('click', onGenerateMail);
     els.btnCopyMail?.addEventListener('click', onCopyMail);
@@ -2624,5 +2703,10 @@
     getRecentAbsenceAlerts,
     migratePlayerIdentity,
     getPlayerPresenceHistory,
+    __test: {
+      foldPlayerSearch,
+      playerMatchesSearch,
+      resetTeamSelection,
+    },
   };
 })(window);

@@ -3189,6 +3189,11 @@ tbody tr:hover {
   gap: 0.75rem;
 }
 
+.tempete-player-search {
+  max-width: 22rem;
+  margin: 0.85rem 0 0.35rem;
+}
+
 .tempete-stats,
 .tempete-alerts {
   margin: 0.4rem 0 0;
