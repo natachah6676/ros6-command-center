@@ -100,10 +100,22 @@
     return getEffectiveAppRole() === 'R5';
   }
 
+  function canAccessMuse() {
+    if (globalThis.MuseModule && typeof MuseModule.canAccess === 'function') {
+      return MuseModule.canAccess();
+    }
+    const role = getEffectiveAppRole();
+    return role === 'R4' || role === 'R5';
+  }
+
   function switchTab(tabName) {
     // Paramètres réservés au R5 — bloque aussi un accès forcé (hash / appel JS)
     if (tabName === 'settings' && !canAccessSettings()) {
       toast('Paramètres réservés au rôle R5.');
+      tabName = 'command';
+    }
+    if (tabName === 'muse' && !canAccessMuse()) {
+      toast('La Muse est réservée aux R4 et R5.');
       tabName = 'command';
     }
 
@@ -134,6 +146,7 @@
     if (tabName === 'train' && globalThis.TrainModule) TrainModule.render();
     if (tabName === 'ruche' && globalThis.RucheModule) RucheModule.render();
     if (tabName === 'tempete' && globalThis.TempeteModule) TempeteModule.render();
+    if (tabName === 'muse' && globalThis.MuseModule) MuseModule.render();
     if (tabName === 'settings' && canAccessSettings()) {
       applyRolePermissions();
       renderPowerTiersSettings();
@@ -417,6 +430,18 @@
       switchTab('command');
     }
 
+    const museAllowed = canAccessMuse();
+    const museTab = document.querySelector('.tab[data-tab="muse"]');
+    if (museTab) {
+      museTab.classList.toggle('hidden', !museAllowed);
+      museTab.hidden = !museAllowed;
+      museTab.setAttribute('aria-hidden', museAllowed ? 'false' : 'true');
+    }
+    const musePanel = document.getElementById('panel-muse');
+    if (!museAllowed && musePanel && !musePanel.hidden) {
+      switchTab('command');
+    }
+
     if (globalThis.ROSProfiles) {
       ROSProfiles.renderOwnAccessSummary?.();
       ROSProfiles.renderAccessPanel?.();
@@ -435,6 +460,7 @@
     if (globalThis.TrainModule) TrainModule.render();
     if (globalThis.RucheModule) RucheModule.render();
     if (globalThis.TempeteModule) TempeteModule.render();
+    if (globalThis.MuseModule) MuseModule.render();
     NotificationsModule.render();
     renderAllianceSettings();
     applyBrandIdentity();
@@ -612,6 +638,7 @@
     if (globalThis.TrainModule) TrainModule.init();
     if (globalThis.RucheModule) RucheModule.init();
     if (globalThis.TempeteModule) TempeteModule.init();
+    if (globalThis.MuseModule) MuseModule.init();
     if (globalThis.BackupsModule) BackupsModule.init();
     bindEvents();
 

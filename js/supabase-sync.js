@@ -30,6 +30,7 @@
     'ros6_train_v1',
     'ros6_ruche_v1',
     'ros6_tempete_v1',
+    'ros6_muse_v1',
   ];
 
   /** Sauvegardes navigateur — hors sync (ne pas ajouter à STORE_KEYS). */
@@ -40,12 +41,13 @@
    * mais l’ancienne copie est mise de côté ici. Jamais synchronisée.
    */
   const MODULE_HOLD_KEY = 'ros6_module_hold_v1';
-  const MODULE_STORE_KEYS = ['ros6_train_v1', 'ros6_ruche_v1', 'ros6_tempete_v1'];
+  const MODULE_STORE_KEYS = ['ros6_train_v1', 'ros6_ruche_v1', 'ros6_tempete_v1', 'ros6_muse_v1'];
   /** Une seule copie par module, et 1 Mo pour toute la clé. Pas d’historique. */
   const MAX_MODULE_HOLD_CHARS = 1024 * 1024;
 
   const COMMAND_CENTER_KEY = 'ros6_command_center_v1';
   const RUCHE_KEY = 'ros6_ruche_v1';
+  const MUSE_KEY = 'ros6_muse_v1';
   const CONTROL_RESET_ACTION = 'reset';
 
   /** Champs membres : une valeur distante non vide ne cède pas à un vide local sans clear explicite. */
@@ -108,6 +110,9 @@
   const ownPushedVersions = new Set();
   /** Stores modifiés localement en attente de push ciblé. */
   const pendingDirty = new Set();
+  /** Vrai si le serveur refuse encore ros6_muse_v1 : on n’empêche pas les autres stores. */
+  let museCloudBlocked = false;
+  let museCloudWarned = false;
 
   function $(id) {
     return document.getElementById(id);
@@ -226,6 +231,7 @@
       console.warn('ROSSync.schedulePush: store inconnu ignoré', storeKey);
       return false;
     }
+    if (storeKey === MUSE_KEY && museCloudBlocked) return false;
     pendingDirty.add(storeKey);
     return true;
   }
@@ -1181,6 +1187,29 @@
   }
 
   /**
+   * La Muse : la préparation la plus récente gagne.
+   * Les brouillons individuels sont réunis, jamais écrasés par un autre compte.
+   */
+  function mergeMuseStore(preserved, incoming) {
+    if (global.MuseModule && typeof global.MuseModule.mergeStores === 'function') {
+      return global.MuseModule.mergeStores(preserved, incoming);
+    }
+    if (incoming == null) return preserved == null ? null : cloneJson(preserved);
+    return cloneJson(incoming);
+  }
+
+  function noteMuseStoreRejected() {
+    museCloudBlocked = true;
+    if (museCloudWarned) return;
+    museCloudWarned = true;
+    if (global.AppUI && typeof global.AppUI.toast === 'function') {
+      global.AppUI.toast(
+        'La Muse reste sur cet appareil : la synchronisation partagée attend la mise à jour Supabase.'
+      );
+    }
+  }
+
+  /**
    * Construit le document à écrire : base = distant, overlay = stores dirty locaux.
    * Les stores non dirty restent exactement ceux de Supabase.
    * ros6_backups_v1 n’est jamais recopié, même s’il est encore dans le document distant.
@@ -1217,6 +1246,8 @@
         stores[key] = mergeCommandCenterStore(remoteStores[key], local);
       } else if (key === RUCHE_KEY) {
         stores[key] = mergeRucheStore(remoteStores[key], local);
+      } else if (key === MUSE_KEY) {
+        stores[key] = mergeMuseStore(remoteStores[key], local);
       } else {
         stores[key] = cloneJson(local);
       }
@@ -1251,6 +1282,9 @@
         } else if (key === RUCHE_KEY) {
           stores[key] =
             local != null ? mergeRucheStore(remoteStores[key], local) : cloneJson(remoteStores[key]);
+        } else if (key === MUSE_KEY) {
+          stores[key] =
+            local != null ? mergeMuseStore(remoteStores[key], local) : cloneJson(remoteStores[key]);
         } else {
           stores[key] = local != null ? cloneJson(local) : cloneJson(remoteStores[key]);
         }
@@ -1390,6 +1424,9 @@
       if (global.TempeteModule && typeof TempeteModule.hydrateFromStorage === 'function') {
         TempeteModule.hydrateFromStorage();
       }
+      if (global.MuseModule && typeof MuseModule.hydrateFromStorage === 'function') {
+        MuseModule.hydrateFromStorage();
+      }
     } finally {
       suppressPush = false;
     }
@@ -1516,6 +1553,7 @@
           : new Set(pendingDirty);
         dirtyForPush.delete(BACKUPS_KEY);
         pendingDirty.delete(BACKUPS_KEY);
+        if (museCloudBlocked) dirtyForPush.delete(MUSE_KEY);
 
         if (!dirtyForPush.size && !force) {
           setSyncStatus('synced');
@@ -1534,7 +1572,8 @@
         }
 
         const localStoresMap = collectLocalStoresMap();
-        const keysToWrite = force && allStores ? new Set(STORE_KEYS) : dirtyForPush;
+        const keysToWrite = force && allStores ? new Set(STORE_KEYS) : new Set(dirtyForPush);
+        if (museCloudBlocked) keysToWrite.delete(MUSE_KEY);
         const request = buildStorePushRequest(
           remote,
           keysToWrite,
@@ -1557,6 +1596,18 @@
             setSyncStatus('error', 'accès refusé');
             if (global.AppUI) AppUI.toast('Synchronisation refusée pour ce compte.');
             lastResult = { ok: false, reason: 'forbidden', error };
+            break;
+          }
+          if (/store not allowed/i.test(error.message || '') && request.p_stores && request.p_stores[MUSE_KEY]) {
+            noteMuseStoreRejected();
+            pendingDirty.delete(MUSE_KEY);
+            const others = [...pendingDirty].filter((key) => key !== MUSE_KEY);
+            if (others.length || (allStores && STORE_KEYS.some((key) => key !== MUSE_KEY))) {
+              pushQueued = true;
+              continue;
+            }
+            setSyncStatus('synced');
+            lastResult = { ok: true, reason: 'muse-not-allowed' };
             break;
           }
           throw error;

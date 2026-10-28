@@ -914,6 +914,25 @@ button.tempete-presence-pct:hover {
   justify-content: center;
 }
 
+.tempete-generate-notice {
+  margin: 0;
+  padding: 0.7rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: rgba(208, 137, 42, 0.16);
+  color: #f0d2a0;
+  border: 1px solid rgba(208, 137, 42, 0.45);
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.tempete-generate-notice p {
+  margin: 0 0 0.55rem;
+}
+
+.tempete-generate-notice .btn {
+  width: 100%;
+}
+
 .tempete-assign-status {
   display: inline-flex;
   align-items: center;
@@ -3677,5 +3696,132 @@ tbody tr:hover {
   .suivi-layout {
     grid-template-columns: 1fr;
   }
+}
+
+.muse-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+.muse-step {
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--steel-light);
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.muse-step.is-active {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+
+.muse-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.muse-body h3 {
+  margin: 0.4rem 0 0;
+  font-size: 1rem;
+}
+
+.muse-choice,
+.muse-auto,
+.muse-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.muse-choice label,
+.muse-check {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.muse-list li,
+.muse-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.muse-inline .input {
+  flex: 1 1 12rem;
+}
+
+.muse-nav {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.muse-editor {
+  width: 100%;
+  min-height: 8rem;
+  resize: vertical;
+  font: inherit;
+}
+
+.muse-count {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.muse-count.is-over {
+  color: var(--red-bright);
+  font-weight: 700;
+}
+
+.muse-alert,
+.muse-note {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--orange-bg);
+  color: var(--text);
+}
+
+.muse-alert ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.muse-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.muse-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+
+.muse-days {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+  padding: 0.75rem;
+}
+
+.muse-days legend {
+  padding: 0 0.35rem;
 }
 
