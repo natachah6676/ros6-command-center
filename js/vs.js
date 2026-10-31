@@ -81,11 +81,7 @@
     if (els.pastUnderEmpty) els.pastUnderEmpty.classList.add('hidden');
     els.pastUnderList.innerHTML = history
       .map((entry) => {
-        const when =
-          ROSModels.formatCoachingDateTime(entry.closedAt) ||
-          ROSModels.formatDateFR(entry.startDate) ||
-          entry.weekLabel ||
-          'Semaine';
+        const closedLabel = ROSModels.formatCoachingDateTime(entry.closedAt);
         const rows = (entry.players || [])
           .map((p) => {
             const contactBit = p.contacted
@@ -98,7 +94,9 @@
           <article class="vs-past-under-week">
             <header>
               <strong>${escapeHtml(entry.weekLabel || 'Semaine')}</strong>
-              <span class="panel-subtitle">${escapeHtml(when)} · seuil ≥ ${entry.underMinDays} j</span>
+              <span class="panel-subtitle">${
+                closedLabel ? `${escapeHtml(closedLabel)} · ` : ''
+              }seuil ≥ ${entry.underMinDays} j</span>
             </header>
             ${
               rows
@@ -173,13 +171,12 @@
 
     if (els.activeTitle) {
       els.activeTitle.textContent = active
-        ? active.label || `Semaine ${active.number || '?'}`
+        ? `Semaine active — ${active.label || `Semaine ${active.number || '?'}`}`
         : 'Aucune';
     }
     if (els.activeDates) {
-      els.activeDates.textContent = active
-        ? `${ROSModels.formatDateFR(active.startDate)} → ${ROSModels.formatDateFR(active.endDate)}`
-        : '';
+      els.activeDates.textContent = '';
+      els.activeDates.hidden = true;
     }
 
     if (els.btnCloseWeek) {

@@ -24,6 +24,8 @@ function assert(cond, msg) {
 }
 
 console.log('\n=== Code guards ===');
+assert(!vsCode.includes('formatDateFR(active.startDate)'), 'le bandeau n’écrit plus la plage de dates');
+assert(!vsCode.includes('formatDateFR(entry.startDate)'), 'l’historique sous seuil n’affiche plus la date de début');
 assert(vsCode.includes('els.weekSelector.value = ROSStorage.getState().currentWeekId'), 'sélection forcée nouvelle semaine');
 assert(vsCode.includes('Clôturer et effacer') || vsCode.includes('seront effacés'), 'clôture sans historique');
 
@@ -140,12 +142,19 @@ let state = sandbox.ROSStorage.getState();
 assert(state.currentWeekId === 'week_2', 'Semaine 2 courante');
 assert(state.weeks.length === 1, 'une seule semaine');
 assert(M.isWeekEditable(VS.getSelectedWeek(), state.currentWeekId), 'Semaine 2 éditable');
+assert(activeTitle.textContent === 'Semaine active — Semaine 2', 'le titre affiche le numéro, sans dates');
+assert(activeDates.textContent === '' && activeDates.hidden === true, 'la plage de dates n’est pas affichée');
+assert(state.weeks[0].number === 2, 'le numéro interne reste 2');
+assert(state.weeks[0].startDate && state.weeks[0].endDate, 'les dates internes de la semaine restent enregistrées');
+assert(state.weeks[0].scores.p1, 'le score n’est pas modifié par l’affichage');
 
 (async () => {
   console.log('\n=== Clôture puis création ===');
   await VS.closeActiveWeek();
   state = sandbox.ROSStorage.getState();
   assert(state.currentWeekId === null, 'plus d’active');
+  assert(activeTitle.textContent === 'Aucune', 'sans semaine active, aucun numéro ni date');
+  assert(activeDates.textContent === '', 'les dates restent masquées après clôture');
   assert(state.weeks.length === 0, 'historique effacé');
 
   await VS.createNewWeek();
@@ -154,6 +163,21 @@ assert(M.isWeekEditable(VS.getSelectedWeek(), state.currentWeekId), 'Semaine 2 �
   assert(state.weeks.length === 1, 'toujours une seule semaine');
   assert(weekSelector.value === state.currentWeekId, 'sélecteur sur nouvelle');
   assert(M.isWeekEditable(VS.getSelectedWeek(), state.currentWeekId), 'nouvelle éditable');
+  assert(
+    activeTitle.textContent.startsWith('Semaine active — Semaine '),
+    'la nouvelle semaine affiche son numéro'
+  );
+  assert(!activeTitle.textContent.includes('/'), 'la nouvelle semaine n’affiche pas de date');
+  const shownNumber = state.weeks[0].number;
+  const shownStart = state.weeks[0].startDate;
+  const shownEnd = state.weeks[0].endDate;
+  VS.render();
+  state = sandbox.ROSStorage.getState();
+  assert(state.weeks[0].number === shownNumber, 'un nouvel affichage ne renumérote pas la semaine');
+  assert(
+    state.weeks[0].startDate === shownStart && state.weeks[0].endDate === shownEnd,
+    'un nouvel affichage ne modifie pas les dates internes'
+  );
   assert(String(tbody.innerHTML).includes('data-vs-day'), 'menus déroulants présents');
   assert(archiveNotice.classList._hidden === true, 'bandeau archive masqué');
 
