@@ -523,6 +523,7 @@
     if (status === 'Parti') {
       player.leftAt = at;
       player.absent = false;
+      player.absentChangedAt = at;
       player.discret = false;
       player.inactive = false;
     } else if (status === 'Actif') {
@@ -569,16 +570,7 @@
       const target = state.players.find((p) => p.id === playerId);
       if (!target || target.status !== 'Actif') return state;
       target.absent = Boolean(absent);
-      const week =
-        state.currentWeekId &&
-        (state.weeks || []).find((w) => w.id === state.currentWeekId && !w.archived);
-      if (week && week.scores) {
-        if (absent) {
-          delete week.scores[playerId];
-        } else if (!week.scores[playerId]) {
-          week.scores[playerId] = ROSModels.createEmptyScore();
-        }
-      }
+      target.absentChangedAt = new Date().toISOString();
       return state;
     });
     if (global.VSModule && typeof VSModule.render === 'function') VSModule.render();
@@ -810,6 +802,9 @@
   }
 
   function render() {
+    if (global.ROSSync && typeof global.ROSSync.refreshLegacyHoldNotice === 'function') {
+      global.ROSSync.refreshLegacyHoldNotice();
+    }
     syncEightWeekExportButton();
     const players = filteredPlayers();
     els.list.innerHTML = players.map(renderCard).join('');

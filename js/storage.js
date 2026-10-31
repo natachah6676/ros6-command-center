@@ -67,7 +67,21 @@
   function update(mutator, options = {}) {
     const current = getState();
     const next = mutator(current) || current;
-    state = ROSModels.normalizeState(next);
+    const normalized = ROSModels.normalizeState(next);
+    let changed = true;
+    try {
+      changed = JSON.stringify(normalized) !== JSON.stringify(current);
+    } catch (error) {
+      changed = true;
+    }
+    if (
+      changed &&
+      global.ROSSync &&
+      typeof global.ROSSync.noteCommandCenterEditBaseline === 'function'
+    ) {
+      global.ROSSync.noteCommandCenterEditBaseline(current);
+    }
+    state = normalized;
     persist(!options.silent);
     return state;
   }

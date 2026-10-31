@@ -6,6 +6,10 @@
  * - un push fusionne ces stores sur la base distante (les autres stores distants restent intacts) ;
  * - Gestion des membres (ros6_command_center_v1.players) est protégée contre l’écrasement
  *   accidentel de champs non vides par null/undefined venant d’un cache incomplet ;
+ * - une copie locale n’est renvoyée que pour les champs réellement saisis depuis
+ *   la dernière photo acquittée (ros6_cc_basis_v1, jamais synchronisée).
+ *   Un navigateur en retard adopte le serveur. Deux saisies du même champ :
+ *   la plus récente horodatée gagne, l’autre est signalée ;
  * - le statut Actif/Parti suit statusChangedAt (dernière modification volontaire) :
  *   le plus récent gagne ; un Actif sans date ne ressuscite pas un Parti ;
  * - après un refus status_conflict, si les deux fiches n'ont pas de statusChangedAt,
@@ -49,6 +53,16 @@
   const RUCHE_KEY = 'ros6_ruche_v1';
   const MUSE_KEY = 'ros6_muse_v1';
   const CONTROL_RESET_ACTION = 'reset';
+  /**
+   * Photo du centre de commandement au moment de la première saisie
+   * encore non acquittée. Jamais envoyée à Supabase.
+   * Sans cette photo, un cache ancien ne doit pas être réécrit sur le serveur.
+   */
+  const CC_BASIS_KEY = 'ros6_cc_basis_v1';
+  /** Copie de transition, cet appareil seulement. Jamais dans ros6_push_stores. */
+  const CC_LEGACY_HOLD_KEY = 'ros6_cc_legacy_hold_v1';
+  const VS_DAY_KEYS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi'];
+  let commandCenterMergeConflicts = [];
 
   /** Champs membres : une valeur distante non vide ne cède pas à un vide local sans clear explicite. */
   const PROTECTED_NONEMPTY_PLAYER_FIELDS = [
@@ -203,6 +217,439 @@
       err.quotaExceeded = true;
       throw err;
     }
+  }
+
+  function readCommandCenterBasis() {
+    try {
+      const raw = localStorage.getItem(CC_BASIS_KEY);
+      if (!raw) return { unsynced: false, base: null, captureFailed: false, revision: 0 };
+      const parsed = JSON.parse(raw);
+      return {
+        unsynced: Boolean(parsed && parsed.unsynced),
+        base: parsed && parsed.base && typeof parsed.base === 'object' ? parsed.base : null,
+        captureFailed: Boolean(parsed && parsed.captureFailed),
+        revision: Number(parsed && parsed.revision) || 0,
+      };
+    } catch (error) {
+      return { unsynced: false, base: null, captureFailed: false, revision: 0 };
+    }
+  }
+
+  function writeCommandCenterBasis(basis) {
+    const payload = {
+      unsynced: Boolean(basis && basis.unsynced),
+      captureFailed: Boolean(basis && basis.captureFailed),
+      revision: Number(basis && basis.revision) || 0,
+      base: basis && basis.base && typeof basis.base === 'object' ? basis.base : null,
+    };
+    return safeLocalStorageSetItem(CC_BASIS_KEY, JSON.stringify(payload));
+  }
+
+  /**
+   * À appeler avec l’état AVANT la saisie. La photo n’est prise qu’une fois,
+   * jusqu’à l’accusé du serveur. Les saisies suivantes restent mesurées
+   * contre cette photo, pas contre le cache déjà modifié.
+   */
+  function noteCommandCenterEditBaseline(state) {
+    if (!state || typeof state !== 'object') return false;
+    const current = readCommandCenterBasis();
+    if (current.unsynced && (current.base || current.captureFailed)) return false;
+    const revision = storeRevision(ackedRevisions, COMMAND_CENTER_KEY);
+    const saved = writeCommandCenterBasis({
+      unsynced: true,
+      captureFailed: false,
+      revision,
+      base: cloneJson(state),
+    });
+    if (saved.ok) return true;
+    writeCommandCenterBasis({
+      unsynced: true,
+      captureFailed: true,
+      revision,
+      base: null,
+    });
+    return false;
+  }
+
+  function ackCommandCenterBasis(revision) {
+    writeCommandCenterBasis({
+      unsynced: false,
+      captureFailed: false,
+      revision: Number(revision) || storeRevision(ackedRevisions, COMMAND_CENTER_KEY),
+      base: null,
+    });
+  }
+
+  function sameStoreValue(left, right) {
+    return canonicalStoreString(left ?? null) === canonicalStoreString(right ?? null);
+  }
+
+  function noteCommandCenterConflict(message) {
+    const text = String(message || '').trim();
+    if (!text || commandCenterMergeConflicts.includes(text)) return;
+    commandCenterMergeConflicts.push(text);
+  }
+
+  function flushCommandCenterConflictToast() {
+    const notes = commandCenterMergeConflicts.slice();
+    commandCenterMergeConflicts = [];
+    if (!notes.length) return notes;
+    if (global.AppUI && typeof global.AppUI.toast === 'function') {
+      global.AppUI.toast(
+        `Deux saisies se sont croisées. C’est la plus récente qui est gardée. Sur cet appareil, non retenue : ${notes.slice(0, 3).join(' · ')}`
+      );
+    }
+    return notes;
+  }
+
+  const conflictNames = new Map();
+
+  function rememberConflictNames(store) {
+    const players = store && Array.isArray(store.players) ? store.players : [];
+    players.forEach((player) => {
+      if (!player || !player.id || !player.pseudo) return;
+      conflictNames.set(player.id, String(player.pseudo));
+    });
+  }
+
+  function memberName(playerOrId) {
+    if (playerOrId && typeof playerOrId === 'object') {
+      if (playerOrId.pseudo) return String(playerOrId.pseudo);
+      if (playerOrId.id && conflictNames.has(playerOrId.id)) return conflictNames.get(playerOrId.id);
+      return playerOrId.id || 'un joueur';
+    }
+    const id = playerOrId ? String(playerOrId) : '';
+    return conflictNames.get(id) || id || 'un joueur';
+  }
+
+  function readLegacyCommandCenterHold() {
+    try {
+      const raw = localStorage.getItem(CC_LEGACY_HOLD_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || !parsed.store) return null;
+      return parsed;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function writeLegacyCommandCenterHold(store) {
+    return safeLocalStorageSetItem(
+      CC_LEGACY_HOLD_KEY,
+      JSON.stringify({
+        heldAt: new Date().toISOString(),
+        reason: 'ancienne-version-sans-photo',
+        recoverable: true,
+        sendToServer: false,
+        store,
+      })
+    );
+  }
+
+  function previewLegacyDifference(local, remote) {
+    const notes = [];
+    const localPlayers = new Map(
+      (Array.isArray(local && local.players) ? local.players : [])
+        .filter((player) => player && player.id)
+        .map((player) => [player.id, player])
+    );
+    const remotePlayers = new Map(
+      (Array.isArray(remote && remote.players) ? remote.players : [])
+        .filter((player) => player && player.id)
+        .map((player) => [player.id, player])
+    );
+    const nameOf = (id, player) => (player && player.pseudo) || id;
+    localPlayers.forEach((player, id) => {
+      const other = remotePlayers.get(id);
+      const name = nameOf(id, player);
+      if (!other) {
+        notes.push(`${name} est sur cet appareil, pas sur le serveur`);
+        return;
+      }
+      if ((player.status || '') !== (other.status || '')) {
+        notes.push(`le statut de ${name} sur cet appareil : ${player.status || '—'}`);
+      }
+      if (Boolean(player.absent) !== Boolean(other.absent)) {
+        notes.push(`${name} est ${player.absent ? 'absent' : 'présent'} sur cet appareil`);
+      }
+    });
+    const localWeek =
+      (Array.isArray(local && local.weeks) &&
+        local.weeks.find((week) => week && week.id === local.currentWeekId)) ||
+      (Array.isArray(local && local.weeks) ? local.weeks[0] : null);
+    const remoteWeek =
+      (Array.isArray(remote && remote.weeks) &&
+        remote.weeks.find((week) => week && week.id === (remote.currentWeekId || local.currentWeekId))) ||
+      (Array.isArray(remote && remote.weeks) ? remote.weeks[0] : null);
+    const localScores = (localWeek && localWeek.scores) || {};
+    const remoteScores = (remoteWeek && remoteWeek.scores) || {};
+    ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi'].forEach((day) => {
+      Object.keys(localScores).forEach((id) => {
+        const left = localScores[id] && localScores[id].days ? localScores[id].days[day] : undefined;
+        const right = remoteScores[id] && remoteScores[id].days ? remoteScores[id].days[day] : undefined;
+        if (left === right || left == null || left === '') return;
+        const name = nameOf(id, localPlayers.get(id));
+        notes.push(`le ${day} de ${name} sur cet appareil : ${left}`);
+      });
+    });
+    const shown = notes.slice(0, 4);
+    if (notes.length > shown.length) shown.push('d’autres différences sont aussi dans la copie');
+    return shown;
+  }
+
+  function legacyWeek(store) {
+    const weeks = Array.isArray(store && store.weeks) ? store.weeks : [];
+    return weeks.find((week) => week && week.id === store.currentWeekId) || weeks[0] || null;
+  }
+
+  function legacyPlayerMap(store) {
+    return new Map(
+      (Array.isArray(store && store.players) ? store.players : [])
+        .filter((player) => player && player.id)
+        .map((player) => [player.id, player])
+    );
+  }
+
+  function legacyPlayerName(id, copyPlayers, currentPlayers) {
+    const copyPlayer = copyPlayers.get(id);
+    const currentPlayer = currentPlayers.get(id);
+    return (copyPlayer && copyPlayer.pseudo) || (currentPlayer && currentPlayer.pseudo) || id;
+  }
+
+  function legacyDayValue(week, playerId, day) {
+    const score = week && week.scores ? week.scores[playerId] : null;
+    const value = score && score.days ? score.days[day] : null;
+    if (value == null || value === '' || value === 0 || value === '0') return null;
+    return value;
+  }
+
+  function legacyContactLabel(week, playerId) {
+    const contact = week && week.vsContacts ? week.vsContacts[playerId] : null;
+    if (!contact) return '';
+    if (typeof contact === 'string') return contact;
+    if (contact.kind === 'coach') return 'coaching';
+    if (contact.kind === 'praise') return 'félicitations';
+    return contact.kind ? String(contact.kind) : '';
+  }
+
+  function listLegacyHoldReviewLines(copyStore, currentStore) {
+    const lines = [];
+    const copyPlayers = legacyPlayerMap(copyStore);
+    const currentPlayers = legacyPlayerMap(currentStore);
+    const ids = new Set([...copyPlayers.keys(), ...currentPlayers.keys()]);
+    ids.forEach((id) => {
+      const copyPlayer = copyPlayers.get(id);
+      const currentPlayer = currentPlayers.get(id);
+      const name = legacyPlayerName(id, copyPlayers, currentPlayers);
+      if (copyPlayer && !currentPlayer) {
+        lines.push(`${name} est dans la copie ancienne, pas dans les données actuelles.`);
+        return;
+      }
+      if (!copyPlayer && currentPlayer) {
+        lines.push(`${name} est dans les données actuelles, pas dans la copie ancienne.`);
+        return;
+      }
+      if ((copyPlayer.status || '') !== (currentPlayer.status || '')) {
+        lines.push(
+          `Le statut de ${name} : ${copyPlayer.status || '—'} dans la copie ancienne, ${currentPlayer.status || '—'} dans les données actuelles.`
+        );
+      }
+      if (Boolean(copyPlayer.absent) !== Boolean(currentPlayer.absent)) {
+        lines.push(
+          `${name} : ${copyPlayer.absent ? 'absent' : 'présent'} dans la copie ancienne, ${currentPlayer.absent ? 'absent' : 'présent'} dans les données actuelles.`
+        );
+      }
+    });
+    const copyWeek = legacyWeek(copyStore);
+    const currentWeek = legacyWeek(currentStore);
+    const scoreIds = new Set([
+      ...Object.keys((copyWeek && copyWeek.scores) || {}),
+      ...Object.keys((currentWeek && currentWeek.scores) || {}),
+    ]);
+    ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi'].forEach((day) => {
+      scoreIds.forEach((id) => {
+        const left = legacyDayValue(copyWeek, id, day);
+        const right = legacyDayValue(currentWeek, id, day);
+        if (left === right) return;
+        const name = legacyPlayerName(id, copyPlayers, currentPlayers);
+        lines.push(
+          `Le ${day} de ${name} : ${left == null ? 'non saisi' : left} dans la copie ancienne, ${right == null ? 'non saisi' : right} dans les données actuelles.`
+        );
+      });
+    });
+    scoreIds.forEach((id) => {
+      const left = legacyContactLabel(copyWeek, id);
+      const right = legacyContactLabel(currentWeek, id);
+      if (left === right || (!left && !right)) return;
+      const name = legacyPlayerName(id, copyPlayers, currentPlayers);
+      lines.push(
+        `Le contact VS de ${name} : ${left || 'aucun'} dans la copie ancienne, ${right || 'aucun'} dans les données actuelles.`
+      );
+    });
+    return lines;
+  }
+
+  function describeLegacyCommandCenterHold(currentStore) {
+    const hold = readLegacyCommandCenterHold();
+    if (!hold || !hold.store) return null;
+    const current = currentStore !== undefined ? currentStore : getLocalStore(COMMAND_CENTER_KEY);
+    return {
+      heldAt: hold.heldAt || '',
+      sendToServer: false,
+      readOnly: true,
+      lines: listLegacyHoldReviewLines(hold.store, current),
+    };
+  }
+
+  function escapeLegacyHoldText(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function formatLegacyHoldDate(iso) {
+    const date = new Date(iso);
+    if (!iso || Number.isNaN(date.getTime())) return '';
+    try {
+      return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function refreshLegacyHoldNotice() {
+    if (!global.document || typeof document.querySelectorAll !== 'function') return;
+    const visible = Boolean(readLegacyCommandCenterHold());
+    document.querySelectorAll('[data-legacy-hold-notice]').forEach((node) => {
+      node.hidden = !visible;
+      if (node.classList && typeof node.classList.toggle === 'function') {
+        node.classList.toggle('hidden', !visible);
+      }
+    });
+  }
+
+  function openLegacyHoldReview() {
+    if (!global.document || typeof document.getElementById !== 'function') return;
+    const dialog = document.getElementById('legacyHoldModal');
+    const list = document.getElementById('legacyHoldDiffList');
+    const empty = document.getElementById('legacyHoldEmpty');
+    const meta = document.getElementById('legacyHoldMeta');
+    if (!dialog || !list) return;
+    const report = describeLegacyCommandCenterHold();
+    if (!report) {
+      list.innerHTML = '';
+      if (empty) {
+        empty.hidden = false;
+        if (empty.classList && typeof empty.classList.remove === 'function') empty.classList.remove('hidden');
+        empty.textContent = 'Aucune copie ancienne n’est conservée sur cet appareil.';
+      }
+      return;
+    }
+    const when = formatLegacyHoldDate(report.heldAt);
+    if (meta) {
+      meta.textContent =
+        (when ? `Copie conservée le ${when}. ` : '') +
+        'Lecture seule. Elle reste sur cet appareil, elle n’est pas envoyée, et elle ne remplace pas les données actuelles.';
+    }
+    if (!report.lines.length) {
+      list.innerHTML = '';
+      if (empty) {
+        empty.hidden = false;
+        if (empty.classList && typeof empty.classList.remove === 'function') empty.classList.remove('hidden');
+        empty.textContent = 'Aucune différence avec les données actuelles.';
+      }
+    } else {
+      list.innerHTML = report.lines.map((line) => `<li>${escapeLegacyHoldText(line)}</li>`).join('');
+      if (empty) {
+        empty.hidden = true;
+        if (empty.classList && typeof empty.classList.add === 'function') empty.classList.add('hidden');
+      }
+    }
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.open = true;
+  }
+
+  function bindLegacyHoldReview() {
+    if (!global.document || typeof document.getElementById !== 'function') return;
+    if (typeof document.querySelectorAll === 'function') {
+      document.querySelectorAll('[data-open-legacy-hold]').forEach((button) => {
+        if (!button || (button.dataset && button.dataset.legacyHoldBound === '1')) return;
+        if (button.dataset) button.dataset.legacyHoldBound = '1';
+        if (typeof button.addEventListener === 'function') {
+          button.addEventListener('click', openLegacyHoldReview);
+        }
+      });
+    }
+    const dialog = document.getElementById('legacyHoldModal');
+    if (
+      dialog &&
+      dialog.dataset &&
+      dialog.dataset.legacyHoldBound !== '1' &&
+      typeof dialog.querySelectorAll === 'function'
+    ) {
+      dialog.dataset.legacyHoldBound = '1';
+      dialog.querySelectorAll('[data-close-modal]').forEach((button) => {
+        if (typeof button.addEventListener !== 'function') return;
+        button.addEventListener('click', () => {
+          if (typeof dialog.close === 'function') dialog.close();
+          else dialog.open = false;
+        });
+      });
+    }
+    refreshLegacyHoldNotice();
+  }
+
+  /**
+   * Ancien cache sans photo : on ne sait pas séparer une saisie en attente
+   * d’un simple retard. La copie est gardée à part, puis l’avertissement
+   * est montré avant tout remplacement par le serveur.
+   * Refus ou copie impossible : on ne remplace pas, et on n’envoie pas.
+   */
+  async function parkLegacyCommandCenterBeforeReplace(remoteCc) {
+    const basis = readCommandCenterBasis();
+    if (basis.unsynced && (basis.base || basis.captureFailed)) {
+      return { needed: false, blocked: false, held: false };
+    }
+    const local = getLocalStore(COMMAND_CENTER_KEY);
+    if (local == null || remoteCc == null || sameStoreValue(local, remoteCc)) {
+      return { needed: false, blocked: false, held: false };
+    }
+    const existing = readLegacyCommandCenterHold();
+    const alreadyHeld = existing && existing.store && sameStoreValue(existing.store, local);
+    const saved = alreadyHeld ? { ok: true } : writeLegacyCommandCenterHold(local);
+    if (saved.ok) refreshLegacyHoldNotice();
+    if (!saved.ok) {
+      if (global.AppUI && typeof global.AppUI.toast === 'function') {
+        global.AppUI.toast(
+          'La copie de cet appareil n’a pas pu être mise de côté. Elle n’a pas été remplacée et elle ne sera pas envoyée.'
+        );
+      }
+      return { needed: true, blocked: true, held: false };
+    }
+    let accepted = false;
+    if (global.AppUI && typeof global.AppUI.confirm === 'function') {
+      const preview = previewLegacyDifference(local, remoteCc);
+      const previewText = preview.length
+        ? `À noter avant de continuer :\n${preview.map((line) => `• ${line}`).join('\n')}\n\n`
+        : '';
+      accepted = await global.AppUI.confirm({
+        title: 'Copie ancienne de cet appareil',
+        message:
+          'Cet appareil a encore une copie de la liste des membres et du VS faite avec l’ancienne version.\n\n' +
+          'On ne peut pas savoir si elle contient une saisie jamais envoyée, ou seulement un retard.\n\n' +
+          previewText +
+          'Cette copie reste sur cet appareil pour pouvoir être récupérée. Elle ne sera pas envoyée aux autres R4.\n\n' +
+          'Si vous refusez, l’écran garde cette copie. Si vous acceptez, l’écran affichera les données actuelles du serveur.',
+        confirmLabel: 'Afficher les données du serveur',
+      });
+    }
+    if (!accepted) {
+      return { needed: true, blocked: true, held: true };
+    }
+    return { needed: true, blocked: false, held: true };
   }
 
   function parseStoreValue(raw) {
@@ -484,7 +931,165 @@
       : { ...remoteIntent };
   }
 
-  function mergeSameWeekContent(remoteWeek, localWeek) {
+  function mergeDayValue(remoteScore, localScore, baseScore, day, playerId) {
+    const remoteDays = remoteScore && remoteScore.days ? remoteScore.days : {};
+    const localDays = localScore && localScore.days ? localScore.days : {};
+    const baseDays = baseScore && baseScore.days ? baseScore.days : {};
+    const remoteBrackets = remoteScore && remoteScore.dayBrackets ? remoteScore.dayBrackets : {};
+    const localBrackets = localScore && localScore.dayBrackets ? localScore.dayBrackets : {};
+    const baseBrackets = baseScore && baseScore.dayBrackets ? baseScore.dayBrackets : {};
+    const localChanged =
+      !sameStoreValue(localDays[day], baseDays[day]) ||
+      !sameStoreValue(localBrackets[day], baseBrackets[day]);
+    const remoteChanged =
+      !sameStoreValue(remoteDays[day], baseDays[day]) ||
+      !sameStoreValue(remoteBrackets[day], baseBrackets[day]);
+    const localAt = parseIsoMs(localScore && localScore.dayUpdatedAt && localScore.dayUpdatedAt[day]);
+    const remoteAt = parseIsoMs(remoteScore && remoteScore.dayUpdatedAt && remoteScore.dayUpdatedAt[day]);
+    if (!localChanged) {
+      return {
+        points: remoteDays[day],
+        bracket: remoteBrackets[day],
+        at: remoteScore && remoteScore.dayUpdatedAt ? remoteScore.dayUpdatedAt[day] : undefined,
+      };
+    }
+    if (!remoteChanged) {
+      return {
+        points: localDays[day],
+        bracket: localBrackets[day],
+        at: localScore && localScore.dayUpdatedAt ? localScore.dayUpdatedAt[day] : undefined,
+      };
+    }
+    if (localAt > remoteAt && localAt > 0) {
+      return {
+        points: localDays[day],
+        bracket: localBrackets[day],
+        at: localScore.dayUpdatedAt[day],
+      };
+    }
+    if (
+      !sameStoreValue(localDays[day], remoteDays[day]) ||
+      !sameStoreValue(localBrackets[day], remoteBrackets[day])
+    ) {
+      noteCommandCenterConflict(`le score du ${day} de ${memberName(playerId)}`);
+    }
+    return {
+      points: remoteDays[day],
+      bracket: remoteBrackets[day],
+      at: remoteScore && remoteScore.dayUpdatedAt ? remoteScore.dayUpdatedAt[day] : undefined,
+    };
+  }
+
+  function mergeScoresWithBasis(remoteScores, localScores, baseScores) {
+    const remote = remoteScores && typeof remoteScores === 'object' ? remoteScores : {};
+    const local = localScores && typeof localScores === 'object' ? localScores : {};
+    const base = baseScores && typeof baseScores === 'object' ? baseScores : {};
+    const ids = new Set([...Object.keys(remote), ...Object.keys(local), ...Object.keys(base)]);
+    const scores = {};
+    ids.forEach((playerId) => {
+      const remoteScore = remote[playerId];
+      const localScore = local[playerId];
+      const baseScore = base[playerId];
+      if (!localScore) {
+        if (remoteScore) scores[playerId] = cloneJson(remoteScore);
+        return;
+      }
+      if (!remoteScore) {
+        scores[playerId] = cloneJson(localScore);
+        return;
+      }
+      const chosen = cloneJson(remoteScore) || cloneJson(localScore) || {};
+      if (!chosen.days || typeof chosen.days !== 'object') chosen.days = {};
+      if (!chosen.dayBrackets || typeof chosen.dayBrackets !== 'object') chosen.dayBrackets = {};
+      if (!chosen.dayUpdatedAt || typeof chosen.dayUpdatedAt !== 'object') chosen.dayUpdatedAt = {};
+      VS_DAY_KEYS.forEach((day) => {
+        const dayValue = mergeDayValue(remoteScore, localScore, baseScore, day, playerId);
+        if (dayValue.points === undefined) delete chosen.days[day];
+        else chosen.days[day] = dayValue.points;
+        if (dayValue.bracket === undefined) delete chosen.dayBrackets[day];
+        else chosen.dayBrackets[day] = dayValue.bracket;
+        if (dayValue.at) chosen.dayUpdatedAt[day] = dayValue.at;
+        else delete chosen.dayUpdatedAt[day];
+      });
+      if (!Object.keys(chosen.dayUpdatedAt).length) delete chosen.dayUpdatedAt;
+      scores[playerId] = chosen;
+    });
+    return scores;
+  }
+
+  function mergeContactsWithBasis(remoteContacts, localContacts, baseContacts) {
+    const remote = remoteContacts && typeof remoteContacts === 'object' ? remoteContacts : {};
+    const local = localContacts && typeof localContacts === 'object' ? localContacts : {};
+    const base = baseContacts && typeof baseContacts === 'object' ? baseContacts : {};
+    const ids = new Set([...Object.keys(remote), ...Object.keys(local), ...Object.keys(base)]);
+    const contacts = {};
+    ids.forEach((playerId) => {
+      const remoteContact = remote[playerId];
+      const localContact = local[playerId];
+      const baseContact = base[playerId];
+      if (localContact == null) {
+        if (remoteContact) contacts[playerId] = cloneJson(remoteContact);
+        return;
+      }
+      if (sameStoreValue(localContact, baseContact)) {
+        if (remoteContact) contacts[playerId] = cloneJson(remoteContact);
+        return;
+      }
+      if (sameStoreValue(remoteContact, baseContact)) {
+        if (localContact) contacts[playerId] = cloneJson(localContact);
+        return;
+      }
+      const localAt = parseIsoMs(localContact && localContact.at);
+      const remoteAt = parseIsoMs(remoteContact && remoteContact.at);
+      if (localAt > remoteAt && localAt > 0) {
+        contacts[playerId] = cloneJson(localContact);
+        return;
+      }
+      if (remoteContact) contacts[playerId] = cloneJson(remoteContact);
+      if (!sameStoreValue(localContact, remoteContact)) {
+        noteCommandCenterConflict(`le contact VS de ${memberName(playerId)}`);
+      }
+    });
+    return contacts;
+  }
+
+  function mergeSameWeekContentWithBasis(remoteWeek, localWeek, baseWeek) {
+    const scores = mergeScoresWithBasis(remoteWeek.scores, localWeek.scores, baseWeek && baseWeek.scores);
+    const vsContacts = mergeContactsWithBasis(
+      remoteWeek.vsContacts,
+      localWeek.vsContacts,
+      baseWeek && baseWeek.vsContacts
+    );
+    const merged = cloneJson(remoteWeek);
+    Object.keys({ ...remoteWeek, ...localWeek, ...(baseWeek || {}) }).forEach((key) => {
+      if (key === 'scores' || key === 'vsContacts' || key === 'id') return;
+      const remoteVal = remoteWeek[key];
+      const localVal = localWeek[key];
+      const baseVal = baseWeek ? baseWeek[key] : undefined;
+      if (sameStoreValue(localVal, baseVal)) {
+        if (remoteVal === undefined) delete merged[key];
+        else merged[key] = cloneJson(remoteVal);
+        return;
+      }
+      if (sameStoreValue(remoteVal, baseVal)) {
+        if (localVal === undefined) delete merged[key];
+        else merged[key] = cloneJson(localVal);
+        return;
+      }
+      if (remoteVal === undefined) delete merged[key];
+      else merged[key] = cloneJson(remoteVal);
+      if (!sameStoreValue(localVal, remoteVal)) noteCommandCenterConflict(`la semaine VS (${key})`);
+    });
+    merged.id = remoteWeek.id;
+    merged.scores = scores;
+    merged.vsContacts = vsContacts;
+    return merged;
+  }
+
+  function mergeSameWeekContent(remoteWeek, localWeek, baseWeek) {
+    if (baseWeek && baseWeek.id && remoteWeek && baseWeek.id === remoteWeek.id) {
+      return mergeSameWeekContentWithBasis(remoteWeek, localWeek, baseWeek);
+    }
     const remoteScores =
       remoteWeek.scores && typeof remoteWeek.scores === 'object' ? remoteWeek.scores : {};
     const localScores =
@@ -559,7 +1164,7 @@
    * un closeIntent explicite autorise la clôture ; une semaine déjà clôturée
    * ne peut pas être ressuscitée par un vieux cache.
    */
-  function mergeVsWeekState(remoteStore, localStore) {
+  function mergeVsWeekState(remoteStore, localStore, baseStore) {
     const remoteWeek = getActiveVsWeek(remoteStore);
     const localWeek = getActiveVsWeek(localStore);
     const remoteIntent = getCloseIntent(remoteStore);
@@ -607,7 +1212,9 @@
 
     // Même semaine : fusionner le contenu (scores / contacts).
     if (localWeek.id === remoteWeek.id) {
-      return withLifecycle(weekPayload(mergeSameWeekContent(remoteWeek, localWeek)));
+      const baseWeek = baseStore ? getActiveVsWeek(baseStore) : null;
+      const basisWeek = baseWeek && baseWeek.id === remoteWeek.id ? baseWeek : null;
+      return withLifecycle(weekPayload(mergeSameWeekContent(remoteWeek, localWeek, basisWeek)));
     }
 
     // Deux semaines différentes : createdAt le plus récent ; égalité → remote.
@@ -668,7 +1275,349 @@
     return next;
   }
 
+  function playerStatusSame(left, right) {
+    if (!left && !right) return true;
+    if (!left || !right) return false;
+    return (
+      left.status === right.status &&
+      (left.leftAt || null) === (right.leftAt || null) &&
+      (left.statusChangedAt || '') === (right.statusChangedAt || '')
+    );
+  }
+
+  function resolveAbsentWithBasis(remotePlayer, localPlayer, basePlayer) {
+    const remoteAbsent = Boolean(remotePlayer && remotePlayer.absent);
+    const localAbsent = Boolean(localPlayer && localPlayer.absent);
+    const baseAbsent = Boolean(basePlayer && basePlayer.absent);
+    const remoteAt = remotePlayer && remotePlayer.absentChangedAt;
+    const localAt = localPlayer && localPlayer.absentChangedAt;
+    const baseAt = basePlayer && basePlayer.absentChangedAt;
+    const localChanged = localAbsent !== baseAbsent || (localAt || '') !== (baseAt || '');
+    const remoteChanged = remoteAbsent !== baseAbsent || (remoteAt || '') !== (baseAt || '');
+    if (!localChanged) {
+      return { absent: remoteAbsent, absentChangedAt: remoteAt || undefined };
+    }
+    if (!remoteChanged) {
+      return { absent: localAbsent, absentChangedAt: localAt || undefined };
+    }
+    const localMs = parseIsoMs(localAt);
+    const remoteMs = parseIsoMs(remoteAt);
+    if (localMs > remoteMs && localMs > 0) {
+      return { absent: localAbsent, absentChangedAt: localAt };
+    }
+    if (localAbsent !== remoteAbsent) {
+      noteCommandCenterConflict(`l’absence de ${memberName(localPlayer)}`);
+    }
+    return { absent: remoteAbsent, absentChangedAt: remoteAt || undefined };
+  }
+
+  function mergePlayerWithBasis(remotePlayer, localPlayer, basePlayer, options) {
+    if (!localPlayer) return stripPlayerSyncMeta(cloneJson(remotePlayer));
+    if (!remotePlayer) return stripPlayerSyncMeta(cloneJson(localPlayer));
+    const base = basePlayer || {};
+    const merged = cloneJson(remotePlayer);
+    const clears =
+      localPlayer.syncClears && typeof localPlayer.syncClears === 'object' ? localPlayer.syncClears : {};
+    const skip = new Set([
+      'id',
+      'syncClears',
+      'status',
+      'leftAt',
+      'statusChangedAt',
+      'absent',
+      'absentChangedAt',
+    ]);
+    const keys = new Set([
+      ...Object.keys(remotePlayer),
+      ...Object.keys(localPlayer),
+      ...Object.keys(base),
+    ]);
+    keys.forEach((key) => {
+      if (skip.has(key)) return;
+      const remoteVal = remotePlayer[key];
+      const localVal = localPlayer[key];
+      const baseVal = base[key];
+      const localChanged = !sameStoreValue(localVal, baseVal);
+      const remoteChanged = !sameStoreValue(remoteVal, baseVal);
+      if (!localChanged) {
+        if (remoteVal === undefined) delete merged[key];
+        else merged[key] = cloneJson(remoteVal);
+        return;
+      }
+      if (!remoteChanged) {
+        if (
+          PROTECTED_NONEMPTY_PLAYER_FIELDS.includes(key) &&
+          isEmptyFieldValue(localVal) &&
+          !isEmptyFieldValue(remoteVal) &&
+          !clears[key]
+        ) {
+          merged[key] = remoteVal;
+          return;
+        }
+        if (localVal === undefined) delete merged[key];
+        else merged[key] = cloneJson(localVal);
+        return;
+      }
+      if (remoteVal === undefined) delete merged[key];
+      else merged[key] = cloneJson(remoteVal);
+      if (!sameStoreValue(localVal, remoteVal)) {
+        noteCommandCenterConflict(`la fiche de ${memberName(localPlayer)} (${key})`);
+      }
+    });
+
+    if (playerStatusSame(localPlayer, base)) {
+      merged.status = remotePlayer.status;
+      merged.leftAt = remotePlayer.status === 'Actif' ? null : remotePlayer.leftAt || null;
+      if (remotePlayer.statusChangedAt) merged.statusChangedAt = remotePlayer.statusChangedAt;
+      else delete merged.statusChangedAt;
+    } else {
+      let record = mergePlayerRecord(remotePlayer, localPlayer);
+      if (options && options.preferServerUndatedStatus) {
+        record = applyServerUndatedStatus(record, remotePlayer, localPlayer);
+      }
+      merged.status = record.status;
+      if (record.leftAt) merged.leftAt = record.leftAt;
+      else if (record.status === 'Actif') merged.leftAt = null;
+      else merged.leftAt = record.leftAt || null;
+      if (record.statusChangedAt) merged.statusChangedAt = record.statusChangedAt;
+      else delete merged.statusChangedAt;
+    }
+
+    const absent = resolveAbsentWithBasis(remotePlayer, localPlayer, basePlayer);
+    merged.absent = absent.absent;
+    if (absent.absentChangedAt) merged.absentChangedAt = absent.absentChangedAt;
+    else delete merged.absentChangedAt;
+    return stripPlayerSyncMeta(merged);
+  }
+
+  function mergePlayersWithBasis(remoteStore, localStore, baseStore, options) {
+    const forgotten = forgottenPlayerIds(remoteStore, localStore);
+    Object.keys(tombstoneMap(baseStore)).forEach((id) => forgotten.add(id));
+    const baseIntent = explicitDeleteIntent(baseStore);
+    if (baseIntent) forgotten.add(baseIntent.playerId);
+    const remotePlayers = Array.isArray(remoteStore && remoteStore.players) ? remoteStore.players : [];
+    const localPlayers = Array.isArray(localStore && localStore.players) ? localStore.players : [];
+    const basePlayers = Array.isArray(baseStore && baseStore.players) ? baseStore.players : [];
+    const remoteById = new Map(remotePlayers.filter((p) => p && p.id).map((p) => [p.id, p]));
+    const localById = new Map(localPlayers.filter((p) => p && p.id).map((p) => [p.id, p]));
+    const baseById = new Map(basePlayers.filter((p) => p && p.id).map((p) => [p.id, p]));
+    const ids = new Set([...remoteById.keys(), ...localById.keys(), ...baseById.keys()]);
+    const mergedPlayers = [];
+    ids.forEach((id) => {
+      if (forgotten.has(id)) return;
+      const remoteP = remoteById.get(id);
+      const localP = localById.get(id);
+      const baseP = baseById.get(id);
+      if (!localP && !remoteP) return;
+      if (!localP) {
+        mergedPlayers.push(stripPlayerSyncMeta(cloneJson(remoteP)));
+        return;
+      }
+      if (!remoteP) {
+        if (baseP && playerStatusSame(localP, baseP) && sameStoreValue(localP, baseP)) return;
+        mergedPlayers.push(stripPlayerSyncMeta(cloneJson(localP)));
+        return;
+      }
+      mergedPlayers.push(mergePlayerWithBasis(remoteP, localP, baseP, options));
+    });
+    localPlayers.forEach((localP) => {
+      if (!localP || localP.id) return;
+      mergedPlayers.push(stripPlayerSyncMeta(localP));
+    });
+    return mergedPlayers;
+  }
+
+  const CC_BASIS_HANDLED_KEYS = new Set([
+    'players',
+    'weeks',
+    'currentWeekId',
+    'vsWeekLifecycle',
+    'playerFollowUpNotes',
+    'playerFollowUpArchives',
+    'playerFollowUpAutoSuppress',
+    'playerWeeklyFlags',
+    'vsWeekAudit',
+    'vsUnderDaysLedger',
+    'deletedPlayers',
+    'playerDeleteIntent',
+    'globalPowerAudit',
+    'playerFollowUps',
+  ]);
+
+  function mergeCommandCenterWithBasis(remoteStore, localStore, baseStore, options) {
+    if (!localStore) return remoteStore == null ? null : cloneJson(remoteStore);
+    if (!remoteStore) return cloneJson(localStore);
+    const merged = {};
+    const keys = new Set([
+      ...Object.keys(remoteStore),
+      ...Object.keys(localStore),
+      ...Object.keys(baseStore || {}),
+    ]);
+    keys.forEach((key) => {
+      if (CC_BASIS_HANDLED_KEYS.has(key)) return;
+      const remoteVal = remoteStore[key];
+      const localVal = localStore[key];
+      const baseVal = baseStore ? baseStore[key] : undefined;
+      if (sameStoreValue(localVal, baseVal)) {
+        if (remoteVal !== undefined) merged[key] = cloneJson(remoteVal);
+        return;
+      }
+      if (sameStoreValue(remoteVal, baseVal)) {
+        if (localVal !== undefined) merged[key] = cloneJson(localVal);
+        return;
+      }
+      if (remoteVal !== undefined) merged[key] = cloneJson(remoteVal);
+      if (!sameStoreValue(localVal, remoteVal)) noteCommandCenterConflict(`le champ ${key}`);
+    });
+
+    merged.players = mergePlayersWithBasis(remoteStore, localStore, baseStore, options);
+    const weekState = mergeVsWeekState(remoteStore, localStore, baseStore);
+    merged.playerFollowUpNotes = mergePlayerFollowUpNotesField(
+      remoteStore.playerFollowUpNotes,
+      localStore.playerFollowUpNotes
+    );
+    merged.playerFollowUpArchives = mergePlayerFollowUpArchivesField(
+      remoteStore.playerFollowUpArchives,
+      localStore.playerFollowUpArchives
+    );
+    merged.playerFollowUpAutoSuppress = mergePlayerFollowUpAutoSuppressField(
+      remoteStore.playerFollowUpAutoSuppress,
+      localStore.playerFollowUpAutoSuppress
+    );
+    merged.playerWeeklyFlags = mergePlayerWeeklyFlagsField(
+      remoteStore.playerWeeklyFlags,
+      localStore.playerWeeklyFlags
+    );
+    merged.weeks = weekState.weeks;
+    merged.currentWeekId = weekState.currentWeekId;
+    merged.vsWeekLifecycle = weekState.vsWeekLifecycle;
+    merged.vsWeekAudit = mergeVsWeekAuditField(remoteStore.vsWeekAudit, localStore.vsWeekAudit);
+    if (global.ROSModels && typeof ROSModels.mergeVsUnderDaysLedger === 'function') {
+      const ledger = ROSModels.mergeVsUnderDaysLedger(
+        remoteStore.vsUnderDaysLedger,
+        localStore.vsUnderDaysLedger
+      );
+      if (ledger.length) merged.vsUnderDaysLedger = ledger;
+    }
+    const deletedPlayers = { ...tombstoneMap(localStore), ...tombstoneMap(remoteStore) };
+    if (Object.keys(deletedPlayers).length) merged.deletedPlayers = deletedPlayers;
+    const deleteIntent = explicitDeleteIntent(localStore);
+    if (deleteIntent) merged.playerDeleteIntent = deleteIntent;
+    const remoteFollowUps = remoteStore.playerFollowUps;
+    const localFollowUps = Object.prototype.hasOwnProperty.call(localStore, 'playerFollowUps')
+      ? localStore.playerFollowUps
+      : remoteFollowUps;
+    if (global.ROSModels && typeof ROSModels.reconcilePlayerFollowUps === 'function') {
+      merged.playerFollowUps = ROSModels.reconcilePlayerFollowUps(
+        localFollowUps,
+        remoteFollowUps,
+        merged.playerFollowUpArchives
+      );
+    }
+    return merged;
+  }
+
+  function mergeScoresStrict(remoteScores, localScores) {
+    const remote = remoteScores && typeof remoteScores === 'object' ? remoteScores : {};
+    const local = localScores && typeof localScores === 'object' ? localScores : {};
+    const ids = new Set([...Object.keys(remote), ...Object.keys(local)]);
+    const scores = {};
+    ids.forEach((playerId) => {
+      const remoteScore = remote[playerId] || {};
+      const localScore = local[playerId] || {};
+      const chosen = cloneJson(remoteScore);
+      if (!chosen || typeof chosen !== 'object') return;
+      if (!chosen.days) chosen.days = {};
+      if (!chosen.dayBrackets) chosen.dayBrackets = {};
+      if (!chosen.dayUpdatedAt || typeof chosen.dayUpdatedAt !== 'object') chosen.dayUpdatedAt = {};
+      let keptLocalDay = false;
+      VS_DAY_KEYS.forEach((day) => {
+        const localAt = parseIsoMs(localScore.dayUpdatedAt && localScore.dayUpdatedAt[day]);
+        const remoteAt = parseIsoMs(remoteScore.dayUpdatedAt && remoteScore.dayUpdatedAt[day]);
+        if (localAt > remoteAt && localAt > 0) {
+          chosen.days[day] = localScore.days ? localScore.days[day] : chosen.days[day];
+          if (localScore.dayBrackets) chosen.dayBrackets[day] = localScore.dayBrackets[day];
+          chosen.dayUpdatedAt[day] = localScore.dayUpdatedAt[day];
+          keptLocalDay = true;
+        }
+      });
+      if (!remote[playerId] && !keptLocalDay) return;
+      if (!Object.keys(chosen.dayUpdatedAt).length) delete chosen.dayUpdatedAt;
+      scores[playerId] = chosen;
+    });
+    return scores;
+  }
+
+  /**
+   * Secours si la photo d’avant saisie n’a pas pu être gardée.
+   * Seuls statut, absence et score de jour plus récents que le serveur partent.
+   * Le reste du cache local ne réécrit pas le distant.
+   */
+  function mergeCommandCenterStrict(remoteStore, localStore) {
+    if (!localStore) return remoteStore == null ? null : cloneJson(remoteStore);
+    if (!remoteStore) return cloneJson(localStore);
+    const merged = cloneJson(remoteStore);
+    const remotePlayers = Array.isArray(remoteStore.players) ? remoteStore.players : [];
+    const localPlayers = Array.isArray(localStore.players) ? localStore.players : [];
+    const localById = new Map(localPlayers.filter((p) => p && p.id).map((p) => [p.id, p]));
+    merged.players = remotePlayers.filter((p) => p && p.id).map((remoteP) => {
+      const localP = localById.get(remoteP.id);
+      const next = stripPlayerSyncMeta(cloneJson(remoteP));
+      if (!localP) return next;
+      const localStatusMs = parseIsoMs(localP.statusChangedAt);
+      const remoteStatusMs = parseIsoMs(remoteP.statusChangedAt);
+      if (localStatusMs > remoteStatusMs && localStatusMs > 0 && localP.status !== remoteP.status) {
+        next.status = localP.status;
+        next.leftAt = localP.status === 'Actif' ? null : localP.leftAt || null;
+        next.statusChangedAt = localP.statusChangedAt;
+      }
+      const localAbsentMs = parseIsoMs(localP.absentChangedAt);
+      const remoteAbsentMs = parseIsoMs(remoteP.absentChangedAt);
+      if (localAbsentMs > remoteAbsentMs && localAbsentMs > 0 && Boolean(localP.absent) !== Boolean(remoteP.absent)) {
+        next.absent = Boolean(localP.absent);
+        next.absentChangedAt = localP.absentChangedAt;
+      }
+      return next;
+    });
+    const weekState = mergeVsWeekState(remoteStore, localStore);
+    merged.weeks = weekState.weeks;
+    merged.currentWeekId = weekState.currentWeekId;
+    merged.vsWeekLifecycle = weekState.vsWeekLifecycle;
+    if (merged.weeks && merged.weeks[0] && remoteStore.weeks) {
+      const remoteWeek = getActiveVsWeek(remoteStore);
+      const localWeek = getActiveVsWeek(localStore);
+      if (remoteWeek && localWeek && remoteWeek.id === localWeek.id && merged.weeks[0].id === remoteWeek.id) {
+        merged.weeks[0].scores = mergeScoresStrict(remoteWeek.scores, localWeek.scores);
+      }
+    }
+    return merged;
+  }
+
+  function mergeCommandCenterForSync(remoteStore, localStore, options) {
+    commandCenterMergeConflicts = [];
+    conflictNames.clear();
+    rememberConflictNames(remoteStore);
+    rememberConflictNames(localStore);
+    const basis = readCommandCenterBasis();
+    let merged;
+    if (basis.unsynced && basis.base) {
+      merged = mergeCommandCenterStore(remoteStore, localStore, { ...(options || {}), basis: basis.base });
+    } else if (basis.unsynced && basis.captureFailed) {
+      merged = mergeCommandCenterStrict(remoteStore, localStore);
+      noteCommandCenterConflict('la photo de comparaison, qui n’a pas pu être enregistrée');
+    } else if (options && options.basis) {
+      merged = mergeCommandCenterStore(remoteStore, localStore, options);
+    } else {
+      merged = mergeCommandCenterStore(remoteStore, localStore, options);
+    }
+    flushCommandCenterConflictToast();
+    return merged;
+  }
+
   function mergeCommandCenterStore(remoteStore, localStore, options) {
+    if (options && options.basis && typeof options.basis === 'object' && !Array.isArray(options.basis)) {
+      return mergeCommandCenterWithBasis(remoteStore, localStore, options.basis, options);
+    }
     const forgotten = forgottenPlayerIds(remoteStore, localStore);
     if (!localStore) return withoutForgottenPlayers(remoteStore, forgotten);
     if (!remoteStore) return withoutForgottenPlayers(localStore, forgotten);
@@ -865,11 +1814,18 @@
     if (!stores || typeof stores !== 'object') return stores;
     if (Object.prototype.hasOwnProperty.call(stores, BACKUPS_KEY)) delete stores[BACKUPS_KEY];
     if (Object.prototype.hasOwnProperty.call(stores, MODULE_HOLD_KEY)) delete stores[MODULE_HOLD_KEY];
+    if (Object.prototype.hasOwnProperty.call(stores, CC_LEGACY_HOLD_KEY)) delete stores[CC_LEGACY_HOLD_KEY];
+    if (Object.prototype.hasOwnProperty.call(stores, CC_BASIS_KEY)) delete stores[CC_BASIS_KEY];
     return stores;
   }
 
   function isUnsyncedSideKey(key) {
-    return key === BACKUPS_KEY || key === MODULE_HOLD_KEY;
+    return (
+      key === BACKUPS_KEY ||
+      key === MODULE_HOLD_KEY ||
+      key === CC_LEGACY_HOLD_KEY ||
+      key === CC_BASIS_KEY
+    );
   }
 
   function canonicalStoreString(value) {
@@ -920,8 +1876,8 @@
    * ros6_state.version ne dit pas quel module a changé : une écriture Train
    * ne rend pas la Ruche plus récente.
    *
-   * - révision distante plus haute : le store distant gagne (centre de commandement :
-   *   on fusionne quand même les champs locaux puis on réécrit avec la nouvelle révision) ;
+   * - révision distante plus haute : le store distant est adopté. Le centre de
+   *   commandement n’est renvoyé que s’il existe une saisie locale non acquittée ;
    * - révision identique et contenu différent : édition locale non poussée ;
    * - navigateur jamais synchronisé (meta version 0) face à une base déjà utilisée :
    *   on adopte le distant, on ne pousse pas un cache vide.
@@ -957,7 +1913,13 @@
     differing.forEach((key) => {
       const remoteRev = storeRevision(remoteRevisions, key);
       const localRev = storeRevision(localRevisions, key);
-      if (remoteRev > localRev && key !== COMMAND_CENTER_KEY) {
+      if (remoteRev > localRev) {
+        // Une révision distante plus haute n’est réécrite que si CE navigateur
+        // a une saisie de centre de commandement encore non acquittée.
+        if (key === COMMAND_CENTER_KEY && readCommandCenterBasis().unsynced) {
+          pushKeys.push(key);
+          return;
+        }
         adoptRemoteKeys.push(key);
         return;
       }
@@ -1080,33 +2042,37 @@
     return { ok: true, held: moduleKeys.filter((key) => kept[key] != null) };
   }
 
-  function applyListedStores(data, keys) {
+  function applyListedStores(data, keys, skipKeys) {
     const source = data && data.stores ? data.stores : {};
+    const skip = new Set(skipKeys || []);
     const stores = {};
     (Array.isArray(keys) ? keys : []).forEach((key) => {
-      if (!STORE_KEYS.includes(key) || source[key] == null) return;
+      if (!STORE_KEYS.includes(key) || source[key] == null || skip.has(key)) return;
       stores[key] = source[key];
     });
     if (!Object.keys(stores).length) return;
-    applyStoresToLocal({ stores });
+    applyStoresToLocal({ stores }, { skipKeys: [...skip] });
   }
 
   /**
    * Applique le plan sans pousser un module ambigu.
    * Les clés de push ne sont pas réécrites ici.
    */
-  function prepareBootstrapStores(remoteData, plan, versions) {
-    const adopt = Array.isArray(plan?.adoptRemoteKeys) ? plan.adoptRemoteKeys.slice() : [];
+  function prepareBootstrapStores(remoteData, plan, versions, options) {
+    const skip = new Set((options && options.skipKeys) || []);
+    const adopt = (Array.isArray(plan?.adoptRemoteKeys) ? plan.adoptRemoteKeys.slice() : []).filter(
+      (key) => !skip.has(key)
+    );
     const requestedPush = (Array.isArray(plan?.pushKeys) ? plan.pushKeys : []).filter((key) =>
       STORE_KEYS.includes(key)
     );
     const hold = holdModuleStores(adopt, versions || {});
     let adopted = [];
     if (hold.ok && plan?.mode === 'apply-remote') {
-      applyStoresToLocal(remoteData || { stores: {} });
+      applyStoresToLocal(remoteData || { stores: {} }, { skipKeys: [...skip] });
       adopted = adopt.slice();
     } else if (hold.ok && adopt.length) {
-      applyListedStores(remoteData, adopt);
+      applyListedStores(remoteData, adopt, [...skip]);
       adopted = adopt.slice();
     }
     const leftLocal = hold.ok ? [] : adopt.filter((key) => MODULE_STORE_KEYS.includes(key));
@@ -1243,7 +2209,7 @@
       const local = localStores[key];
       if (local == null) return;
       if (key === COMMAND_CENTER_KEY) {
-        stores[key] = mergeCommandCenterStore(remoteStores[key], local);
+        stores[key] = mergeCommandCenterForSync(remoteStores[key], local);
       } else if (key === RUCHE_KEY) {
         stores[key] = mergeRucheStore(remoteStores[key], local);
       } else if (key === MUSE_KEY) {
@@ -1278,7 +2244,7 @@
       if (dirty.has(key)) {
         const local = getLocalStore(key);
         if (key === COMMAND_CENTER_KEY) {
-          stores[key] = mergeCommandCenterStore(remoteStores[key], local, options);
+          stores[key] = mergeCommandCenterForSync(remoteStores[key], local, options);
         } else if (key === RUCHE_KEY) {
           stores[key] =
             local != null ? mergeRucheStore(remoteStores[key], local) : cloneJson(remoteStores[key]);
@@ -1370,13 +2336,14 @@
    * Écrit uniquement les stores métier synchronisées.
    * Ne touche jamais à ros6_backups_v1 (local uniquement).
    */
-  function applyStoresToLocal(data, { reload = false } = {}) {
+  function applyStoresToLocal(data, { reload = false, skipKeys = [] } = {}) {
     suppressPush = true;
     const quotaFailures = [];
+    const skip = new Set(skipKeys || []);
     try {
       const stores = data && data.stores ? data.stores : {};
       STORE_KEYS.forEach((key) => {
-        if (isUnsyncedSideKey(key)) return;
+        if (isUnsyncedSideKey(key) || skip.has(key)) return;
         if (!(key in stores) || stores[key] == null) return;
         let value = stores[key];
         if (key === RUCHE_KEY && value && typeof value === 'object') {
@@ -1483,6 +2450,9 @@
       const localStore = rebased.stores ? rebased.stores[key] : null;
       if (canonicalStoreString(localStore) === canonicalStoreString(remoteStore)) {
         pendingDirty.delete(key);
+        if (key === COMMAND_CENTER_KEY) {
+          ackCommandCenterBasis(storeRevision(result && result.revisions, COMMAND_CENTER_KEY));
+        }
       }
     });
   }
@@ -1574,13 +2544,38 @@
         const localStoresMap = collectLocalStoresMap();
         const keysToWrite = force && allStores ? new Set(STORE_KEYS) : new Set(dirtyForPush);
         if (museCloudBlocked) keysToWrite.delete(MUSE_KEY);
+        let commandCenterHeldBack = false;
+        if (!force && keysToWrite.has(COMMAND_CENTER_KEY)) {
+          const basisNow = readCommandCenterBasis();
+          const remoteCcRev = storeRevision(remote.store_revisions, COMMAND_CENTER_KEY);
+          const ackedCcRev = storeRevision(ackedRevisions, COMMAND_CENTER_KEY);
+          const remoteCc =
+            remote.data && remote.data.stores ? remote.data.stores[COMMAND_CENTER_KEY] : null;
+          if (!basisNow.unsynced && remoteCcRev > ackedCcRev) {
+            keysToWrite.delete(COMMAND_CENTER_KEY);
+            pendingDirty.delete(COMMAND_CENTER_KEY);
+            if (remoteCc) {
+              const park = await parkLegacyCommandCenterBeforeReplace(remoteCc);
+              commandCenterHeldBack = park.blocked;
+              if (!park.blocked) {
+                applyStoresToLocal({ stores: { [COMMAND_CENTER_KEY]: remoteCc } });
+                hydrateAppFromLocalCache();
+                ackCommandCenterBasis(remoteCcRev);
+              }
+            }
+          }
+        }
         const request = buildStorePushRequest(
           remote,
           keysToWrite,
           localStoresMap
         );
         if (!Object.keys(request.p_stores).length) {
-          writeMeta(remote.version, remote.store_revisions);
+          const revisions = normalizeStoreRevisions(remote.store_revisions);
+          if (commandCenterHeldBack) {
+            revisions[COMMAND_CENTER_KEY] = storeRevision(ackedRevisions, COMMAND_CENTER_KEY);
+          }
+          writeMeta(remote.version, revisions);
           setSyncStatus('synced');
           lastResult = { ok: true, reason: 'nothing-to-send', version: remote.version };
           break;
@@ -1655,6 +2650,9 @@
 
         try {
           writeMeta(result.version, result.revisions);
+          if (request.p_stores[COMMAND_CENTER_KEY]) {
+            ackCommandCenterBasis(storeRevision(result.revisions, COMMAND_CENTER_KEY));
+          }
           applyStoresToLocal(result.data || { stores: request.p_stores }, { reload: false });
           setSyncStatus('synced');
           lastResult = {
@@ -1793,6 +2791,7 @@
     if (!cloudWritesAllowed()) {
       setSyncStatus('local', 'localStorage uniquement');
       bootstrapped = true;
+      refreshLegacyHoldNotice();
       if (global.AppUI) {
         AppUI.toast('Mode local : aucun envoi vers Supabase (localStorage uniquement).');
       }
@@ -1802,6 +2801,7 @@
     if (!navigator.onLine) {
       setSyncStatus('offline', 'cache local');
       bootstrapped = true;
+      refreshLegacyHoldNotice();
       if (global.AppUI) {
         AppUI.toast('Hors connexion — utilisation du cache local.');
       }
@@ -1838,16 +2838,33 @@
             AppUI.toast('Version Supabase conservée (cache local ignoré).');
           }
         } else {
+          const remoteCc =
+            remote.data && remote.data.stores ? remote.data.stores[COMMAND_CENTER_KEY] : null;
+          const adoptsCc =
+            (plan.adoptRemoteKeys || []).includes(COMMAND_CENTER_KEY) ||
+            (plan.mode === 'apply-remote' && (plan.differing || []).includes(COMMAND_CENTER_KEY));
+          let skipCommandCenter = false;
+          if (adoptsCc && remoteCc) {
+            const park = await parkLegacyCommandCenterBeforeReplace(remoteCc);
+            skipCommandCenter = park.blocked;
+          }
           const prepared = prepareBootstrapStores(remote.data, plan, {
             remoteVersion,
             localVersion,
-          });
+          }, skipCommandCenter ? { skipKeys: [COMMAND_CENTER_KEY] } : undefined);
           if (prepared.pushKeys.length) {
             prepared.pushKeys.forEach((key) => markDirty(key));
             await pushToSupabase({ force: false, allStores: false });
             preserveLocalStatus = true;
           } else if (!prepared.leftLocal.length) {
-            writeMeta(remoteVersion);
+            const revisions = normalizeStoreRevisions(remote.store_revisions);
+            if (skipCommandCenter) {
+              revisions[COMMAND_CENTER_KEY] = storeRevision(ackedRevisions, COMMAND_CENTER_KEY);
+            }
+            writeMeta(remoteVersion, revisions);
+            if (!skipCommandCenter && (prepared.adopted || []).includes(COMMAND_CENTER_KEY)) {
+              ackCommandCenterBasis(storeRevision(remote.store_revisions, COMMAND_CENTER_KEY));
+            }
             pendingDirty.clear();
           }
         }
@@ -1869,6 +2886,7 @@
     }
 
     bootstrapped = true;
+    refreshLegacyHoldNotice();
   }
 
   function updateUserLabel() {
@@ -2094,6 +3112,8 @@
     refreshUserLabel: updateUserLabel,
     markPlayerFieldCleared,
     clearPlayerFieldCleared,
+    noteCommandCenterEditBaseline,
+    refreshLegacyHoldNotice,
     STORE_KEYS,
     BACKUPS_KEY,
     COMMAND_CENTER_KEY,
@@ -2116,6 +3136,18 @@
       rebaseLocalAfterRemote,
       applyStoresToLocal,
       planBootstrapAction,
+      readCommandCenterBasis,
+      noteCommandCenterEditBaseline,
+      ackCommandCenterBasis,
+      CC_BASIS_KEY,
+      CC_LEGACY_HOLD_KEY,
+      parkLegacyCommandCenterBeforeReplace,
+      readLegacyCommandCenterHold,
+      describeLegacyCommandCenterHold,
+      refreshLegacyHoldNotice,
+      openLegacyHoldReview,
+      bindLegacyHoldReview,
+      mergeCommandCenterForSync,
       buildStorePushRequest,
       normalizeStoreRevisions,
       prepareBootstrapStores,
@@ -2139,4 +3171,6 @@
       mergeVsWeekAuditField,
     },
   };
+
+  bindLegacyHoldReview();
 })(window);

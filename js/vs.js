@@ -281,34 +281,9 @@
       .sort((a, b) => a.pseudo.localeCompare(b.pseudo, 'fr', { sensitivity: 'base' }));
   }
 
-  function ensureActiveScores(weekId, playerIds) {
-    const state = ROSStorage.getState();
-    if (weekId !== state.currentWeekId) return;
-
-    const week = state.weeks.find((w) => w.id === weekId);
-    if (!week || week.archived) return;
-
-    const presentIds = new Set(playerIds);
-    const missing = playerIds.filter((id) => !week.scores[id]);
-    const orphanAbsent = Object.keys(week.scores || {}).filter((id) => !presentIds.has(id));
-    if (!missing.length && !orphanAbsent.length) return;
-
-    ROSStorage.update(
-      (s) => {
-        const target = s.weeks.find((w) => w.id === weekId);
-        if (!target || target.id !== s.currentWeekId) return s;
-        orphanAbsent.forEach((id) => {
-          delete target.scores[id];
-        });
-        missing.forEach((id) => {
-          if (!target.scores[id]) {
-            target.scores[id] = ROSModels.createEmptyScore();
-          }
-        });
-        return s;
-      },
-      { silent: true }
-    );
+  function ensureActiveScores() {
+    // L’affichage ne crée ni ne retire de score. Un joueur absent ou parti
+    // est masqué par playersForWeek ; sa ligne de score reste dans la semaine.
   }
 
   function fillSettingsForm(state) {
@@ -482,6 +457,13 @@
         .join('');
       renderPastUnderHistory(freshState);
     } finally {
+      if (global.ROSSync && typeof global.ROSSync.refreshLegacyHoldNotice === 'function') {
+        try {
+          global.ROSSync.refreshLegacyHoldNotice();
+        } catch (error) {
+          /* l’avis de copie ne doit pas bloquer l’affichage VS */
+        }
+      }
       rendering = false;
     }
   }
@@ -604,6 +586,8 @@
         const score = ROSModels.ensurePlayerScore(target, playerId);
         score.dayBrackets[dayKey] = safeBracket;
         score.days[dayKey] = points;
+        if (!score.dayUpdatedAt || typeof score.dayUpdatedAt !== 'object') score.dayUpdatedAt = {};
+        score.dayUpdatedAt[dayKey] = new Date().toISOString();
         return s;
       },
       { silent: true }

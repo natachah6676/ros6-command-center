@@ -1044,6 +1044,25 @@ button.tempete-presence-pct:hover {
   font-size: 0.88rem;
 }
 
+.legacy-hold-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.legacy-hold-notice.hidden,
+.legacy-hold-notice[hidden] {
+  display: none;
+}
+
+.legacy-hold-list {
+  margin: 0.75rem 0 0;
+  padding-left: 1.15rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
 .vs-readonly {
   color: var(--text-muted);
   font-size: 0.85rem;

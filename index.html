@@ -6,7 +6,7 @@
   <title>WAROPS</title>
   <link rel="icon" type="image/png" href="assets/branding/warops-logo.png" />
   <link rel="apple-touch-icon" href="assets/branding/warops-logo.png" />
-  <link rel="stylesheet" href="css/styles.css?v=20261028-muse3" />
+  <link rel="stylesheet" href="css/styles.css?v=20261031-cc-legacy2" />
 </head>
 <body>
   <div id="authGate" class="auth-gate">
@@ -138,6 +138,11 @@
           </div>
         </div>
 
+        <div id="playersLegacyHoldNotice" class="vs-archive-notice legacy-hold-notice hidden" data-legacy-hold-notice hidden>
+          <span>Une copie ancienne de cet appareil est conservée ici. Elle n’est pas envoyée aux autres R4.</span>
+          <button type="button" class="btn btn-ghost" data-open-legacy-hold>Consulter en lecture seule</button>
+        </div>
+
         <div class="toolbar toolbar-members">
           <input type="search" id="playerSearch" class="input" placeholder="Rechercher par pseudo…" autocomplete="off" />
           <select id="filterStatus" class="input">
@@ -259,6 +264,11 @@
             <button type="button" id="btnCloseWeek" class="btn btn-ghost">Clôturer la semaine</button>
             <button type="button" id="btnNewWeek" class="btn btn-primary">+ Nouvelle semaine VS</button>
           </div>
+        </div>
+
+        <div id="vsLegacyHoldNotice" class="vs-archive-notice legacy-hold-notice hidden" data-legacy-hold-notice hidden>
+          <span>Une copie ancienne de cet appareil est conservée ici. Elle n’est pas envoyée aux autres R4.</span>
+          <button type="button" class="btn btn-ghost" data-open-legacy-hold>Consulter en lecture seule</button>
         </div>
 
         <div id="vsMainView">
@@ -1361,6 +1371,26 @@
     </form>
   </dialog>
 
+  <!-- Consultation d’une copie ancienne, sans restauration ni envoi -->
+  <dialog id="legacyHoldModal" class="modal">
+    <div class="modal-card modal-wide">
+      <header class="modal-header">
+        <h3>Copie ancienne de cet appareil</h3>
+        <button type="button" class="icon-btn" data-close-modal aria-label="Fermer">×</button>
+      </header>
+      <div class="modal-body">
+        <p id="legacyHoldMeta" class="panel-subtitle" style="margin-top:0">
+          Lecture seule. Elle reste sur cet appareil, elle n’est pas envoyée, et elle ne remplace pas les données actuelles.
+        </p>
+        <ul id="legacyHoldDiffList" class="legacy-hold-list"></ul>
+        <p id="legacyHoldEmpty" class="empty-state hidden" hidden>Aucune différence avec les données actuelles.</p>
+      </div>
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-ghost" data-close-modal>Fermer</button>
+      </footer>
+    </div>
+  </dialog>
+
   <!-- Modal confirmation -->
   <dialog id="confirmModal" class="modal">
     <div class="modal-card">
@@ -1536,19 +1566,19 @@
   </script>
   <script src="js/supabase-client.js?v=20260804-4"></script>
   <script src="js/profiles.js?v=20260911-refaccess1"></script>
-  <script src="js/supabase-sync.js?v=20261028-muse3"></script>
+  <script src="js/supabase-sync.js?v=20261031-cc-legacy2"></script>
   <script src="js/models.js?v=20261007-export8w2"></script>
   <script src="js/seed-players.js?v=20260802-4"></script>
   <script src="js/player-identity.js?v=20261001-weekly-flags1"></script>
-  <script src="js/storage.js?v=20260910-vsclose1"></script>
+  <script src="js/storage.js?v=20261031-cc-legacy2"></script>
   <script src="js/ui-helpers.js?v=20260802-4"></script>
   <script src="js/insights.js?v=20260910-vsclose1"></script>
   <script src="js/player-stats.js?v=20260802-4"></script>
-  <script src="js/players.js?v=20261007-export8w1"></script>
+  <script src="js/players.js?v=20261031-cc-legacy2"></script>
   <script src="js/suivi.js?v=20260929-hist-detail1"></script>
   <script src="js/command.js?v=20260806-cmd1"></script>
   <script src="js/notifications.js?v=20260802-4"></script>
-  <script src="js/vs.js?v=20261007-export8w1"></script>
+  <script src="js/vs.js?v=20261031-cc-legacy2"></script>
   <script src="js/train.js?v=20260911-export1"></script>
   <script src="js/ruche-i18n.js?v=20261003-ruche-control1"></script>
   <script src="js/ruche.js?v=20261005-sync-safety1"></script>

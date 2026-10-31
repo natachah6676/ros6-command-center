@@ -551,6 +551,15 @@ async function pushStatus(serverPlayer, localPlayer, { alwaysReject = false, rem
   const localList = localPlayers || [localPlayer];
   const serverStore = commandCenter(serverList);
   syncSandbox.localStorage.setItem('ros6_command_center_v1', JSON.stringify(commandCenter(localList)));
+  syncSandbox.localStorage.setItem(
+    'ros6_cc_basis_v1',
+    JSON.stringify({
+      unsynced: true,
+      captureFailed: false,
+      revision: 4,
+      base: serverStore,
+    })
+  );
   T.markDirty('ros6_command_center_v1');
   const row = {
     id: 'main',
